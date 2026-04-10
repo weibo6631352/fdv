@@ -19,10 +19,15 @@ class OrderbookSnapshot:
     bids: tuple[PriceLevel, ...]
     asks: tuple[PriceLevel, ...]
     received_at: datetime
+    market_slug: str | None = None
+    condition_id: str | None = None
+    best_bid_size: Decimal | None = None
+    best_ask_size: Decimal | None = None
+    last_trade_price: Decimal | None = None
+    tick_size: Decimal | None = None
 
     @property
     def spread(self) -> Decimal | None:
         if self.best_bid is None or self.best_ask is None:
             return None
         return self.best_ask - self.best_bid
-

@@ -28,10 +28,10 @@
 
 | 任务 | 里程碑 | 建议 worker | 状态 | 依赖 | 集成备注 |
 | --- | --- | --- | --- | --- | --- |
-| [领域 DTO 与事件契约](./01-strategy-domain/05-domain-dto-events/README.md) | M0 | W01 | pending | 无 | 全组共享字段契约 |
-| [配置与密钥](./04-infra-persistence/05-config-secrets/README.md) | M0 | W02 | pending | 无 | 配置名需先稳定 |
-| [Audit / Trace](./06-observability-docs/01-audit-trace/README.md) | M0 | W03 | pending | 领域事件契约 | 审计事件名供全组复用 |
-| [Outbox / Local Queue](./04-infra-persistence/03-outbox-local-queue/README.md) | M0 | W04 | pending | 领域事件契约、审计字段 | P0 快路径与 persistence 解耦 |
+| [领域 DTO 与事件契约](./01-strategy-domain/05-domain-dto-events/README.md) | M0 | W01 | done | 无 | 统一 DTO、领域事件名、订单/成交/持仓/分配字段契约，未运行验证测试 |
+| [配置与密钥](./04-infra-persistence/05-config-secrets/README.md) | M0 | W02 | done | 无 | 配置对象、`.env.example`、启动 readiness 和脱敏输出，未运行验证测试 |
+| [Audit / Trace](./06-observability-docs/01-audit-trace/README.md) | M0 | W03 | done | 领域事件契约 | 审计事件 schema、事件名、trace 传播和 raw response 脱敏，未运行验证测试 |
+| [Outbox / Local Queue](./04-infra-persistence/03-outbox-local-queue/README.md) | M0 | W04 | done | 领域事件契约、审计字段 | 本地 outbox 契约、短超时 enqueue、retry/dead-letter 和幂等键，未运行验证测试 |
 | [Market 分类](./01-strategy-domain/01-market-classifier/README.md) | M1 | W05 | pending | 领域 DTO | 纯 domain 实现 |
 | [Market Registry 与模型](./01-strategy-domain/02-market-registry-models/README.md) | M1 | W06 | pending | 领域 DTO | 需支持快照读取 |
 | [组合资金分配](./01-strategy-domain/03-portfolio-allocation/README.md) | M1 | W07 | pending | Registry、配置 | 输出 AllocationPlan |
@@ -67,4 +67,4 @@
 - 开发交付完成后，把状态改为 `done`，备注“未运行验证测试”。
 - 遇到跨组字段不一致时，把相关任务标为 `blocked`，在备注中写明需要对齐的 DTO、事件或配置名。
 - 不回滚其他 worker 或用户已经修改的文件；发现冲突时先记录在备注，再做最小范围协调。
-
+- 不为通过测试或迁就临时调用方随意增加兼容层、旧字段别名、包装函数、重复枚举或同义常量；应优先修正调用方并统一到当前里程碑契约。确需兼容外部协议时，在对应任务 README 写明原因、边界和移除条件。

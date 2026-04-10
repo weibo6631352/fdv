@@ -20,6 +20,8 @@
 - 统一 DTO / 事件字段表。
 - 事件命名建议：`market_discovered`、`market_filtered_in`、`market_filtered_out`、`entry_signal_triggered`、`risk_check_passed`、`risk_check_failed`、`order_created`、`order_signed`、`order_submitted`、`order_matched`、`order_no_fill`、`order_partially_filled`、`exit_order_submitted`、`order_cancel_requested`、`order_cancelled`、`replace_order_submitted`、`trade_confirmed`、`skipped`、`error`。
 - 与 DB 模型、Admin schema、审计事件保持可映射但不互相依赖。
+- 契约只能保留设计内字段、类型和有明确语义的只读派生属性；不得为了旧调用面或测试通过新增同义别名、包装工厂、重复枚举或第二套事件名。
+- 如果测试或调用方仍依赖旧名字，应修改调用方对齐统一契约；确需兼容外部协议时，兼容层必须留在 adapter / schema 边界，不得扩散进 domain DTO。
 
 ## 并行接口
 
@@ -30,4 +32,3 @@
 ## 注释要求
 
 对 BUY `amount` 与 SELL `size` / shares 语义差异、内部 DTO 与外部协议隔离原因写中文注释。开发阶段不要求补充或运行验证测试。
-
