@@ -31,3 +31,20 @@ class OrderbookSnapshot:
         if self.best_bid is None or self.best_ask is None:
             return None
         return self.best_ask - self.best_bid
+
+    @property
+    def snapshot_time(self) -> datetime:
+        # 交易路径里常把 received_at 当成快照时间；这里保留一个语义更直白的只读别名。
+        return self.received_at
+
+    def buyable_ask_depth(self, max_price: Decimal | None = None) -> Decimal:
+        # NO 仓位的买入深度只看 ask 侧：价格不高于阈值的挂单都算作可成交深度。
+        total = Decimal("0")
+        for level in self.asks:
+            if max_price is not None and level.price > max_price:
+                continue
+            total += level.size
+        return total
+
+    def no_entry_touched(self, price_limit: Decimal) -> bool:
+        return self.best_ask is not None and self.best_ask <= price_limit

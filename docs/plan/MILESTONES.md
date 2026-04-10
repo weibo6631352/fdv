@@ -32,13 +32,13 @@
 | [配置与密钥](./04-infra-persistence/05-config-secrets/README.md) | M0 | W02 | done | 无 | 配置对象、`.env.example`、启动 readiness 和脱敏输出，未运行验证测试 |
 | [Audit / Trace](./06-observability-docs/01-audit-trace/README.md) | M0 | W03 | done | 领域事件契约 | 审计事件 schema、事件名、trace 传播和 raw response 脱敏，未运行验证测试 |
 | [Outbox / Local Queue](./04-infra-persistence/03-outbox-local-queue/README.md) | M0 | W04 | done | 领域事件契约、审计字段 | 本地 outbox 契约、短超时 enqueue、retry/dead-letter 和幂等键，未运行验证测试 |
-| [Market 分类](./01-strategy-domain/01-market-classifier/README.md) | M1 | W05 | pending | 领域 DTO | 纯 domain 实现 |
-| [Market Registry 与模型](./01-strategy-domain/02-market-registry-models/README.md) | M1 | W06 | pending | 领域 DTO | 需支持快照读取 |
-| [组合资金分配](./01-strategy-domain/03-portfolio-allocation/README.md) | M1 | W07 | pending | Registry、配置 | 输出 AllocationPlan |
-| [Risk Manager](./02-trading-execution-risk/01-risk-manager/README.md) | M1 | W08 | pending | AllocationPlan、配置 | 只做门禁，不下单 |
-| [Market Discovery / Streamer](./03-realtime-runtime/01-market-discovery-streamer/README.md) | M1 | W09 | pending | Polymarket client DTO | 输出 RawMarketEvent |
-| [Market WS / Orderbook](./03-realtime-runtime/02-market-ws-orderbook/README.md) | M1 | W10 | pending | Registry、Event Bus | 输出 EntryPriceTouched |
-| [Event Bus / Priority Queues](./03-realtime-runtime/04-event-bus-priority-queues/README.md) | M1 | W11 | pending | 配置 | P0 / P2 / P3 隔离 |
+| [Market 分类](./01-strategy-domain/01-market-classifier/README.md) | M1 | W05 | done | 领域 DTO | W05/W06 完成 `domain/classifier.py`、`domain/market.py`、`runtime/registry.py`；结构化分类、接受/拒绝事件和 Market 转换，未运行验证测试 |
+| [Market Registry 与模型](./01-strategy-domain/02-market-registry-models/README.md) | M1 | W06 | done | 领域 DTO | W05/W06 完成 `domain/classifier.py`、`domain/market.py`、`runtime/registry.py`；索引、生命周期、短锁和快照读取，未运行验证测试 |
+| [组合资金分配](./01-strategy-domain/03-portfolio-allocation/README.md) | M1 | W07 | done | Registry、配置 | W07/W08 完成 `domain/allocation.py`、`domain/risk.py`；equal_weight、exposure、释放和再分配，未运行验证测试 |
+| [Risk Manager](./02-trading-execution-risk/01-risk-manager/README.md) | M1 | W08 | done | AllocationPlan、配置 | W07/W08 完成 `domain/allocation.py`、`domain/risk.py`；本地快照门禁、结构化失败和 open BUY 拦截，未运行验证测试 |
+| [Market Discovery / Streamer](./03-realtime-runtime/01-market-discovery-streamer/README.md) | M1 | W09 | done | Polymarket client DTO | W09/W10/W11 完成 `infra/polymarket/schemas.py`、`domain/orderbook.py`、`runtime/event_bus.py`、`workers/market_discovery_worker.py`、`workers/market_ws_worker.py`；RawMarketEvent、去重和分类入口，未运行验证测试 |
+| [Market WS / Orderbook](./03-realtime-runtime/02-market-ws-orderbook/README.md) | M1 | W10 | done | Registry、Event Bus | W09/W10/W11 完成 `infra/polymarket/schemas.py`、`domain/orderbook.py`、`runtime/event_bus.py`、`workers/market_discovery_worker.py`、`workers/market_ws_worker.py`；盘口缓存、REST 覆盖、tick size/resolved 同步和 EntryPriceTouched，未运行验证测试 |
+| [Event Bus / Priority Queues](./03-realtime-runtime/04-event-bus-priority-queues/README.md) | M1 | W11 | done | 配置 | W09/W10/W11 完成 `infra/polymarket/schemas.py`、`domain/orderbook.py`、`runtime/event_bus.py`、`workers/market_discovery_worker.py`、`workers/market_ws_worker.py`；P0 / P2 / P3 队列、背压和深度快照，未运行验证测试 |
 | [策略引擎与状态机](./01-strategy-domain/04-strategy-engine-state-machine/README.md) | M2 | W12 | pending | Allocation、Risk、Event Bus | 生成订单 intent |
 | [Order Executor](./02-trading-execution-risk/02-order-executor/README.md) | M2 | W13 | pending | Outbox、Polymarket client | 唯一下单入口 |
 | [FAK BUY 流程](./02-trading-execution-risk/03-fak-buy-flow/README.md) | M2 | W14 | pending | Strategy、Risk、Order Executor | P0 热路径 |
