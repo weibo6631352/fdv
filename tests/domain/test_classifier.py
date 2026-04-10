@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from fdv_trader.domain.classifier import MarketClassifier
-from fdv_trader.domain.order import OrderIntent, OrderSide, OrderType
+from fdv_trader.domain.order import BuyOrderIntent
 from fdv_trader.domain.risk import RiskManager
 
 
@@ -44,12 +44,10 @@ def test_classifier_emits_canonical_keywords_for_risk_gate() -> None:
     assert "500m" in result.matched_keywords
 
     decision = RiskManager().check_order_intent(
-        OrderIntent(
+        BuyOrderIntent(
             trace_id="trace",
             condition_id="condition",
             token_id="no",
-            side=OrderSide.BUY,
-            order_type=OrderType.FAK,
             price=Decimal("0.60"),
             amount_usdc=Decimal("1"),
         ),

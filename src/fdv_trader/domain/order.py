@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from datetime import datetime
+from typing import TypeAlias
 
 
 class OrderSide(StrEnum):
@@ -30,19 +31,121 @@ class OrderStatus(StrEnum):
     FAILED = "failed"
 
 
+class OrderResultStatus(StrEnum):
+    FULL_FILL = "full_fill"
+    PARTIAL_FILL = "partial_fill"
+    NO_FILL = "no_fill"
+    LIVE = "live"
+    REJECTED = "rejected"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    UNKNOWN_TIMEOUT = "unknown_timeout"
+
+
 @dataclass(frozen=True, slots=True)
-class Order:
+class ExecutionTimestamps:
+    queued_at: datetime | None = None
+    sign_started_at: datetime | None = None
+    signed_at: datetime | None = None
+    submitted_at: datetime | None = None
+    ack_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BuyOrderIntent:
     trace_id: str
+    condition_id: str
+    token_id: str
+    price: Decimal
+    amount_usdc: Decimal
+    market_slug: str | None = None
+    order_type: OrderType = OrderType.FAK
+    idempotency_key: str | None = None
+    post_only: bool = False
+    retry_count: int = 0
+
+    @property
+    def side(self) -> OrderSide:
+        return OrderSide.BUY
+
+    @property
+    def size_shares(self) -> Decimal | None:
+        return None
+
+    @property
+    def notional_usdc(self) -> Decimal:
+        return self.amount_usdc
+
+
+@dataclass(frozen=True, slots=True)
+class SellOrderIntent:
+    trace_id: str
+    condition_id: str
+    token_id: str
+    price: Decimal
+    size_shares: Decimal
+    market_slug: str | None = None
+    order_type: OrderType = OrderType.GTC
+    idempotency_key: str | None = None
+    post_only: bool = False
+    retry_count: int = 0
+
+    @property
+    def side(self) -> OrderSide:
+        return OrderSide.SELL
+
+    @property
+    def amount_usdc(self) -> Decimal | None:
+        return None
+
+    @property
+    def notional_usdc(self) -> Decimal:
+        return self.price * self.size_shares
+
+
+@dataclass(frozen=True, slots=True)
+class CancelOrderIntent:
+    trace_id: str
+    condition_id: str
+    token_id: str
+    order_id: str
+    market_slug: str | None = None
+    idempotency_key: str | None = None
+    reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ReplaceOrderIntent:
+    trace_id: str
+    condition_id: str
+    token_id: str
+    order_id: str
+    new_price: Decimal
+    size_shares: Decimal
+    market_slug: str | None = None
+    idempotency_key: str | None = None
+    reason: str = ""
+
+
+TradableOrderIntent: TypeAlias = BuyOrderIntent | SellOrderIntent
+OrderControlIntent: TypeAlias = CancelOrderIntent | ReplaceOrderIntent
+OrderIntent: TypeAlias = TradableOrderIntent
+ManagedOrderIntent: TypeAlias = TradableOrderIntent | OrderControlIntent
+
+
+@dataclass(frozen=True, slots=True)
+class OrderRecord:
     condition_id: str
     token_id: str
     side: OrderSide
     order_type: OrderType
     price: Decimal
+    trace_id: str = ""
     market_slug: str | None = None
-    # BUY 订单的 amount_usdc 表示 USDC.e 花费金额；SELL 订单不要复用它表示 shares。
     amount_usdc: Decimal | None = None
-    # SELL 订单的 size_shares 表示 outcome token 的 shares；BUY 订单保留空值，避免语义混淆。
     size_shares: Decimal | None = None
+    filled_shares: Decimal = Decimal("0")
+    remaining_shares: Decimal | None = None
     notional_usdc: Decimal | None = None
     order_id: str | None = None
     trade_id: str | None = None
@@ -53,5 +156,53 @@ class Order:
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
+    @property
+    def open(self) -> bool:
+        return self.status in {
+            OrderStatus.CREATED,
+            OrderStatus.SIGNED,
+            OrderStatus.SUBMITTED,
+            OrderStatus.CANCEL_REQUESTED,
+            OrderStatus.LIVE,
+            OrderStatus.MATCHED,
+            OrderStatus.PARTIALLY_FILLED,
+        }
 
-OrderIntent = Order
+
+Order = OrderRecord
+
+
+@dataclass(frozen=True, slots=True)
+class OrderResult:
+    trace_id: str
+    condition_id: str
+    token_id: str
+    status: OrderResultStatus
+    intent: ManagedOrderIntent | None = None
+    market_slug: str | None = None
+    order_id: str | None = None
+    trade_id: str | None = None
+    side: OrderSide | None = None
+    order_type: OrderType | None = None
+    price: Decimal | None = None
+    requested_amount_usdc: Decimal | None = None
+    requested_size_shares: Decimal | None = None
+    matched_shares: Decimal = Decimal("0")
+    remaining_shares: Decimal = Decimal("0")
+    spent_usdc: Decimal = Decimal("0")
+    notional_usdc: Decimal = Decimal("0")
+    reason: str = ""
+    retryable: bool = False
+    raw_response_summary: str | None = None
+    timestamps: ExecutionTimestamps = field(default_factory=ExecutionTimestamps)
+
+    @property
+    def filled(self) -> bool:
+        return self.status in {
+            OrderResultStatus.FULL_FILL,
+            OrderResultStatus.PARTIAL_FILL,
+        }
+
+    @property
+    def has_resting_order(self) -> bool:
+        return self.status == OrderResultStatus.LIVE

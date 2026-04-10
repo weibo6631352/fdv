@@ -6,11 +6,18 @@ from typing import Callable, Iterable
 
 from fdv_trader.domain.allocation import Allocation, AllocationMarketSnapshot, AllocationPlan
 from fdv_trader.domain.market import Market, TradingStatus
-from fdv_trader.domain.order import Order, OrderIntent
+from fdv_trader.domain.order import (
+    BuyOrderIntent,
+    CancelOrderIntent,
+    Order,
+    ReplaceOrderIntent,
+    SellOrderIntent,
+)
 from fdv_trader.domain.orderbook import OrderbookSnapshot
 from fdv_trader.domain.position import Position
 from fdv_trader.domain.strategy import StrategyEngine
 from fdv_trader.observability.trace import ensure_trace_id
+from fdv_trader.runtime.account_state import AccountSnapshot
 from fdv_trader.runtime.registry import MarketRegistry
 
 OrderbookReader = Callable[[str], OrderbookSnapshot | None]
@@ -35,6 +42,7 @@ class StrategyService:
         *,
         market: Market | None = None,
         orderbook: OrderbookSnapshot | None = None,
+        account_snapshot: AccountSnapshot | None = None,
         condition_id: str | None = None,
         token_id: str | None = None,
         trace_id: str | None = None,
@@ -50,6 +58,13 @@ class StrategyService:
         max_spread: Decimal | None = None,
     ) -> "StrategyEntryPlan":
         trace_id = trace_id or ensure_trace_id()
+        if account_snapshot is not None:
+            if available_usdc is None:
+                available_usdc = account_snapshot.balance_usdc
+            if not positions:
+                positions = account_snapshot.positions
+            if not open_orders:
+                open_orders = account_snapshot.open_orders
         resolved_market = market or self._resolve_market(condition_id=condition_id, token_id=token_id)
         resolved_orderbook = orderbook or self._resolve_orderbook(
             market=resolved_market,
@@ -70,6 +85,25 @@ class StrategyService:
                 eligible_market_count=0,
                 reason="missing_market_state",
             )
+
+        if account_snapshot is not None and resolved_market is not None:
+            if not account_snapshot.allow_new_buys or account_snapshot.is_market_paused(
+                resolved_market.condition_id
+            ):
+                return StrategyEntryPlan(
+                    trace_id=trace_id,
+                    market=resolved_market,
+                    orderbook=resolved_orderbook,
+                    allocation_plan=AllocationPlan(
+                        trace_id=trace_id,
+                        total_budget_usdc=portfolio_budget_usdc,
+                        reason="buying_paused",
+                    ),
+                    allocation=None,
+                    intent=None,
+                    eligible_market_count=0,
+                    reason="buying_paused",
+                )
 
         positions = tuple(positions)
         open_orders = tuple(open_orders)
@@ -129,6 +163,63 @@ class StrategyService:
             allocation=allocation,
             intent=intent,
             eligible_market_count=plan.eligible_market_count,
+            reason=reason,
+        )
+
+    def build_sell_intent(
+        self,
+        *,
+        trace_id: str,
+        condition_id: str,
+        no_token_id: str,
+        size_shares: Decimal,
+        market_slug: str | None = None,
+    ) -> SellOrderIntent:
+        return self._strategy_engine.build_sell_intent(
+            trace_id=trace_id,
+            condition_id=condition_id,
+            no_token_id=no_token_id,
+            size_shares=size_shares,
+            market_slug=market_slug,
+        )
+
+    def build_cancel_intent(
+        self,
+        *,
+        trace_id: str,
+        condition_id: str,
+        no_token_id: str,
+        order_id: str,
+        market_slug: str | None = None,
+        reason: str = "",
+    ) -> CancelOrderIntent:
+        return self._strategy_engine.build_cancel_intent(
+            trace_id=trace_id,
+            condition_id=condition_id,
+            no_token_id=no_token_id,
+            order_id=order_id,
+            market_slug=market_slug,
+            reason=reason,
+        )
+
+    def build_replace_intent(
+        self,
+        *,
+        trace_id: str,
+        condition_id: str,
+        no_token_id: str,
+        order_id: str,
+        size_shares: Decimal,
+        market_slug: str | None = None,
+        reason: str = "",
+    ) -> ReplaceOrderIntent:
+        return self._strategy_engine.build_replace_intent(
+            trace_id=trace_id,
+            condition_id=condition_id,
+            no_token_id=no_token_id,
+            order_id=order_id,
+            size_shares=size_shares,
+            market_slug=market_slug,
             reason=reason,
         )
 
@@ -247,7 +338,7 @@ class StrategyEntryPlan:
     orderbook: OrderbookSnapshot | None
     allocation_plan: AllocationPlan
     allocation: Allocation | None
-    intent: OrderIntent | None
+    intent: BuyOrderIntent | None
     eligible_market_count: int = 0
     reason: str = ""
 

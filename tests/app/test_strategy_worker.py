@@ -8,7 +8,13 @@ from fdv_trader.app.strategy_service import StrategyService
 from fdv_trader.app.trading_service import TradingService
 from fdv_trader.domain.events import DomainEventType
 from fdv_trader.domain.market import Market, TradingStatus
+from fdv_trader.domain.order import OrderResultStatus
 from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from fdv_trader.infra.polymarket.order_executor import (
+    InMemoryPolymarketOrderClient,
+    PolymarketOrderExecutor,
+)
+from fdv_trader.runtime.account_state import AccountStateStore
 from fdv_trader.runtime.event_bus import EventBus
 from fdv_trader.runtime.registry import MarketRegistry
 from fdv_trader.workers.market_ws_worker import MarketWsWorker
@@ -95,6 +101,11 @@ def test_strategy_worker_turns_entry_price_touch_into_risk_result() -> None:
     async def run() -> None:
         event_bus = EventBus()
         registry = MarketRegistry()
+        account_state_store = AccountStateStore()
+        account_state_store.update_balances(
+            balance_usdc=Decimal("100"),
+            allowance_usdc=Decimal("100"),
+        )
         market_ws_worker = MarketWsWorker(event_bus=event_bus, registry=registry)
         market = _market(condition_id="condition", token_id="no-token", market_slug="token")
         market_ws_worker.track_market(market)
@@ -103,10 +114,12 @@ def test_strategy_worker_turns_entry_price_touch_into_risk_result() -> None:
             registry=registry,
             orderbook_reader=market_ws_worker.snapshot,
         )
+        executor = PolymarketOrderExecutor(client=InMemoryPolymarketOrderClient())
         strategy_worker = StrategyWorker(
             event_bus=event_bus,
             strategy_service=strategy_service,
-            trading_service=TradingService(),
+            trading_service=TradingService(executor=executor),
+            account_state_store=account_state_store,
             portfolio_budget_usdc=Decimal("100"),
             available_usdc=Decimal("100"),
             max_order_usdc=Decimal("100"),
@@ -138,5 +151,7 @@ def test_strategy_worker_turns_entry_price_touch_into_risk_result() -> None:
         assert result.review is not None
         assert result.review.risk_decision.passed
         assert result.emitted_event.event_type == DomainEventType.RISK_CHECK_PASSED
+        assert result.review.order_result is not None
+        assert result.review.order_result.status == OrderResultStatus.NO_FILL
 
     asyncio.run(run())

@@ -6,7 +6,7 @@ from fdv_trader.config import Settings
 from fdv_trader.main import build_runtime
 
 
-def test_build_runtime_wires_m1_components() -> None:
+def test_build_runtime_wires_m2_components() -> None:
     runtime = build_runtime(
         Settings(
             portfolio_budget_usdc=Decimal("100"),
@@ -22,7 +22,12 @@ def test_build_runtime_wires_m1_components() -> None:
     assert runtime.market_discovery_worker is not None
     assert runtime.market_service is not None
     assert runtime.market_ws_worker is not None
+    assert runtime.user_ws_worker is not None
     assert runtime.strategy_service is not None
     assert runtime.trading_service is not None
     assert runtime.strategy_worker is not None
+    assert runtime.account_state_store is not None
+    assert runtime.order_executor is not None
+    assert runtime.reconcile_service is not None
+    assert runtime.reconcile_worker is not None
     assert runtime.strategy_worker.priority == "P0"
