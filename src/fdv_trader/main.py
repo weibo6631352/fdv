@@ -9,7 +9,17 @@ from fdv_trader.app.reconcile_service import ReconcileService
 from fdv_trader.app.strategy_service import StrategyService
 from fdv_trader.app.trading_service import TradingService
 from fdv_trader.config import Settings, StartupReadiness, load_settings
+from fdv_trader.infra.db import DatabasePersistenceRepository, build_session_factory
 from fdv_trader.infra.outbox.local_queue import LocalOutbox
+from fdv_trader.infra.polymarket import (
+    ClobClient,
+    DataClient,
+    GammaClient,
+    PolymarketOrderExecutionClient,
+    PolymarketTradingClient,
+    PolymarketWebSocketClient,
+    build_trading_client,
+)
 from fdv_trader.infra.polymarket.order_executor import (
     InMemoryPolymarketOrderClient,
     PolymarketOrderExecutor,
@@ -20,6 +30,7 @@ from fdv_trader.runtime.event_bus import EventBus
 from fdv_trader.runtime.registry import MarketRegistry
 from fdv_trader.workers.market_discovery_worker import MarketDiscoveryWorker
 from fdv_trader.workers.market_ws_worker import MarketWsWorker
+from fdv_trader.workers.persistence_worker import PersistenceWorker
 from fdv_trader.workers.reconcile_worker import ReconcileWorker
 from fdv_trader.workers.strategy_worker import StrategyWorker
 from fdv_trader.workers.user_ws_worker import UserWsWorker
@@ -31,9 +42,17 @@ logger = logging.getLogger(__name__)
 class RuntimeComponents:
     settings: Settings
     readiness: StartupReadiness
+    gamma_client: GammaClient
+    clob_client: ClobClient
+    data_client: DataClient
+    trading_client: PolymarketTradingClient | None
+    polymarket_ws_client: PolymarketWebSocketClient
     event_bus: EventBus
     registry: MarketRegistry
     outbox: LocalOutbox
+    db_session_factory: object
+    persistence_repository: DatabasePersistenceRepository
+    persistence_worker: PersistenceWorker
     account_state_store: AccountStateStore
     order_executor: PolymarketOrderExecutor
     market_ws_worker: MarketWsWorker
@@ -50,6 +69,20 @@ class RuntimeComponents:
 def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     settings = settings or load_settings()
     readiness = settings.validate_startup_readiness()
+    trading_client = build_trading_client(settings)
+    gamma_client = GammaClient(base_url=settings.polymarket_gamma_host)
+    clob_client = ClobClient(
+        base_url=settings.polymarket_clob_host,
+        auth_client=trading_client,
+    )
+    data_client = DataClient(
+        base_url=settings.polymarket_data_host,
+        auth_client=trading_client,
+    )
+    polymarket_ws_client = PolymarketWebSocketClient(
+        market_url=settings.polymarket_market_ws,
+        user_url=settings.polymarket_user_ws,
+    )
     event_bus = EventBus(
         trading_capacity=settings.trading_event_queue_max_size,
         maintenance_capacity=settings.maintenance_event_queue_max_size,
@@ -57,22 +90,39 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     )
     registry = MarketRegistry()
     outbox = LocalOutbox(max_size=settings.persistence_event_queue_max_size)
+    db_session_factory = build_session_factory(settings.database_url)
+    persistence_repository = DatabasePersistenceRepository(db_session_factory)
+    persistence_worker = PersistenceWorker(
+        outbox=outbox,
+        repository=persistence_repository,
+    )
     account_state_store = AccountStateStore()
     account_state_store.update_balances(
         balance_usdc=settings.portfolio_budget_usdc,
         allowance_usdc=settings.portfolio_budget_usdc,
     )
+    execution_client = (
+        PolymarketOrderExecutionClient(trading_client)
+        if trading_client is not None
+        else InMemoryPolymarketOrderClient()
+    )
     order_executor = PolymarketOrderExecutor(
-        client=InMemoryPolymarketOrderClient(),
+        client=execution_client,
         outbox=outbox,
         sign_timeout_ms=settings.order_sign_timeout_ms,
         submit_timeout_ms=settings.order_submit_timeout_ms,
         critical_lock_timeout_ms=settings.critical_lock_timeout_ms,
     )
+
+    async def load_market_rest_snapshot(token_id: str):
+        orderbook = await clob_client.get_orderbook(token_id)
+        return orderbook.to_snapshot()
+
     market_ws_worker = MarketWsWorker(
         event_bus=event_bus,
         registry=registry,
         entry_price_max=settings.entry_no_price_max,
+        rest_snapshot_loader=load_market_rest_snapshot,
     )
     market_service = MarketService(
         registry=registry,
@@ -111,6 +161,12 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         account_state_store=account_state_store,
         trading_service=trading_service,
         executor=order_executor,
+        registry=registry,
+        market_ws_worker=market_ws_worker,
+        gamma_client=gamma_client,
+        clob_client=clob_client,
+        data_client=data_client,
+        trading_client=trading_client,
     )
     market_discovery_worker = MarketDiscoveryWorker(
         market_service=market_service,
@@ -121,9 +177,17 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     return RuntimeComponents(
         settings=settings,
         readiness=readiness,
+        gamma_client=gamma_client,
+        clob_client=clob_client,
+        data_client=data_client,
+        trading_client=trading_client,
+        polymarket_ws_client=polymarket_ws_client,
         event_bus=event_bus,
         registry=registry,
         outbox=outbox,
+        db_session_factory=db_session_factory,
+        persistence_repository=persistence_repository,
+        persistence_worker=persistence_worker,
         account_state_store=account_state_store,
         order_executor=order_executor,
         market_ws_worker=market_ws_worker,

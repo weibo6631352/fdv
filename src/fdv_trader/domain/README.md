@@ -32,7 +32,7 @@
 
 ## 禁止依赖
 
-- FastAPI、SQLAlchemy、Alembic。
+- FastAPI、SQLAlchemy。
 - Polymarket SDK、HTTP client、WebSocket client。
 - 环境变量、配置加载、日志落盘、数据库查询。
 - runtime registry、worker、app service。

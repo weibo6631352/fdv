@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -13,7 +15,7 @@ from fdv_trader.app.reconcile_service import (
     ReconcileService,
 )
 from fdv_trader.app.trading_service import TradingService
-from fdv_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
+from fdv_trader.domain.events import DomainEvent, DomainEventType, Fill, OutboxPriority
 from fdv_trader.domain.market import Market, TradingStatus
 from fdv_trader.domain.order import (
     BuyOrderIntent,
@@ -27,13 +29,18 @@ from fdv_trader.domain.order import (
     OrderType,
     SellOrderIntent,
 )
+from fdv_trader.domain.orderbook import OrderbookSnapshot
 from fdv_trader.domain.position import Position
+from fdv_trader.infra.polymarket import ClobClient, DataClient, GammaClient, PolymarketTradingClient
 from fdv_trader.runtime.account_state import AccountSnapshot, AccountStateStore
 from fdv_trader.runtime.event_bus import EventBus
-from fdv_trader.runtime.registry import MarketRegistrySnapshot
+from fdv_trader.runtime.registry import MarketRegistry, MarketRegistrySnapshot
+from fdv_trader.workers.market_ws_worker import MarketWsWorker
 
 RegistrySnapshotProvider = Callable[[], MarketRegistrySnapshot]
 AccountSnapshotProvider = Callable[[], AccountSnapshot]
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
@@ -46,6 +53,43 @@ class ReconcileWorkerResult:
     plan: ReconcilePlan
     applied_actions: tuple[ReconcileAction, ...]
     failed_actions: tuple[tuple[ReconcileAction, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoritativeMarketRefresh:
+    requested_market: Market
+    refreshed_market: Market | None
+    orderbook_snapshot: OrderbookSnapshot | None
+    failures: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoritativeRefreshSummary:
+    trace_id: str
+    market_count: int
+    refreshed_markets: int
+    refreshed_orderbooks: int
+    refreshed_positions: int
+    refreshed_open_orders: int
+    refreshed_fills: int
+    refreshed_balance: bool
+    refreshed_allowance: bool
+    user_refresh_enabled: bool
+    failures: tuple[str, ...] = ()
+
+    def as_payload(self) -> dict[str, object]:
+        return {
+            "market_count": self.market_count,
+            "refreshed_markets": self.refreshed_markets,
+            "refreshed_orderbooks": self.refreshed_orderbooks,
+            "refreshed_positions": self.refreshed_positions,
+            "refreshed_open_orders": self.refreshed_open_orders,
+            "refreshed_fills": self.refreshed_fills,
+            "refreshed_balance": self.refreshed_balance,
+            "refreshed_allowance": self.refreshed_allowance,
+            "user_refresh_enabled": self.user_refresh_enabled,
+            "failures": list(self.failures),
+        }
 
 
 class ReconcileWorker:
@@ -61,6 +105,12 @@ class ReconcileWorker:
         account_state_store: AccountStateStore | None = None,
         trading_service: TradingService | None = None,
         executor: object | None = None,
+        registry: MarketRegistry | None = None,
+        market_ws_worker: MarketWsWorker | None = None,
+        gamma_client: GammaClient | None = None,
+        clob_client: ClobClient | None = None,
+        data_client: DataClient | None = None,
+        trading_client: PolymarketTradingClient | None = None,
     ) -> None:
         self._event_bus = event_bus
         self._reconcile_service = reconcile_service or ReconcileService()
@@ -69,6 +119,12 @@ class ReconcileWorker:
         self._account_state_store = account_state_store
         self._trading_service = trading_service
         self._executor = executor
+        self._registry = registry
+        self._market_ws_worker = market_ws_worker
+        self._gamma_client = gamma_client
+        self._clob_client = clob_client
+        self._data_client = data_client
+        self._trading_client = trading_client
 
     async def run(self) -> None:
         if self._event_bus is None:
@@ -90,8 +146,21 @@ class ReconcileWorker:
         trigger_event: DomainEvent | None = None,
         condition_ids: tuple[str, ...] | None = None,
     ) -> ReconcileWorkerResult:
-        registry_snapshot, account_snapshot = self._resolve_snapshots()
         trace_id = trace_id or getattr(trigger_event, "trace_id", None) or uuid4().hex
+        refresh_summary = await self._refresh_authoritative_state(
+            trace_id=trace_id,
+            condition_ids=condition_ids,
+        )
+        if refresh_summary.failures:
+            logger.warning(
+                "reconcile authoritative refresh degraded",
+                extra={
+                    "trace_id": trace_id,
+                    "failure_count": len(refresh_summary.failures),
+                    "failures": refresh_summary.failures,
+                },
+            )
+        registry_snapshot, account_snapshot = self._resolve_snapshots()
         plan = self._reconcile_service.build_reconcile_plan(
             registry_snapshot=registry_snapshot,
             account_snapshot=account_snapshot,
@@ -111,6 +180,7 @@ class ReconcileWorker:
                     "paused_markets": plan.paused_markets,
                     "diff_count": plan.diff_count,
                     "trigger_event_type": None if trigger_event is None else str(trigger_event.event_type),
+                    "refresh_summary": refresh_summary.as_payload(),
                 },
             ),
         )
@@ -348,21 +418,338 @@ class ReconcileWorker:
             await self._event_bus.publish(priority, event)
 
     def _resolve_snapshots(self) -> tuple[MarketRegistrySnapshot, AccountSnapshot]:
-        if self._registry_snapshot_provider is not None:
+        if self._registry is not None:
+            registry_snapshot = self._registry.snapshot()
+        elif self._registry_snapshot_provider is not None:
             registry_snapshot = self._registry_snapshot_provider()
-        elif self._account_state_store is not None:
-            registry_snapshot = MarketRegistrySnapshot(tuple())
         else:
             registry_snapshot = MarketRegistrySnapshot(tuple())
 
-        if self._account_snapshot_provider is not None:
-            account_snapshot = self._account_snapshot_provider()
-        elif self._account_state_store is not None:
+        if self._account_state_store is not None:
             account_snapshot = self._account_state_store.snapshot()
+        elif self._account_snapshot_provider is not None:
+            account_snapshot = self._account_snapshot_provider()
         else:
             account_snapshot = AccountSnapshot()
 
         return registry_snapshot, account_snapshot
+
+    async def _refresh_authoritative_state(
+        self,
+        *,
+        trace_id: str,
+        condition_ids: tuple[str, ...] | None = None,
+    ) -> AuthoritativeRefreshSummary:
+        markets = self._target_markets(condition_ids=condition_ids)
+        if not markets:
+            return AuthoritativeRefreshSummary(
+                trace_id=trace_id,
+                market_count=0,
+                refreshed_markets=0,
+                refreshed_orderbooks=0,
+                refreshed_positions=0,
+                refreshed_open_orders=0,
+                refreshed_fills=0,
+                refreshed_balance=False,
+                refreshed_allowance=False,
+                user_refresh_enabled=self._trading_client is not None,
+            )
+
+        market_refreshes = await asyncio.gather(
+            *(self._refresh_market_authority(market) for market in markets),
+            return_exceptions=True,
+        )
+        refresh_failures: list[str] = []
+        refreshed_markets = 0
+        refreshed_orderbooks = 0
+
+        for item in market_refreshes:
+            if isinstance(item, Exception):
+                refresh_failures.append(str(item))
+                continue
+            if item.refreshed_market is not None:
+                refreshed_markets += 1
+                self._apply_refreshed_market(item.refreshed_market)
+            if item.orderbook_snapshot is not None:
+                refreshed_orderbooks += 1
+                await self._apply_refreshed_orderbook(
+                    item.refreshed_market or item.requested_market,
+                    item.orderbook_snapshot,
+                )
+            for failure in item.failures:
+                refresh_failures.append(failure)
+
+        account_summary = await self._refresh_account_authority(trace_id=trace_id, markets=markets)
+        refresh_failures.extend(account_summary.failures)
+
+        return AuthoritativeRefreshSummary(
+            trace_id=trace_id,
+            market_count=len(markets),
+            refreshed_markets=refreshed_markets,
+            refreshed_orderbooks=refreshed_orderbooks,
+            refreshed_positions=account_summary.refreshed_positions,
+            refreshed_open_orders=account_summary.refreshed_open_orders,
+            refreshed_fills=account_summary.refreshed_fills,
+            refreshed_balance=account_summary.refreshed_balance,
+            refreshed_allowance=account_summary.refreshed_allowance,
+            user_refresh_enabled=account_summary.user_refresh_enabled,
+            failures=tuple(refresh_failures),
+        )
+
+    def _target_markets(self, *, condition_ids: tuple[str, ...] | None = None) -> tuple[Market, ...]:
+        condition_id_filter = set(condition_ids or ())
+        if self._registry_snapshot_provider is not None:
+            markets = self._registry_snapshot_provider().markets
+        elif self._registry is not None:
+            markets = self._registry.snapshot().markets
+        else:
+            markets = tuple()
+        if not condition_id_filter:
+            return markets
+        return tuple(market for market in markets if market.condition_id in condition_id_filter)
+
+    async def _refresh_market_authority(self, market: Market) -> AuthoritativeMarketRefresh:
+        failures: list[str] = []
+        refreshed_market = await self._fetch_gamma_market(market, failures)
+        orderbook_snapshot = await self._fetch_orderbook_snapshot(
+            refreshed_market or market,
+            failures,
+        )
+        return AuthoritativeMarketRefresh(
+            requested_market=market,
+            refreshed_market=refreshed_market,
+            orderbook_snapshot=orderbook_snapshot,
+            failures=tuple(failures),
+        )
+
+    async def _fetch_gamma_market(
+        self,
+        market: Market,
+        failures: list[str],
+    ) -> Market | None:
+        if self._gamma_client is None:
+            return None
+        for slug in (market.market_slug, market.event_slug):
+            if not slug:
+                continue
+            try:
+                candidates = await self._gamma_client.list_markets(
+                    slug=str(slug),
+                    active=None,
+                    closed=None,
+                    limit=25,
+                )
+                gamma_market = _pick_gamma_market(candidates, market)
+                if gamma_market is None:
+                    failures.append(f"gamma:{market.condition_id}:{slug}:not_found")
+                    continue
+                refreshed_market = self._merge_gamma_market(
+                    market,
+                    gamma_market.to_market(),
+                    gamma_market.clob_enabled,
+                )
+                return refreshed_market
+            except Exception as exc:  # pragma: no cover - external SDK failure path
+                failures.append(f"gamma:{market.condition_id}:{slug}:{exc}")
+        return None
+
+    async def _fetch_orderbook_snapshot(
+        self,
+        market: Market,
+        failures: list[str],
+    ) -> OrderbookSnapshot | None:
+        if self._clob_client is None:
+            return None
+        try:
+            orderbook = await self._clob_client.get_orderbook(
+                market.no_token_id,
+                market_slug=market.market_slug,
+                condition_id=market.condition_id,
+            )
+            return orderbook.to_snapshot()
+        except Exception as exc:  # pragma: no cover - external SDK failure path
+            failures.append(f"clob:{market.condition_id}:{market.no_token_id}:{exc}")
+            return None
+
+    async def _apply_refreshed_orderbook(self, market: Market, snapshot: OrderbookSnapshot) -> None:
+        if self._market_ws_worker is None:
+            return
+        await self._market_ws_worker.apply_rest_snapshot(
+            market.no_token_id,
+            snapshot,
+            source="reconcile_rest",
+        )
+
+    def _apply_refreshed_market(self, market: Market) -> None:
+        if self._market_ws_worker is not None:
+            self._market_ws_worker.track_market(market)
+            return
+        if self._registry is not None:
+            self._registry.upsert(market)
+
+    def _merge_gamma_market(
+        self,
+        current: Market,
+        refreshed: Market,
+        clob_enabled: bool | None,
+    ) -> Market:
+        merged = current.with_metadata(
+            event_id=refreshed.event_id,
+            event_title=refreshed.event_title,
+            event_slug=refreshed.event_slug,
+            category=refreshed.category,
+            tags=refreshed.tags,
+            matched_keywords=current.matched_keywords,
+            yes_token_id=refreshed.yes_token_id,
+            no_token_id=refreshed.no_token_id,
+            neg_risk=refreshed.neg_risk,
+        )
+        merged = merged.with_tick_size(refreshed.tick_size)
+        merged = merged.with_min_order_size(refreshed.min_order_size)
+
+        desired_status = refreshed.trading_status
+        reject_reason = refreshed.reject_reason
+        if clob_enabled is False and desired_status == TradingStatus.ELIGIBLE:
+            desired_status = TradingStatus.PAUSED
+            reject_reason = reject_reason or "orderbook_disabled"
+
+        if current.trading_status in {
+            TradingStatus.RESOLVED,
+            TradingStatus.REJECTED,
+        }:
+            desired_status = current.trading_status
+            reject_reason = current.reject_reason
+        elif (
+            current.trading_status == TradingStatus.PAUSED
+            and current.reject_reason == "manual_pause"
+            and desired_status == TradingStatus.ELIGIBLE
+        ):
+            desired_status = TradingStatus.PAUSED
+            reject_reason = current.reject_reason
+
+        return merged.with_trading_status(desired_status, reject_reason=reject_reason)
+
+    async def _refresh_account_authority(
+        self,
+        *,
+        trace_id: str,
+        markets: tuple[Market, ...],
+    ) -> AuthoritativeRefreshSummary:
+        failures: list[str] = []
+        user_refresh_enabled = bool(
+            self._trading_client is not None
+            or (
+                self._data_client is not None
+                and self._clob_client is not None
+                and self._data_client.has_auth_client
+                and self._clob_client.has_auth_client
+            )
+        )
+        if not user_refresh_enabled:
+            return AuthoritativeRefreshSummary(
+                trace_id=trace_id,
+                market_count=len(markets),
+                refreshed_markets=0,
+                refreshed_orderbooks=0,
+                refreshed_positions=0,
+                refreshed_open_orders=0,
+                refreshed_fills=0,
+                refreshed_balance=False,
+                refreshed_allowance=False,
+                user_refresh_enabled=False,
+                failures=(),
+            )
+
+        positions_task = asyncio.create_task(self._fetch_positions(failures))
+        open_orders_task = asyncio.create_task(self._fetch_open_orders(failures))
+        fills_task = asyncio.create_task(self._fetch_fills(failures))
+        balance_task = asyncio.create_task(self._fetch_balance(failures))
+        positions, open_orders, fills, balance_result = await asyncio.gather(
+            positions_task,
+            open_orders_task,
+            fills_task,
+            balance_task,
+        )
+        balance, allowance, balance_refreshed, allowance_refreshed = balance_result
+
+        if self._account_state_store is not None:
+            if positions is not None:
+                self._account_state_store.replace_positions(positions)
+            if open_orders is not None:
+                self._account_state_store.replace_open_orders(open_orders)
+            if fills is not None:
+                self._account_state_store.replace_fills(fills)
+            if balance_refreshed or allowance_refreshed:
+                self._account_state_store.update_balances(
+                    balance_usdc=balance,
+                    allowance_usdc=allowance,
+                )
+
+        return AuthoritativeRefreshSummary(
+            trace_id=trace_id,
+            market_count=len(markets),
+            refreshed_markets=0,
+            refreshed_orderbooks=0,
+            refreshed_positions=0 if positions is None else len(positions),
+            refreshed_open_orders=0 if open_orders is None else len(open_orders),
+            refreshed_fills=0 if fills is None else len(fills),
+            refreshed_balance=balance_refreshed,
+            refreshed_allowance=allowance_refreshed,
+            user_refresh_enabled=True,
+            failures=tuple(failures),
+        )
+
+    async def _fetch_positions(
+        self,
+        failures: list[str],
+    ) -> tuple[Position, ...] | None:
+        if self._data_client is None:
+            return None
+        try:
+            positions = await self._data_client.list_positions()
+        except Exception as exc:  # pragma: no cover - external SDK failure path
+            failures.append(f"data:positions:{exc}")
+            return None
+        return tuple(position.to_position() for position in positions)
+
+    async def _fetch_open_orders(
+        self,
+        failures: list[str],
+    ) -> tuple[OrderRecord, ...] | None:
+        if self._clob_client is None:
+            return None
+        try:
+            orders = await self._clob_client.list_open_orders()
+        except Exception as exc:  # pragma: no cover - external SDK failure path
+            failures.append(f"clob:open_orders:{exc}")
+            return None
+        return tuple(order.to_order_record() for order in orders)
+
+    async def _fetch_fills(
+        self,
+        failures: list[str],
+    ) -> tuple[Fill, ...] | None:
+        if self._clob_client is None:
+            return None
+        try:
+            fills = await self._clob_client.list_fills()
+        except Exception as exc:  # pragma: no cover - external SDK failure path
+            failures.append(f"clob:fills:{exc}")
+            return None
+        return tuple(fill.to_fill() for fill in fills)
+
+    async def _fetch_balance(
+        self,
+        failures: list[str],
+    ) -> tuple[Decimal, Decimal, bool, bool]:
+        if self._data_client is None:
+            return Decimal("0"), Decimal("0"), False, False
+        try:
+            balance = await self._data_client.get_balance()
+        except Exception as exc:  # pragma: no cover - external SDK failure path
+            failures.append(f"data:balance:{exc}")
+            return Decimal("0"), Decimal("0"), False, False
+        return balance.balance_usdc, balance.allowance_usdc, True, True
 
 
 def _submission_succeeded(result: object | None) -> bool:
@@ -387,3 +774,19 @@ def _submission_succeeded(result: object | None) -> bool:
     if submitted is not None:
         return bool(submitted)
     return True
+
+
+def _pick_gamma_market(
+    candidates: tuple[object, ...],
+    market: Market,
+) -> object | None:
+    for candidate in candidates:
+        if getattr(candidate, "condition_id", None) == market.condition_id:
+            return candidate
+    for candidate in candidates:
+        if getattr(candidate, "no_token_id", None) == market.no_token_id:
+            return candidate
+    for candidate in candidates:
+        if getattr(candidate, "market_slug", None) == market.market_slug:
+            return candidate
+    return None

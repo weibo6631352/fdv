@@ -5,7 +5,7 @@
 ## 初始启动顺序
 
 1. 准备环境变量，确认密钥不在仓库内。
-2. 准备 PostgreSQL，并执行 Alembic 迁移。
+2. 准备 PostgreSQL，并按当前源码的模型 / 初始化逻辑直接创建或重建开发库。
 3. 启动服务，先检查 `/health`。
 4. 初始化 outbox、数据库连接、Polymarket clients 和运行时队列。
 5. 拉取 Gamma / CLOB / Data API 权威快照。
@@ -36,7 +36,7 @@
 - P0 交易队列、Order Executor、Risk Manager、Strategy Engine。
 - 买入订单类型、卖出价格、预算分配算法。
 - WebSocket 重连和 reconcile 恢复策略。
-- 数据库迁移和 outbox 格式。
+- 数据库 schema 初始化方式和 outbox 格式。
 - 新增线程池、进程池、锁、阻塞外部调用。
 
 ## 交接记录建议
@@ -44,7 +44,7 @@
 每次部署至少记录：
 - commit id。
 - 是否影响 P0 交易链路。
-- 是否新增迁移。
+- 是否调整数据库 schema 初始化方式。
 - 是否新增配置。
 - 是否需要暂停新买入。
 - 回滚方式和回滚后的 reconcile 要求。

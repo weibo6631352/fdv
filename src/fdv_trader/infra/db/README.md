@@ -32,8 +32,6 @@
 ## 交接清单
 
 新增模型或仓储前确认：
-- 是否需要 Alembic 迁移。
 - 是否需要 raw JSON 摘要字段。
 - 是否需要 trace id、order id、trade id 索引。
 - 是否影响 Persistence Worker 幂等写入。
-

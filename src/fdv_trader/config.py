@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     polymarket_data_host: str = "https://data-api.polymarket.com"
     polymarket_market_ws: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     polymarket_user_ws: str = "wss://ws-subscriptions-clob.polymarket.com/ws/user"
+    polymarket_chain_id: int = Field(default=137, ge=1)
+    # 默认按 EOA 签名处理；如果使用代理钱包或 Safe，需要显式覆盖 signature type / funder。
+    polymarket_signature_type: int = Field(default=0, ge=0, le=2)
+    polymarket_funder_address: str | None = None
 
     # 策略与风控默认值偏保守；0 代表还没有准备好自动交易，不会放大仓位。
     portfolio_budget_usdc: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
@@ -136,9 +140,6 @@ class Settings(BaseSettings):
         "database_url_override",
     )
     _STARTUP_REQUIRED_SECRET_FIELDS: ClassVar[tuple[str, ...]] = (
-        "polymarket_api_key",
-        "polymarket_api_secret",
-        "polymarket_api_passphrase",
         "wallet_private_key",
     )
 
@@ -149,6 +150,7 @@ class Settings(BaseSettings):
         "wallet_private_key",
         "signer_private_key",
         "builder_attribution_credentials",
+        "polymarket_funder_address",
         "database_password",
         "database_url_override",
         mode="before",
@@ -226,6 +228,41 @@ class Settings(BaseSettings):
                         message="密钥未配置，启动阶段禁止自动下单",
                     )
                 )
+
+        api_cred_fields = (
+            "polymarket_api_key",
+            "polymarket_api_secret",
+            "polymarket_api_passphrase",
+        )
+        configured_api_cred_count = sum(
+            0 if self._is_secret_missing(field_name) else 1 for field_name in api_cred_fields
+        )
+        if 0 < configured_api_cred_count < len(api_cred_fields):
+            blocking_issues.append(
+                ConfigIssue(
+                    field="polymarket_api_credentials",
+                    code="partial_api_credentials",
+                    message="POLYMARKET_API_KEY / SECRET / PASSPHRASE 需要同时提供，或全部留空并在运行时派生",
+                )
+            )
+
+        if self.polymarket_signature_type not in {0, 1, 2}:
+            blocking_issues.append(
+                ConfigIssue(
+                    field="polymarket_signature_type",
+                    code="invalid_signature_type",
+                    message="POLYMARKET_SIGNATURE_TYPE 仅支持 0(EOA) / 1(proxy) / 2(safe)",
+                    value=self.polymarket_signature_type,
+                )
+            )
+        if self.polymarket_signature_type in {1, 2} and not self.polymarket_funder_address:
+            blocking_issues.append(
+                ConfigIssue(
+                    field="polymarket_funder_address",
+                    code="missing_funder_address",
+                    message="代理钱包或 Safe 模式需要配置 POLYMARKET_FUNDER_ADDRESS",
+                )
+            )
 
         # 资金边界不允许默认为 0 进入真实交易，否则虽然能启动，但不会形成明确的风险上限。
         for field_name, label in (
