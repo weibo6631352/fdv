@@ -7,7 +7,7 @@ from typing import Any, Awaitable, Callable, Mapping
 from uuid import uuid4
 
 from fdv_trader.domain.constants import ENTRY_NO_PRICE_MAX
-from fdv_trader.domain.events import DomainEvent, OutboxPriority
+from fdv_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from fdv_trader.domain.market import Market
 from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from fdv_trader.runtime.event_bus import EventBus
@@ -391,7 +391,7 @@ class MarketWsWorker:
                 self._tracked_markets[token_id] = resolved_market
         event = MarketWsEvent(
             trace_id=uuid4().hex,
-            event_type="market_resolved_or_disabled",
+            event_type=DomainEventType.MARKET_RESOLVED_OR_DISABLED,
             event_id=uuid4().hex,
             token_id=token_id,
             market_slug=state.snapshot.market_slug,
@@ -433,7 +433,7 @@ class MarketWsWorker:
         snapshot = state.snapshot
         event = MarketWsEvent(
             trace_id=uuid4().hex,
-            event_type="orderbook_snapshot_updated",
+            event_type=DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED,
             event_id=uuid4().hex,
             token_id=token_id,
             market_slug=snapshot.market_slug,
@@ -463,7 +463,7 @@ class MarketWsWorker:
             state.entry_price_touched = True
             touched = MarketWsEvent(
                 trace_id=event.trace_id,
-                event_type="entry_price_touched",
+                event_type=DomainEventType.ENTRY_PRICE_TOUCHED,
                 event_id=uuid4().hex,
                 token_id=token_id,
                 market_slug=snapshot.market_slug,

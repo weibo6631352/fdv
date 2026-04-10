@@ -32,14 +32,16 @@ class MarketRegistrySnapshot:
 
 
 class MarketRegistry:
-    """Sharded market registry with short-lived per-condition locks."""
+    """Sharded market registry with lock-free reads and short write commits."""
 
     def __init__(self) -> None:
         self._markets_by_condition_id: dict[str, Market] = {}
         self._condition_id_by_no_token_id: dict[str, str] = {}
         self._condition_id_by_slug: dict[str, str] = {}
+        self._snapshot = MarketRegistrySnapshot(tuple())
         self._shard_locks: dict[str, Lock] = {}
-        self._lock_index = Lock()
+        self._locks_lock = Lock()
+        self._commit_lock = Lock()
 
     def upsert(self, market: Market, *, timeout: float = 0.05) -> None:
         self._with_condition_lock(market.condition_id, timeout, lambda: self._upsert_locked(market))
@@ -52,23 +54,23 @@ class MarketRegistry:
         )
 
     def get_by_condition_id(self, condition_id: str, *, timeout: float = 0.05) -> Market | None:
-        return self._read_market_locked(condition_id, timeout=timeout)
+        # 读取走 copy-on-write 快照引用，不和 P0 写路径竞争全局索引锁。
+        return self._markets_by_condition_id.get(condition_id)
 
     def get_by_no_token_id(self, no_token_id: str, *, timeout: float = 0.05) -> Market | None:
-        return self._with_index_lock(
-            timeout,
-            lambda: self._get_by_no_token_id_locked(no_token_id),
-        )
+        condition_id = self._condition_id_by_no_token_id.get(no_token_id)
+        if condition_id is None:
+            return None
+        return self._markets_by_condition_id.get(condition_id)
 
     def get_by_slug(self, slug: str, *, timeout: float = 0.05) -> Market | None:
-        return self._with_index_lock(timeout, lambda: self._get_by_slug_locked(slug))
+        condition_id = self._condition_id_by_slug.get(slug)
+        if condition_id is None:
+            return None
+        return self._markets_by_condition_id.get(condition_id)
 
     def snapshot(self) -> MarketRegistrySnapshot:
-        snapshot = self._with_index_lock(
-            0.05,
-            lambda: MarketRegistrySnapshot(tuple(self._markets_by_condition_id.values())),
-        )
-        return snapshot or MarketRegistrySnapshot(tuple())
+        return self._snapshot
 
     def set_trading_status(
         self,
@@ -159,7 +161,7 @@ class MarketRegistry:
         )
 
     def resume_market(self, condition_id: str, *, timeout: float = 0.05) -> Market | None:
-        market = self._read_market_locked(condition_id, timeout=timeout)
+        market = self.get_by_condition_id(condition_id, timeout=timeout)
         if market is None or market.trading_status not in {
             TradingStatus.PAUSED,
             TradingStatus.CANDIDATE,
@@ -188,82 +190,80 @@ class MarketRegistry:
         )
 
     def _upsert_locked(self, market: Market) -> Market | None:
-        def mutate() -> Market:
-            previous = self._markets_by_condition_id.get(market.condition_id)
-            if previous is not None:
-                self._detach_indexes_locked(previous)
-            self._markets_by_condition_id[market.condition_id] = market
-            self._condition_id_by_no_token_id[market.no_token_id] = market.condition_id
-            self._condition_id_by_slug[market.market_slug] = market.condition_id
-            if market.event_slug:
-                self._condition_id_by_slug[market.event_slug] = market.condition_id
-            return market
+        with self._commit_lock:
+            markets_by_condition_id = dict(self._markets_by_condition_id)
+            condition_id_by_no_token_id = dict(self._condition_id_by_no_token_id)
+            condition_id_by_slug = dict(self._condition_id_by_slug)
 
-        return self._with_index_lock(0.05, mutate)
+            previous = markets_by_condition_id.get(market.condition_id)
+            if previous is not None:
+                self._detach_indexes(previous, condition_id_by_no_token_id, condition_id_by_slug)
+
+            markets_by_condition_id[market.condition_id] = market
+            condition_id_by_no_token_id[market.no_token_id] = market.condition_id
+            condition_id_by_slug[market.market_slug] = market.condition_id
+            if market.event_slug:
+                condition_id_by_slug[market.event_slug] = market.condition_id
+
+            self._publish_state(
+                markets_by_condition_id,
+                condition_id_by_no_token_id,
+                condition_id_by_slug,
+            )
+            return market
 
     def _update_market_locked(
         self,
         condition_id: str,
         updater: Callable[[Market], Market],
     ) -> Market | None:
-        def mutate() -> Market | None:
+        with self._commit_lock:
             current = self._markets_by_condition_id.get(condition_id)
             if current is None:
                 return None
+
             updated = updater(current)
-            previous = self._markets_by_condition_id.get(condition_id)
-            if previous is not None:
-                self._detach_indexes_locked(previous)
-            self._markets_by_condition_id[condition_id] = updated
-            self._condition_id_by_no_token_id[updated.no_token_id] = updated.condition_id
-            self._condition_id_by_slug[updated.market_slug] = updated.condition_id
+            markets_by_condition_id = dict(self._markets_by_condition_id)
+            condition_id_by_no_token_id = dict(self._condition_id_by_no_token_id)
+            condition_id_by_slug = dict(self._condition_id_by_slug)
+
+            self._detach_indexes(current, condition_id_by_no_token_id, condition_id_by_slug)
+            markets_by_condition_id[condition_id] = updated
+            condition_id_by_no_token_id[updated.no_token_id] = updated.condition_id
+            condition_id_by_slug[updated.market_slug] = updated.condition_id
             if updated.event_slug:
-                self._condition_id_by_slug[updated.event_slug] = updated.condition_id
+                condition_id_by_slug[updated.event_slug] = updated.condition_id
+
+            self._publish_state(
+                markets_by_condition_id,
+                condition_id_by_no_token_id,
+                condition_id_by_slug,
+            )
             return updated
 
-        return self._with_index_lock(0.05, mutate)
-
-    def _detach_indexes_locked(self, market: Market) -> None:
-        if self._condition_id_by_no_token_id.get(market.no_token_id) == market.condition_id:
-            self._condition_id_by_no_token_id.pop(market.no_token_id, None)
-        if self._condition_id_by_slug.get(market.market_slug) == market.condition_id:
-            self._condition_id_by_slug.pop(market.market_slug, None)
-        if (
-            market.event_slug
-            and self._condition_id_by_slug.get(market.event_slug) == market.condition_id
-        ):
-            self._condition_id_by_slug.pop(market.event_slug, None)
-
-    def _read_market_locked(self, condition_id: str, *, timeout: float) -> Market | None:
-        return self._with_index_lock(
-            timeout,
-            lambda: self._markets_by_condition_id.get(condition_id),
-        )
-
-    def _get_by_no_token_id_locked(self, no_token_id: str) -> Market | None:
-        condition_id = self._condition_id_by_no_token_id.get(no_token_id)
-        if condition_id is None:
-            return None
-        return self._markets_by_condition_id.get(condition_id)
-
-    def _get_by_slug_locked(self, slug: str) -> Market | None:
-        condition_id = self._condition_id_by_slug.get(slug)
-        if condition_id is None:
-            return None
-        return self._markets_by_condition_id.get(condition_id)
-
-    def _with_index_lock(
+    def _detach_indexes(
         self,
-        timeout: float,
-        action: Callable[[], Market | MarketRegistrySnapshot | None],
-    ):
-        acquired = self._lock_index.acquire(timeout=timeout)
-        if not acquired:
-            return None
-        try:
-            return action()
-        finally:
-            self._lock_index.release()
+        market: Market,
+        condition_id_by_no_token_id: dict[str, str],
+        condition_id_by_slug: dict[str, str],
+    ) -> None:
+        if condition_id_by_no_token_id.get(market.no_token_id) == market.condition_id:
+            condition_id_by_no_token_id.pop(market.no_token_id, None)
+        if condition_id_by_slug.get(market.market_slug) == market.condition_id:
+            condition_id_by_slug.pop(market.market_slug, None)
+        if market.event_slug and condition_id_by_slug.get(market.event_slug) == market.condition_id:
+            condition_id_by_slug.pop(market.event_slug, None)
+
+    def _publish_state(
+        self,
+        markets_by_condition_id: dict[str, Market],
+        condition_id_by_no_token_id: dict[str, str],
+        condition_id_by_slug: dict[str, str],
+    ) -> None:
+        self._markets_by_condition_id = markets_by_condition_id
+        self._condition_id_by_no_token_id = condition_id_by_no_token_id
+        self._condition_id_by_slug = condition_id_by_slug
+        self._snapshot = MarketRegistrySnapshot(tuple(markets_by_condition_id.values()))
 
     def _with_condition_lock(
         self,
@@ -281,7 +281,7 @@ class MarketRegistry:
             lock.release()
 
     def _condition_lock(self, condition_id: str) -> Lock:
-        with self._lock_index:
+        with self._locks_lock:
             lock = self._shard_locks.get(condition_id)
             if lock is None:
                 lock = Lock()

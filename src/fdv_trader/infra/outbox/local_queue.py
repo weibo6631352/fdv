@@ -1,182 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import re
-from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from dataclasses import replace
+from datetime import datetime
 from itertools import count
-from typing import Any, Mapping
-from uuid import uuid4
+
+from fdv_trader.domain.events import (
+    OUTBOX_RAW_RESPONSE_SUMMARY_LIMIT,
+    OutboxEvent,
+    sanitize_raw_response,
+)
 
 DEFAULT_ENQUEUE_TIMEOUT = 0.01
-DEFAULT_RAW_RESPONSE_SUMMARY_LIMIT = 512
-LOW_PRIORITY_THRESHOLD = 2
-MAX_RAW_RESPONSE_DEPTH = 4
-MAX_RAW_RESPONSE_ITEMS = 20
+DEFAULT_RAW_RESPONSE_SUMMARY_LIMIT = OUTBOX_RAW_RESPONSE_SUMMARY_LIMIT
 RETAINED_OVERFLOW_REASON = "retained_low_priority_overflow"
-
-_SENSITIVE_KEY_FRAGMENTS = (
-    "api_key",
-    "authorization",
-    "auth",
-    "bearer",
-    "cookie",
-    "key",
-    "password",
-    "secret",
-    "signature",
-    "token",
-)
-_SENSITIVE_VALUE_PATTERN = re.compile(r"(?i)(bearer\s+)[^\s\"']+")
-_LONG_TOKEN_PATTERN = re.compile(r"(?i)\b[a-z0-9_\-+/=]{32,}\b")
-
-
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _normalize_priority(priority: int | str) -> int:
-    if isinstance(priority, str):
-        text = priority.strip().upper()
-        if text.startswith("P") and text[1:].isdigit():
-            return int(text[1:])
-        return int(text)
-    return int(priority)
-
-
-def _truncate(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    if limit <= 3:
-        return text[:limit]
-    return f"{text[: limit - 3]}..."
-
-
-def _looks_sensitive_key(key: Any) -> bool:
-    lowered = str(key).lower()
-    return any(fragment in lowered for fragment in _SENSITIVE_KEY_FRAGMENTS)
-
-
-def _redact_text(text: str) -> str:
-    text = _SENSITIVE_VALUE_PATTERN.sub(r"\1[REDACTED]", text)
-    return _LONG_TOKEN_PATTERN.sub("[REDACTED]", text)
-
-
-def _sanitize_value(value: Any, *, depth: int = 0) -> Any:
-    if depth >= MAX_RAW_RESPONSE_DEPTH:
-        return "[DEPTH_LIMITED]"
-
-    if value is None or isinstance(value, (bool, int, float)):
-        return value
-
-    if isinstance(value, datetime):
-        return value.isoformat()
-
-    if isinstance(value, bytes):
-        try:
-            value = value.decode("utf-8")
-        except UnicodeDecodeError:
-            return "[BINARY]"
-
-    if isinstance(value, str):
-        return _redact_text(value)
-
-    if isinstance(value, Mapping):
-        sanitized: dict[str, Any] = {}
-        for index, (key, item) in enumerate(value.items()):
-            if index >= MAX_RAW_RESPONSE_ITEMS:
-                sanitized["__truncated__"] = True
-                break
-            key_text = str(key)
-            if _looks_sensitive_key(key_text):
-                sanitized[key_text] = "[REDACTED]"
-            else:
-                sanitized[key_text] = _sanitize_value(item, depth=depth + 1)
-        return sanitized
-
-    if isinstance(value, (list, tuple, set, frozenset)):
-        items = list(value)[:MAX_RAW_RESPONSE_ITEMS]
-        sanitized_items = [_sanitize_value(item, depth=depth + 1) for item in items]
-        if len(items) < len(value):
-            sanitized_items.append("[TRUNCATED]")
-        return sanitized_items
-
-    return _redact_text(repr(value))
-
-
-def sanitize_raw_response(raw_response: Any, *, max_length: int = DEFAULT_RAW_RESPONSE_SUMMARY_LIMIT) -> str:
-    """把原始响应压成可落库的摘要，并对敏感字段做脱敏。"""
-
-    sanitized = _sanitize_value(raw_response)
-    if isinstance(sanitized, str):
-        summary = sanitized
-    else:
-        try:
-            summary = json.dumps(sanitized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        except TypeError:
-            summary = _redact_text(repr(sanitized))
-    return _truncate(summary, max_length)
-
-
-@dataclass(frozen=True, slots=True)
-class OutboxEvent:
-    trace_id: str
-    event_type: str
-    idempotency_key: str
-    event_id: str = field(default_factory=lambda: uuid4().hex)
-    market_slug: str | None = None
-    condition_id: str | None = None
-    token_id: str | None = None
-    reason: str | None = None
-    created_at: datetime = field(default_factory=_utc_now)
-    priority: int | str = 0
-    retry_count: int = 0
-    last_error: str | None = None
-    raw_response_summary: str | None = None
-    payload: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "priority", _normalize_priority(self.priority))
-        created_at = self.created_at
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        object.__setattr__(self, "created_at", created_at)
-        if self.raw_response_summary is not None:
-            object.__setattr__(
-                self,
-                "raw_response_summary",
-                sanitize_raw_response(self.raw_response_summary),
-            )
-        if not self.event_id:
-            object.__setattr__(self, "event_id", uuid4().hex)
-
-    @property
-    def is_critical(self) -> bool:
-        return self.priority <= 1
-
-    @property
-    def merge_key(self) -> str | None:
-        if self.priority < LOW_PRIORITY_THRESHOLD:
-            return None
-        parts = [self.event_type, self.market_slug or "", self.condition_id or "", self.token_id or ""]
-        if not any(parts[1:]):
-            return None
-        return "|".join(parts)
-
-    def with_retry(self, *, last_error: str | None = None) -> "OutboxEvent":
-        return replace(
-            self,
-            retry_count=self.retry_count + 1,
-            last_error=last_error if last_error is not None else self.last_error,
-        )
-
-    def with_dead_letter(self, *, last_error: str | None = None) -> "OutboxEvent":
-        return replace(
-            self,
-            retry_count=self.retry_count + 1,
-            last_error=last_error if last_error is not None else self.last_error,
-        )
 
 
 class LocalOutbox:
@@ -321,7 +158,13 @@ class LocalOutbox:
 
     def _prepare_event(self, event: OutboxEvent) -> OutboxEvent:
         if event.raw_response_summary is not None and len(event.raw_response_summary) > DEFAULT_RAW_RESPONSE_SUMMARY_LIMIT:
-            return replace(event, raw_response_summary=sanitize_raw_response(event.raw_response_summary))
+            return replace(
+                event,
+                raw_response_summary=sanitize_raw_response(
+                    event.raw_response_summary,
+                    max_length=DEFAULT_RAW_RESPONSE_SUMMARY_LIMIT,
+                ),
+            )
         return event
 
     def _event_id(self, event: str | OutboxEvent) -> str:
@@ -385,7 +228,10 @@ class LocalOutbox:
         if not self._retained:
             return
 
-        for event_id, event in sorted(self._retained.items(), key=lambda item: (item[1].priority, item[1].created_at, item[0])):
+        for event_id, event in sorted(
+            self._retained.items(),
+            key=lambda item: (item[1].priority, item[1].created_at, item[0]),
+        ):
             if event_id in self._queued_event_ids:
                 continue
             if await self._enqueue_ready(event, timeout=self._enqueue_timeout):

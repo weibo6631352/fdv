@@ -76,8 +76,13 @@ class RiskManager:
         # 这里只读本地快照和热状态；P0 路径不允许为了下单临时打 REST 或查数据库。
         open_orders = tuple(open_orders)
         if portfolio_total_invested_usdc is None and allocation_plan is not None:
-            portfolio_total_invested_usdc = allocation_plan.allocated_budget_usdc
+            # allocation plan 里通常已经包含当前待审查 intent 的预算；这里要扣掉它，避免总仓检查重复计数。
+            portfolio_total_invested_usdc = allocation_plan.allocated_budget_usdc - _intent_notional_usdc(
+                intent
+            )
         if portfolio_total_invested_usdc is None:
+            portfolio_total_invested_usdc = Decimal("0")
+        if portfolio_total_invested_usdc < Decimal("0"):
             portfolio_total_invested_usdc = Decimal("0")
         if open_orders_count is None:
             open_orders_count = len(open_orders)

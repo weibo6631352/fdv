@@ -225,9 +225,8 @@ class MarketClassifier:
                 match_signals,
                 "category missing crypto / cryptocurrency keyword",
             )
-        match_signals.extend(
-            self._matched_signals("category", category_text, ("crypto", "cryptocurrency"))
-        )
+        # 风控层只认域内稳定的 canonical keyword，不直接依赖原始文案中的各种写法。
+        match_signals.append(MatchSignal(field_name="category", keyword="crypto"))
 
         # FDV 只允许从 event title 或其明确等价字段命中，不能把宽泛 valuation 当成目标信号。
         event_text = " ".join(
@@ -247,9 +246,7 @@ class MarketClassifier:
                 match_signals,
                 "event title missing fdv / fully diluted valuation keyword",
             )
-        match_signals.extend(
-            self._matched_signals("event_title", event_text, ("fdv", "fully diluted valuation"))
-        )
+        match_signals.append(MatchSignal(field_name="event_title", keyword="fdv"))
 
         # 500M 只从 question / name / slug 等 market 字段命中，避免 title 里的表述误导分类。
         market_text = " ".join(
@@ -288,13 +285,7 @@ class MarketClassifier:
                 match_signals,
                 "market question / name / slug missing 500m threshold keyword",
             )
-        match_signals.extend(
-            self._matched_signals(
-                "market_question",
-                market_text,
-                ("$500m", "500m", "500 million", "500,000,000"),
-            )
-        )
+        match_signals.append(MatchSignal(field_name="market_question", keyword="500m"))
 
         if (
             parsed["condition_id"] is None

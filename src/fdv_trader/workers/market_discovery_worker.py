@@ -6,8 +6,9 @@ from itertools import count
 from typing import Any, Iterable, Mapping
 from uuid import uuid4
 
+from fdv_trader.app.market_service import MarketDiscoveryOutcome, MarketService
 from fdv_trader.domain.classifier import MarketClassifier
-from fdv_trader.domain.events import DomainEvent, OutboxPriority
+from fdv_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from fdv_trader.infra.polymarket.schemas import RawMarketEvent
 from fdv_trader.runtime.event_bus import EventBus
 
@@ -45,11 +46,19 @@ class MarketDiscoveryWorker:
         self,
         *,
         classifier: MarketClassifier | None = None,
+        market_service: MarketService | None = None,
         event_bus: EventBus | None = None,
+        registry: Any | None = None,
+        market_tracker: Any | None = None,
         source_name: str = "gamma",
         retry_delay_seconds: int = 30,
     ) -> None:
         self._classifier = classifier or MarketClassifier()
+        self._market_service = market_service or MarketService(
+            classifier=self._classifier,
+            registry=registry,
+            market_tracker=market_tracker,
+        )
         self._event_bus = event_bus
         self._source_name = source_name
         self._retry_delay_seconds = retry_delay_seconds
@@ -148,7 +157,7 @@ class MarketDiscoveryWorker:
         self._last_failure = DiscoveryFailure(source=source, reason=reason, retry_at=retry_at)
         return MarketDiscoveryEvent(
             trace_id=self._next_trace_id(source),
-            event_type="retry",
+            event_type=DomainEventType.RETRY,
             event_id=uuid4().hex,
             reason=reason,
             created_at=_utc_now(),
@@ -161,40 +170,38 @@ class MarketDiscoveryWorker:
         )
 
     async def _classify_and_emit(self, raw_event: RawMarketEvent) -> DomainEvent:
-        classification = self._classifier.classify(raw_event.payload)
-        existing = self._lookup_existing(raw_event)
-        is_update = existing is not None
-        reject_reason = getattr(classification, "reject_reason", None)
-        reject_detail = getattr(classification, "reject_detail", None)
-        status = getattr(classification, "status", None)
+        outcome: MarketDiscoveryOutcome = self._market_service.ingest_raw_market(
+            raw_event.payload,
+            source=raw_event.source,
+            trace_id=raw_event.trace_id,
+            discovered_at=raw_event.discovered_at,
+        )
+        classification = outcome.classification
         if classification.accepted:
-            event_type = "market_updated" if is_update else "market_discovered"
             self._remember(raw_event)
-        else:
-            event_type = "market_filtered_out"
 
         event = MarketDiscoveryEvent(
-            trace_id=raw_event.trace_id,
-            event_type=event_type,
-            event_id=uuid4().hex,
-            market_slug=raw_event.market_slug,
-            condition_id=raw_event.condition_id,
-            reason=str(getattr(reject_reason, "value", "") or ""),
-            created_at=raw_event.discovered_at,
+            trace_id=outcome.trace_id,
+            event_type=outcome.event.event_type,
+            event_id=outcome.event.event_id,
+            market_slug=outcome.event.market_slug,
+            condition_id=outcome.event.condition_id,
+            reason=outcome.event.reason,
+            created_at=outcome.event.created_at,
             merge_key=raw_event.dedupe_identity,
             payload={
                 "source": raw_event.source,
                 "summary": raw_event.summary,
                 "dedupe_key": raw_event.dedupe_key,
-                "classification_status": getattr(
-                    status,
-                    "value",
-                    str(status) if status is not None else "",
-                ),
-                "classification_reason": getattr(reject_reason, "value", None),
-                "classification_detail": reject_detail,
-                "matched_keywords": tuple(getattr(classification, "matched_keywords", ())),
-                "accepted": bool(getattr(classification, "accepted", False)),
+                "classification_status": classification.status.value,
+                "classification_reason": classification.reject_reason.value
+                if classification.reject_reason
+                else None,
+                "classification_detail": classification.reject_detail,
+                "matched_keywords": classification.matched_keywords,
+                "accepted": classification.accepted,
+                "discovery_kind": outcome.discovery_kind,
+                "subscription_request": outcome.subscription_request,
                 "raw_market": raw_event.payload,
                 "discovered_at": raw_event.discovered_at.isoformat(),
             },
