@@ -1,0 +1,14 @@
+from __future__ import annotations
+
+from enum import StrEnum
+
+
+class MarketLifecycle(StrEnum):
+    DISCOVERED = "discovered"
+    CLASSIFIED = "classified"
+    WATCHING_ORDERBOOK = "watching_orderbook"
+    ENTRY_READY = "entry_ready"
+    POSITION_OPEN = "position_open"
+    EXIT_ORDER_OPEN = "exit_order_open"
+    CLOSED = "closed"
+
