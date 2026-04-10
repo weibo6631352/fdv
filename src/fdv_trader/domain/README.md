@@ -1,13 +1,56 @@
 # domain 目录说明
 
-该目录存放纯业务规则。
+该目录存放纯业务规则、领域模型和内部 DTO。Domain 层必须能在没有数据库、没有 FastAPI、没有 Polymarket SDK、没有 WebSocket 的情况下独立测试。
 
-职责：
-- market 分类、资金分配、风控、策略判断、订单和持仓领域模型。
-- 维护与 Polymarket SDK 解耦的内部 DTO 和状态机。
+## 职责
 
-约束：
-- 不依赖 FastAPI、SQLAlchemy、WebSocket client 或 Polymarket SDK。
-- 不发起网络请求或数据库查询。
-- 交易规则变更需要优先补充单元测试。
+- Market 分类规则：Crypto 分类、FDV event、500M threshold、排除非目标阈值。
+- 资金分配规则：eligible markets、等权预算、剩余额度、FAK 释放资金再分配。
+- 风控规则：单笔、单 market、组合、open orders、价格、spread、流动性和重试限制。
+- 策略规则：入场、FAK 成交处理、GTC SELL 意图、跳过原因。
+- 领域模型：market、orderbook、order、fill、position、allocation、events、状态机。
+
+## 文件职责
+
+- `allocation.py`：组合资金分配模型和算法。
+- `classifier.py`：market 文本与分类规则。
+- `constants.py`：策略常量，例如 `0.60` 和 `0.70`。
+- `events.py`：领域事件模型。
+- `market.py`：market 元数据和交易状态。
+- `order.py`：订单意图、方向、类型和状态。
+- `orderbook.py`：orderbook 快照、价格层级和 spread。
+- `position.py`：持仓与 open SELL 覆盖状态。
+- `risk.py`：下单前风控门禁。
+- `strategy.py`：从策略条件生成订单意图。
+- `state_machine.py`：market / 交易生命周期。
+
+## 允许依赖
+
+- Python 标准库。
+- 与业务建模相关的轻量纯 Python 库。
+- 同层 domain 模块。
+
+## 禁止依赖
+
+- FastAPI、SQLAlchemy、Alembic。
+- Polymarket SDK、HTTP client、WebSocket client。
+- 环境变量、配置加载、日志落盘、数据库查询。
+- runtime registry、worker、app service。
+
+## 接口契约
+
+- Domain 输入应是内部 DTO、dataclass、枚举、Decimal 或基础类型。
+- Domain 输出应是决策对象、意图对象、事件对象或错误原因。
+- 拒绝原因必须可审计，不能只返回 `False`。
+- 金额和价格使用 `Decimal`，不要用浮点数表示交易金额。
+- 策略常量需要集中管理，避免散落硬编码。
+
+## 交接清单
+
+修改 Domain 前确认：
+- 是否改变业务策略或风控规则。
+- 是否新增拒绝原因和审计字段。
+- 是否补充 domain 单元测试。
+- 是否影响 App 层调用契约。
+- 是否保持纯函数 / 纯模型可测试性。
 

@@ -1,19 +1,55 @@
 # fdv_trader 包说明
 
-该包是 Polymarket FDV 自动交易系统的主源码包。
+该包是 Polymarket FDV 自动交易系统的主源码包。包内按架构分层组织，目的是让任何人接手一个目录时，都能判断自己的改动应该放在哪一层、能调用谁、不能调用谁。
 
-分层：
-- [api](./api/README.md)：Admin API 与健康检查。
-- [cli](./cli/README.md)：命令行入口。
-- [app](./app/README.md)：应用用例编排。
-- [domain](./domain/README.md)：纯业务规则。
-- [infra](./infra/README.md)：外部系统适配。
-- [observability](./observability/README.md)：审计、指标和 trace。
-- [runtime](./runtime/README.md)：事件总线、状态注册表和运行时控制。
-- [workers](./workers/README.md)：常驻后台任务。
+## 子目录索引
 
-边界原则：
-- Domain 不依赖 HTTP、数据库或 Polymarket SDK。
-- Order Executor 是唯一提交、取消、替换订单的模块。
-- Risk Manager 是下单前强制门禁。
+| 目录 | 角色 | 说明 |
+| --- | --- | --- |
+| [api](./api/README.md) | Interface | FastAPI Admin API 和健康检查 |
+| [cli](./cli/README.md) | Interface | 命令行入口 |
+| [app](./app/README.md) | Application | 用例编排与服务协调 |
+| [domain](./domain/README.md) | Domain | 纯业务规则和内部 DTO |
+| [infra](./infra/README.md) | Infrastructure | Polymarket、DB、outbox、外部 I/O |
+| [observability](./observability/README.md) | Observability | 审计、指标、trace |
+| [runtime](./runtime/README.md) | Runtime | 队列、registry、调度、supervisor |
+| [workers](./workers/README.md) | Workers | 常驻任务 |
+
+## 依赖方向
+
+推荐方向：
+
+```text
+api / cli / workers -> app -> domain
+app -> infra / runtime / observability
+infra -> domain
+runtime -> domain
+observability -> domain-friendly DTO or primitives
+```
+
+禁止方向：
+
+```text
+domain -> api / cli / app / infra / runtime / workers
+infra/db -> api
+api/routes -> infra/polymarket directly
+workers -> Polymarket SDK directly
+```
+
+## 全局接口原则
+
+- 对外交易动作统一通过 Order Executor。
+- 下单前统一通过 Risk Manager。
+- 状态热路径由 runtime 维护，外部查询读取快照或仓储数据。
+- 审计事件由 observability / outbox 统一承接，不在业务路径散落手写日志。
+- Polymarket SDK 对象不得泄漏到 domain。
+
+## 新增模块交接清单
+
+新增文件时，需要回答：
+- 所属层级是什么。
+- 是否会运行在 P0 交易链路。
+- 是否依赖网络、数据库、文件系统或锁。
+- 是否需要超时、重试、幂等键和审计事件。
+- 是否已有对应测试目录。
 

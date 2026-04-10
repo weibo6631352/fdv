@@ -1,13 +1,39 @@
 # db 目录说明
 
-该目录存放 PostgreSQL 模型、会话和仓储。
+该目录存放 PostgreSQL 模型、会话和仓储。数据库是审计、复盘、调试和恢复参考，不是交易状态唯一真相来源。
 
-职责：
-- 定义审计、订单、成交、持仓、market 和 outbox 相关表模型。
-- 提供异步仓储接口。
+## 职责
 
-约束：
-- 数据库不是交易状态唯一真相来源。
-- 数据库短暂失败不得阻塞订单提交。
-- 查询和写入需要保留幂等设计。
+- 定义 SQLAlchemy 模型。
+- 创建 async session factory。
+- 封装 market、order、fill、position、audit event、outbox 等仓储。
+- 支持幂等写入和可追踪重试。
+
+## 允许依赖
+
+- SQLAlchemy / asyncpg。
+- `fdv_trader.domain` DTO。
+- `fdv_trader.config` 中的数据库配置。
+
+## 禁止行为
+
+- 不在仓储中调用 Polymarket API。
+- 不在仓储中实现风控和策略规则。
+- 不要求 Order Executor 同步等待 PostgreSQL 写入成功。
+- 不把数据库状态当作订单是否发生的唯一判断。
+
+## 接口契约
+
+- 仓储方法应表达明确用例，例如 `save_audit_event`、`list_open_orders_snapshot`。
+- 写入操作需要幂等键或唯一约束支持。
+- 查询方法需要分页或明确限制条数。
+- 交易热路径不得临时执行慢查询。
+
+## 交接清单
+
+新增模型或仓储前确认：
+- 是否需要 Alembic 迁移。
+- 是否需要 raw JSON 摘要字段。
+- 是否需要 trace id、order id、trade id 索引。
+- 是否影响 Persistence Worker 幂等写入。
 
