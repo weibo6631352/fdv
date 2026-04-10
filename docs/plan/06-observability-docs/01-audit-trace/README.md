@@ -29,5 +29,5 @@
 
 ## 注释要求
 
-对 trace 传播、交易动作先写 outbox、raw response 脱敏和 skipped / retry 审计价值写中文注释。开发阶段不要求补充或运行验证测试。
+对 trace 传播、交易动作先写 outbox、raw response 脱敏和 skipped / retry 审计价值写中文注释。开发阶段不运行测试。
 

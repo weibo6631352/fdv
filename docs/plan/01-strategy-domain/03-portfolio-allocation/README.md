@@ -29,5 +29,5 @@
 
 ## 注释要求
 
-对等权目标、资金释放、open SELL 计入 exposure 和 FAK pending BUY 近似为 0 的原因写中文注释。开发阶段不要求补充或运行验证测试。
+对等权目标、资金释放、open SELL 计入 exposure 和 FAK pending BUY 近似为 0 的原因写中文注释。开发阶段不运行测试。
 

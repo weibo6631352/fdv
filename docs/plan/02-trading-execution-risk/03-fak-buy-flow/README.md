@@ -31,5 +31,5 @@
 
 ## 注释要求
 
-对为什么只用 FAK、为什么禁止 resting BUY、partial/no fill 资金释放和异常 live 订单处理写中文注释。开发阶段不要求补充或运行验证测试。
+对为什么只用 FAK、为什么禁止 resting BUY、partial/no fill 资金释放和异常 live 订单处理写中文注释。开发阶段不运行测试。
 

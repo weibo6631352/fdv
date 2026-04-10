@@ -19,5 +19,5 @@
 - 分类、分配、策略状态机可以并行开发，但必须先对齐 `Market`、`OrderIntent`、`AllocationPlan`、`RiskCheckResult`、`DomainEvent` 的字段名。
 - 本组不得引入 Polymarket SDK 对象、SQLAlchemy 模型、FastAPI request/response 或环境变量读取。
 - 注释重点写清 FDV / 500M 规则、阈值排除、等权分配不变量、FAK 资金释放和状态转换原因。
-- 开发阶段不要求补充或运行验证测试；涉及测试重点的内容记录到验收测试计划。
+- 开发阶段不运行测试；涉及测试重点的内容记录到验收测试计划。
 

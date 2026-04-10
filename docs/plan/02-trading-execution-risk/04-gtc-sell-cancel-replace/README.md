@@ -30,5 +30,5 @@
 
 ## 注释要求
 
-对只卖实际成交 shares、cancel + replace 的先取消后提交顺序、open SELL 与持仓不一致处理写中文注释。开发阶段不要求补充或运行验证测试。
+对只卖实际成交 shares、cancel + replace 的先取消后提交顺序、open SELL 与持仓不一致处理写中文注释。开发阶段不运行测试。
 

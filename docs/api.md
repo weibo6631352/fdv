@@ -12,11 +12,16 @@ Admin API 是人工查询和受控操作入口，不是交易策略入口。它�
 
 | 类别 | 示例 | 约束 |
 | --- | --- | --- |
-| 健康检查 | `GET /health` | 不访问慢外部依赖，返回进程基本状态 |
+| 健康检查 | `GET /health` | 只做进程存活和本地轻量状态检查，不访问慢外部依赖 |
+| 就绪检查（M4 计划） | `GET /ready` | 后续通过快照或轻量依赖状态确认 DB、Polymarket client、WS、outbox 和自动下单 readiness |
 | markets 查询 | target / eligible markets | 分页，读取快照，不阻塞 Market Registry 写入 |
 | orders 查询 | open SELL、历史 orders | 优先查询仓储或 position 快照 |
 | portfolio 查询 | 预算、exposure、剩余可买额度 | 不在 HTTP handler 内重新计算复杂分配 |
 | 人工操作 | pause / resume、cancel SELL、replace SELL | 必须调用 app service，并进入审计链路 |
+
+当前阶段说明：
+- 当前仓库只到 M1，`GET /health` 是现有轻量健康检查入口。
+- `GET /ready` 保留为 M4 的 Admin API / startup readiness 能力，不应在 M1 阶段视为已实现接口。
 
 ## 禁止接口类别
 
@@ -62,4 +67,3 @@ api route -> AdminService -> TradingService -> RiskManager -> OrderExecutor
 - 是否分页、限流和设置超时。
 - 是否依赖数据库、Polymarket API 或慢外部服务。
 - 失败时是否影响自动交易。
-

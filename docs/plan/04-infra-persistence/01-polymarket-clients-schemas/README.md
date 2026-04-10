@@ -32,5 +32,5 @@
 
 ## 注释要求
 
-对 Polymarket API 字段差异、WS 订阅参数、错误归一化和 raw payload 转 DTO 的原因写中文注释。开发阶段不要求补充或运行验证测试。
+对 Polymarket API 字段差异、WS 订阅参数、错误归一化和 raw payload 转 DTO 的原因写中文注释。开发阶段不运行测试。
 

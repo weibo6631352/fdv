@@ -31,4 +31,4 @@
 
 ## 注释要求
 
-对 BUY `amount` 与 SELL `size` / shares 语义差异、内部 DTO 与外部协议隔离原因写中文注释。开发阶段不要求补充或运行验证测试。
+对 BUY `amount` 与 SELL `size` / shares 语义差异、内部 DTO 与外部协议隔离原因写中文注释。开发阶段不运行测试。

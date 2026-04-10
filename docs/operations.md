@@ -6,12 +6,14 @@
 
 1. 准备环境变量，确认密钥不在仓库内。
 2. 准备 PostgreSQL，并执行 Alembic 迁移。
-3. 启动服务，检查 `/health`。
+3. 启动服务，先检查 `/health`。
 4. 初始化 outbox、数据库连接、Polymarket clients 和运行时队列。
 5. 拉取 Gamma / CLOB / Data API 权威快照。
 6. 完成首次 reconcile。
 7. 确认余额、allowance、User WS 和 Market WS 状态正常。
-8. 允许策略进入自动下单状态。
+8. 当前只到 M1 阶段，没有 `/ready` HTTP 就绪检查；此时以启动日志中的 readiness 结果和配置校验结果确认系统仍处于安全模式。
+9. 到 M4 再补 `/ready` 后，改为通过 readiness 接口确认 DB、WS、outbox 和自动下单状态。
+10. 允许策略进入自动下单状态。
 
 ## 停止顺序
 
@@ -46,4 +48,3 @@
 - 是否新增配置。
 - 是否需要暂停新买入。
 - 回滚方式和回滚后的 reconcile 要求。
-

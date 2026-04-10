@@ -31,5 +31,5 @@
 
 ## 注释要求
 
-对按 condition id 订阅、trade confirmation 状态、未确认成交的风险占用和断线暂停新买入写中文注释。开发阶段不要求补充或运行验证测试。
+对按 condition id 订阅、trade confirmation 状态、未确认成交的风险占用和断线暂停新买入写中文注释。开发阶段不运行测试。
 

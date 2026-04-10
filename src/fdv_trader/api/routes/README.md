@@ -4,7 +4,7 @@
 
 ## 文件职责
 
-- `health.py`：进程健康检查，不做慢依赖检查。
+- `health.py`：当前暴露 `/health`，只做进程健康检查；`/ready` 作为 M4 readiness 路由后续补齐。
 - `markets.py`：market 相关查询和后续暂停 / 恢复入口。
 - `orders.py`：订单查询和后续 SELL cancel / replace 入口。
 - `portfolio.py`：组合预算、exposure 和分配状态查询。
@@ -31,4 +31,3 @@
 - 更新 [api README](../README.md)。
 - 更新 [docs/api.md](../../../../docs/api.md) 中的接口类别说明。
 - 增加 app service 或测试，不把逻辑写进 route。
-
