@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Callable
@@ -92,6 +93,34 @@ class AuthoritativeRefreshSummary:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ReconcileWorkerResultSummary:
+    trace_id: str
+    trigger_event_type: str | None
+    started_at: datetime
+    completed_at: datetime
+    market_count: int
+    diff_count: int
+    action_count: int
+    applied_action_count: int
+    failed_action_count: int
+    refresh_failures: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ReconcileWorkerStatus:
+    running: bool
+    last_trace_id: str | None
+    last_trigger_event_type: str | None
+    last_started_at: datetime | None
+    last_completed_at: datetime | None
+    last_success_at: datetime | None
+    last_error: str | None
+    last_refresh_summary: AuthoritativeRefreshSummary | None
+    last_result: ReconcileWorkerResultSummary | None
+    recent_results: tuple[ReconcileWorkerResultSummary, ...]
+
+
 class ReconcileWorker:
     priority = "P2"
 
@@ -125,6 +154,16 @@ class ReconcileWorker:
         self._clob_client = clob_client
         self._data_client = data_client
         self._trading_client = trading_client
+        self._running = False
+        self._last_trace_id: str | None = None
+        self._last_trigger_event_type: str | None = None
+        self._last_started_at: datetime | None = None
+        self._last_completed_at: datetime | None = None
+        self._last_success_at: datetime | None = None
+        self._last_error: str | None = None
+        self._last_refresh_summary: AuthoritativeRefreshSummary | None = None
+        self._last_result: ReconcileWorkerResultSummary | None = None
+        self._recent_results: deque[ReconcileWorkerResultSummary] = deque(maxlen=8)
 
     async def run(self) -> None:
         if self._event_bus is None:
@@ -137,7 +176,55 @@ class ReconcileWorker:
         if self._event_bus is not None:
             trigger = await self._event_bus.next_maintenance_event()
         trace_id = getattr(trigger, "trace_id", None) or uuid4().hex
-        return await self.reconcile_once(trace_id=trace_id, trigger_event=trigger)
+        started_at = _utc_now()
+        self._running = True
+        self._last_started_at = started_at
+        self._last_trace_id = trace_id
+        self._last_trigger_event_type = None if trigger is None else str(trigger.event_type)
+        try:
+            result = await self.reconcile_once(trace_id=trace_id, trigger_event=trigger)
+        except Exception as exc:
+            self._last_error = str(exc)
+            self._last_completed_at = _utc_now()
+            raise
+        else:
+            completed_at = _utc_now()
+            self._last_completed_at = completed_at
+            self._last_success_at = completed_at
+            self._last_error = None
+            summary = ReconcileWorkerResultSummary(
+                trace_id=result.trace_id,
+                trigger_event_type=self._last_trigger_event_type,
+                started_at=started_at,
+                completed_at=completed_at,
+                market_count=len(result.plan.market_plans),
+                diff_count=result.plan.diff_count,
+                action_count=sum(len(plan.actions) for plan in result.plan.market_plans),
+                applied_action_count=len(result.applied_actions),
+                failed_action_count=len(result.failed_actions),
+                refresh_failures=self._last_refresh_summary.failures
+                if self._last_refresh_summary is not None
+                else (),
+            )
+            self._last_result = summary
+            self._recent_results.append(summary)
+            return result
+        finally:
+            self._running = False
+
+    def status_snapshot(self) -> ReconcileWorkerStatus:
+        return ReconcileWorkerStatus(
+            running=self._running,
+            last_trace_id=self._last_trace_id,
+            last_trigger_event_type=self._last_trigger_event_type,
+            last_started_at=self._last_started_at,
+            last_completed_at=self._last_completed_at,
+            last_success_at=self._last_success_at,
+            last_error=self._last_error,
+            last_refresh_summary=self._last_refresh_summary,
+            last_result=self._last_result,
+            recent_results=tuple(self._recent_results),
+        )
 
     async def reconcile_once(
         self,
@@ -147,10 +234,15 @@ class ReconcileWorker:
         condition_ids: tuple[str, ...] | None = None,
     ) -> ReconcileWorkerResult:
         trace_id = trace_id or getattr(trigger_event, "trace_id", None) or uuid4().hex
+        self._running = True
+        self._last_started_at = _utc_now()
+        self._last_trace_id = trace_id
+        self._last_trigger_event_type = None if trigger_event is None else str(trigger_event.event_type)
         refresh_summary = await self._refresh_authoritative_state(
             trace_id=trace_id,
             condition_ids=condition_ids,
         )
+        self._last_refresh_summary = refresh_summary
         if refresh_summary.failures:
             logger.warning(
                 "reconcile authoritative refresh degraded",
@@ -247,10 +339,15 @@ class ReconcileWorker:
                             ),
                         },
                     ),
-                )
+            )
 
         if self._account_state_store is not None:
             self._account_state_store.mark_reconciled()
+
+        completed_at = _utc_now()
+        self._last_completed_at = completed_at
+        self._last_success_at = completed_at
+        self._last_error = None
 
         return ReconcileWorkerResult(
             trace_id=trace_id,

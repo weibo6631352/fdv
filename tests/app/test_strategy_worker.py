@@ -6,9 +6,9 @@ from decimal import Decimal
 
 from fdv_trader.app.strategy_service import StrategyService
 from fdv_trader.app.trading_service import TradingService
-from fdv_trader.domain.events import DomainEventType
+from fdv_trader.domain.events import DomainEvent, DomainEventType
 from fdv_trader.domain.market import Market, TradingStatus
-from fdv_trader.domain.order import OrderResultStatus
+from fdv_trader.domain.order import OrderResult, OrderResultStatus, OrderSide, OrderType
 from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from fdv_trader.infra.polymarket.order_executor import (
     InMemoryPolymarketOrderClient,
@@ -59,6 +59,87 @@ def _snapshot(
         best_ask_size=Decimal("200"),
         tick_size=market.tick_size,
     )
+
+
+def _entry_event(market: Market, *, trace_id: str) -> DomainEvent:
+    return DomainEvent(
+        trace_id=trace_id,
+        event_type=DomainEventType.ENTRY_PRICE_TOUCHED,
+        event_id=f"{trace_id}-event",
+        market_slug=market.market_slug,
+        condition_id=market.condition_id,
+        token_id=market.no_token_id,
+        reason="no_best_ask_touched",
+    )
+
+
+def _buy_result(
+    *,
+    market: Market,
+    requested_amount_usdc: Decimal,
+    status: OrderResultStatus,
+    matched_shares: Decimal,
+    remaining_shares: Decimal,
+    spent_usdc: Decimal,
+    reason: str,
+) -> OrderResult:
+    return OrderResult(
+        trace_id="trace-buy",
+        condition_id=market.condition_id,
+        token_id=market.no_token_id,
+        market_slug=market.market_slug,
+        status=status,
+        side=OrderSide.BUY,
+        order_type=OrderType.FAK,
+        price=Decimal("0.60"),
+        requested_amount_usdc=requested_amount_usdc,
+        requested_size_shares=requested_amount_usdc / Decimal("0.60"),
+        matched_shares=matched_shares,
+        remaining_shares=remaining_shares,
+        spent_usdc=spent_usdc,
+        notional_usdc=requested_amount_usdc,
+        order_id="buy-order",
+        trade_id="buy-trade",
+        reason=reason,
+    )
+
+
+def _sell_result(
+    *,
+    market: Market,
+    size_shares: Decimal,
+    status: OrderResultStatus = OrderResultStatus.FULL_FILL,
+) -> OrderResult:
+    return OrderResult(
+        trace_id="trace-sell",
+        condition_id=market.condition_id,
+        token_id=market.no_token_id,
+        market_slug=market.market_slug,
+        status=status,
+        side=OrderSide.SELL,
+        order_type=OrderType.GTC,
+        price=Decimal("0.70"),
+        requested_size_shares=size_shares,
+        matched_shares=size_shares,
+        remaining_shares=Decimal("0"),
+        spent_usdc=size_shares * Decimal("0.70"),
+        notional_usdc=size_shares * Decimal("0.70"),
+        order_id="sell-order",
+        trade_id="sell-trade",
+        reason="exit_submitted",
+    )
+
+
+class _ScriptedExecutor:
+    def __init__(self, *results: OrderResult) -> None:
+        self._results = list(results)
+        self.intents = []
+
+    async def submit(self, intent):
+        self.intents.append(intent)
+        if not self._results:
+            raise AssertionError("unexpected submit call")
+        return self._results.pop(0)
 
 
 def test_strategy_service_allocates_equally_across_eligible_markets() -> None:
@@ -153,5 +234,164 @@ def test_strategy_worker_turns_entry_price_touch_into_risk_result() -> None:
         assert result.emitted_event.event_type == DomainEventType.RISK_CHECK_PASSED
         assert result.review.order_result is not None
         assert result.review.order_result.status == OrderResultStatus.NO_FILL
+
+    asyncio.run(run())
+
+
+def test_strategy_worker_partial_fill_only_sells_filled_shares() -> None:
+    async def run() -> None:
+        registry = MarketRegistry()
+        account_state_store = AccountStateStore()
+        account_state_store.update_balances(
+            balance_usdc=Decimal("100"),
+            allowance_usdc=Decimal("100"),
+        )
+        market = _market(condition_id="condition", token_id="no-token", market_slug="token")
+        registry.upsert(market)
+        strategy_service = StrategyService(
+            registry=registry,
+            orderbook_reader={market.no_token_id: _snapshot(market=market)}.get,
+        )
+        requested_amount_usdc = Decimal("20")
+        requested_size_shares = requested_amount_usdc / Decimal("0.60")
+        executor = _ScriptedExecutor(
+            _buy_result(
+                market=market,
+                requested_amount_usdc=requested_amount_usdc,
+                status=OrderResultStatus.PARTIAL_FILL,
+                matched_shares=Decimal("4"),
+                remaining_shares=requested_size_shares - Decimal("4"),
+                spent_usdc=Decimal("2.4"),
+                reason="partial_fill",
+            ),
+            _sell_result(market=market, size_shares=Decimal("4")),
+        )
+        strategy_worker = StrategyWorker(
+            strategy_service=strategy_service,
+            trading_service=TradingService(executor=executor),
+            account_state_store=account_state_store,
+            portfolio_budget_usdc=Decimal("100"),
+            available_usdc=Decimal("100"),
+            max_order_usdc=Decimal("20"),
+            max_market_usdc=Decimal("20"),
+            max_total_usdc=Decimal("100"),
+            min_liquidity_usdc=Decimal("5"),
+            max_spread=Decimal("0.10"),
+            balance_usdc=Decimal("100"),
+            allowance_usdc=Decimal("100"),
+            max_open_orders=10,
+            order_retry_limit=2,
+        )
+
+        result = await strategy_worker.process_event(_entry_event(market, trace_id="trace-partial"))
+
+        assert result is not None
+        assert result.review is not None
+        assert result.review.order_result is not None
+        assert result.review.order_result.status == OrderResultStatus.PARTIAL_FILL
+        assert len(result.follow_up_intents) == 1
+        assert result.follow_up_intents[0].size_shares == Decimal("4")
+        assert len(result.follow_up_reviews) == 1
+        assert result.follow_up_reviews[0].order_result is not None
+        assert result.follow_up_reviews[0].order_result.status == OrderResultStatus.FULL_FILL
+        assert len(executor.intents) == 2
+        assert executor.intents[0].side == OrderSide.BUY
+        assert executor.intents[1].side == OrderSide.SELL
+        assert executor.intents[1].size_shares == Decimal("4")
+        position = account_state_store.snapshot().get_position(market.condition_id, market.no_token_id)
+        assert position is not None
+        assert position.shares == Decimal("4")
+        assert position.open_sell_shares == Decimal("0")
+        assert executor.intents[0].amount_usdc == requested_amount_usdc
+
+    asyncio.run(run())
+
+
+def test_strategy_worker_no_fill_releases_budget_for_next_market() -> None:
+    async def run() -> None:
+        registry = MarketRegistry()
+        account_state_store = AccountStateStore()
+        account_state_store.update_balances(
+            balance_usdc=Decimal("100"),
+            allowance_usdc=Decimal("100"),
+        )
+        first = _market(condition_id="condition-1", token_id="no-1", market_slug="token-1")
+        second = _market(condition_id="condition-2", token_id="no-2", market_slug="token-2")
+        registry.upsert(first)
+        registry.upsert(second)
+        strategy_service = StrategyService(
+            registry=registry,
+            orderbook_reader={
+                first.no_token_id: _snapshot(market=first),
+                second.no_token_id: _snapshot(market=second),
+            }.get,
+        )
+        requested_amount_usdc = Decimal("50")
+        requested_size_shares = requested_amount_usdc / Decimal("0.60")
+        executor = _ScriptedExecutor(
+            _buy_result(
+                market=first,
+                requested_amount_usdc=requested_amount_usdc,
+                status=OrderResultStatus.NO_FILL,
+                matched_shares=Decimal("0"),
+                remaining_shares=requested_size_shares,
+                spent_usdc=Decimal("0"),
+                reason="no_fill",
+            ),
+            _buy_result(
+                market=second,
+                requested_amount_usdc=requested_amount_usdc,
+                status=OrderResultStatus.NO_FILL,
+                matched_shares=Decimal("0"),
+                remaining_shares=requested_size_shares,
+                spent_usdc=Decimal("0"),
+                reason="no_fill",
+            ),
+        )
+        strategy_worker = StrategyWorker(
+            strategy_service=strategy_service,
+            trading_service=TradingService(executor=executor),
+            account_state_store=account_state_store,
+            portfolio_budget_usdc=Decimal("100"),
+            available_usdc=Decimal("100"),
+            max_order_usdc=Decimal("50"),
+            max_market_usdc=Decimal("50"),
+            max_total_usdc=Decimal("100"),
+            min_liquidity_usdc=Decimal("5"),
+            max_spread=Decimal("0.10"),
+            balance_usdc=Decimal("100"),
+            allowance_usdc=Decimal("100"),
+            max_open_orders=10,
+            order_retry_limit=2,
+        )
+
+        first_result = await strategy_worker.process_event(
+            _entry_event(first, trace_id="trace-no-fill-1")
+        )
+        assert first_result.review is not None
+        assert first_result.review.order_result is not None
+        assert first_result.review.order_result.status == OrderResultStatus.NO_FILL
+        assert first_result.review.order_result.requested_amount_usdc == requested_amount_usdc
+        assert first_result.review.order_result.spent_usdc == Decimal("0")
+        assert any(
+            event.event_type == DomainEventType.ORDER_NO_FILL for event in first_result.emitted_events
+        )
+        assert account_state_store.snapshot().allow_new_buys is True
+        assert account_state_store.snapshot().balance_usdc == Decimal("100")
+
+        second_result = await strategy_worker.process_event(
+            _entry_event(second, trace_id="trace-no-fill-2")
+        )
+
+        assert second_result.plan is not None
+        assert second_result.plan.ready_to_trade
+        assert second_result.plan.allocation is not None
+        assert second_result.plan.allocation.buy_budget_usdc == Decimal("50")
+        assert second_result.review is not None
+        assert second_result.review.order_result is not None
+        assert second_result.review.order_result.status == OrderResultStatus.NO_FILL
+        assert len(executor.intents) == 2
+        assert executor.intents[0].amount_usdc == requested_amount_usdc
+        assert executor.intents[1].amount_usdc == requested_amount_usdc
 
     asyncio.run(run())

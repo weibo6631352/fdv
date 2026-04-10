@@ -2,6 +2,19 @@
 
 该文档用于记录生产故障处置步骤。处理故障时遵循一个原则：先确认交易状态，再恢复自动化；先保护 P0 链路，再补低优先级数据。
 
+## 启动后仍未 ready
+
+症状：
+- `/health` 正常，但 `/ready` 返回 `ready_to_trade=false`。
+- `/runtime` phase 停在 `recovering_snapshot`、`reconciling`、`workers_started` 或 `degraded`。
+
+处置：
+1. 先看 `/ready.blocking_issues` 和 `/runtime.runtime` 的 `blocking_reasons`。
+2. 若是 `db_not_ready`，先修复 PostgreSQL 连通性。
+3. 若是 `trading_client_not_ready`，检查密钥、wallet signer 和运行环境。
+4. 若是 `user_ws_not_connected` 或 `market_ws_not_connected`，保持自动下单关闭，先做人工 reconcile。
+5. 若是 `reconcile_not_fresh`，执行 `fdv-trader reconcile` 或 `POST /operations/reconcile`。
+
 ## Market WS 断线
 
 症状：
@@ -83,3 +96,14 @@
 4. 保留订单和成交事件，合并或丢弃低价值快照事件。
 5. 恢复后补写指标和运维记录。
 
+## 人工 SELL cancel + replace
+
+症状：
+- open SELL 价格需要人工调整。
+- 自动 SELL 修复未满足业务预期，但持仓和市场状态明确。
+
+处置：
+1. 调用 `POST /orders/cancel-replace-sell`，只传 `market_slug`、`condition_id` 或 `token_id` 之一和新的 SELL 价格。
+2. 确认返回中 `cancelled_orders` 全部进入终态。
+3. 确认 `replace_order_submitted` 返回新的 SELL 订单结果。
+4. 若失败原因是 `price_not_aligned_to_tick_size`、`no_position_to_sell` 或 `market_not_operable`，不要重试下单，先修正输入或等待状态恢复。

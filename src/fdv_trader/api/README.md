@@ -6,8 +6,8 @@
 
 - 暴露健康检查和运行状态。
 - 查询 target markets、eligible markets、orderbook 快照、持仓、open orders 和组合分配。
-- 触发受控人工操作，例如暂停 market、恢复 market、取消 open SELL、执行 cancel + replace。
-- 做 HTTP 参数校验、认证授权和响应序列化。
+- 触发受控人工操作，例如执行 reconcile 和 SELL `cancel + replace`。
+- 做 HTTP 参数校验和响应序列化；M4 默认仅在受控环境暴露，不提供应用层鉴权。
 
 ## 允许依赖
 
@@ -39,6 +39,19 @@ route -> app service -> domain / runtime snapshot / repository
 route -> AdminService -> TradingService -> RiskManager -> OrderExecutor
 ```
 
+## M4 路由
+
+- `GET /health`
+- `GET /ready`
+- `GET /runtime`
+- `GET /markets`
+- `GET /orders`
+- `GET /fills`
+- `GET /positions`
+- `GET /portfolio`
+- `POST /operations/reconcile`
+- `POST /orders/cancel-replace-sell`
+
 ## 新增路由交接清单
 
 新增 route 前确认：
@@ -47,4 +60,3 @@ route -> AdminService -> TradingService -> RiskManager -> OrderExecutor
 - 是否需要审计事件。
 - 是否可能读取交易热状态。如果会，必须使用快照。
 - 是否会影响 P0 交易链路。
-

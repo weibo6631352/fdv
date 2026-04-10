@@ -6,6 +6,7 @@
 
 - `event_bus.py`：事件总线和优先级队列。
 - `registry.py`：market / token 索引和本地状态注册表。
+- `status.py`：runtime phase、readiness、scheduler snapshot 和 worker health 契约。
 - `scheduler.py`：任务创建与调度。
 - `supervisor.py`：worker 生命周期、降级、暂停和恢复。
 
@@ -44,4 +45,3 @@
 - 最大等待时间。
 - 超时后的降级策略。
 - 是否影响 P0 交易路径。
-

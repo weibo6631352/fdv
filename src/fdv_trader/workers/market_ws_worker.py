@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from collections import deque
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Awaitable, Callable, Mapping
@@ -90,6 +91,61 @@ class _BookState:
     needs_rest_snapshot: bool = False
     entry_price_touched: bool = False
     resolved: bool = False
+    subscribed_at: datetime | None = None
+    last_message_at: datetime | None = None
+    last_rest_snapshot_at: datetime | None = None
+    last_error: str | None = None
+    last_result: "MarketWsResultSummary" | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MarketWsResultSummary:
+    token_id: str
+    market_slug: str | None
+    condition_id: str | None
+    source: str
+    reason: str
+    event_types: tuple[str, ...]
+    last_sequence: int | None
+    entry_price_touched: bool
+    resolved: bool
+    needs_rest_snapshot: bool
+    best_bid: Decimal | None
+    best_ask: Decimal | None
+    buyable_no_depth: Decimal
+    created_at: datetime = field(default_factory=_utc_now)
+
+
+@dataclass(frozen=True, slots=True)
+class MarketWsSubscriptionStatus:
+    token_id: str
+    market_slug: str | None
+    condition_id: str | None
+    subscribed_at: datetime | None
+    last_message_at: datetime | None
+    last_rest_snapshot_at: datetime | None
+    last_sequence: int | None
+    entry_price_touched: bool
+    resolved: bool
+    needs_rest_snapshot: bool
+    last_error: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class MarketWsWorkerStatus:
+    tracked_market_count: int
+    subscription_count: int
+    tracked_token_ids: tuple[str, ...]
+    subscribed_token_ids: tuple[str, ...]
+    entry_price_touched_token_ids: tuple[str, ...]
+    resolved_token_ids: tuple[str, ...]
+    needs_rest_snapshot_token_ids: tuple[str, ...]
+    last_message_at: datetime | None
+    last_rest_snapshot_at: datetime | None
+    last_error: str | None
+    last_result: MarketWsResultSummary | None
+    recent_results: tuple[MarketWsResultSummary, ...]
+    subscriptions: tuple[MarketWsSubscriptionStatus, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +174,10 @@ class MarketWsWorker:
         self._rest_snapshot_loader = rest_snapshot_loader
         self._states: dict[str, _BookState] = {}
         self._tracked_markets: dict[str, Market] = {}
+        self._recent_results: deque[MarketWsResultSummary] = deque(maxlen=8)
+        self._last_message_at: datetime | None = None
+        self._last_rest_snapshot_at: datetime | None = None
+        self._last_error: str | None = None
 
     def track_market(self, market: Market) -> None:
         # 这里只做热态索引，不做数据库同步写；registry / cache 的更新都留在内存边界内。
@@ -136,11 +196,12 @@ class MarketWsWorker:
                     market_slug=market.market_slug,
                     condition_id=market.condition_id,
                     tick_size=market.tick_size,
-                )
+                ),
             )
 
     def build_subscription_request(self, no_token_id: str) -> dict[str, Any]:
         # 只订阅 NO token_id，避免把 YES side 的噪声带进入场信号链路。
+        self._mark_subscribed(no_token_id)
         return {
             "channel": "market",
             "token_ids": [no_token_id],
@@ -153,6 +214,7 @@ class MarketWsWorker:
         *,
         source: str = "market_ws",
     ) -> list[DomainEvent]:
+        self._last_message_at = _utc_now()
         token_id = _extract_token_id(message)
         if token_id is None:
             return []
@@ -168,6 +230,7 @@ class MarketWsWorker:
             if self._rest_snapshot_loader is not None:
                 snapshot = await self._rest_snapshot_loader(token_id)
                 return await self.apply_rest_snapshot(token_id, snapshot, source=source)
+            self.record_error("rest_snapshot_loader_unavailable", token_id=token_id)
             return []
 
         if state.needs_rest_snapshot and message.get("type") not in {"rest_snapshot", "snapshot"}:
@@ -224,6 +287,7 @@ class MarketWsWorker:
         *,
         source: str = "rest_snapshot",
     ) -> list[DomainEvent]:
+        self._last_rest_snapshot_at = _utc_now()
         market = self._tracked_markets.get(token_id) or self._resolve_market({}, token_id)
         current = self._states.get(token_id)
         snapshot_model = (
@@ -242,6 +306,10 @@ class MarketWsWorker:
             needs_rest_snapshot=False,
             entry_price_touched=current.entry_price_touched if current is not None else False,
             resolved=current.resolved if current is not None else False,
+            subscribed_at=current.subscribed_at if current is not None else None,
+            last_message_at=_utc_now(),
+            last_rest_snapshot_at=_utc_now(),
+            last_error=current.last_error if current is not None else None,
         )
         return await self._emit_snapshot_update(
             token_id,
@@ -253,6 +321,83 @@ class MarketWsWorker:
     def snapshot(self, token_id: str) -> OrderbookSnapshot | None:
         state = self._states.get(token_id)
         return None if state is None else state.snapshot
+
+    def status_snapshot(self) -> MarketWsWorkerStatus:
+        subscriptions: list[MarketWsSubscriptionStatus] = []
+        tracked_token_ids = tuple(sorted(self._tracked_markets.keys()))
+        subscribed_token_ids: list[str] = []
+        entry_price_touched_token_ids: list[str] = []
+        resolved_token_ids: list[str] = []
+        needs_rest_snapshot_token_ids: list[str] = []
+        last_error: str | None = self._last_error
+        last_result: MarketWsResultSummary | None = None
+        last_message_at = self._last_message_at
+        last_rest_snapshot_at = self._last_rest_snapshot_at
+
+        for token_id in tracked_token_ids:
+            state = self._states.get(token_id)
+            if state is None:
+                continue
+            if state.subscribed_at is not None:
+                subscribed_token_ids.append(token_id)
+            if state.entry_price_touched:
+                entry_price_touched_token_ids.append(token_id)
+            if state.resolved:
+                resolved_token_ids.append(token_id)
+            if state.needs_rest_snapshot:
+                needs_rest_snapshot_token_ids.append(token_id)
+            if state.last_error is not None and last_error is None:
+                last_error = state.last_error
+            if state.last_result is not None and (
+                last_result is None or state.last_result.created_at > last_result.created_at
+            ):
+                last_result = state.last_result
+            subscriptions.append(
+                MarketWsSubscriptionStatus(
+                    token_id=token_id,
+                    market_slug=state.snapshot.market_slug,
+                    condition_id=state.snapshot.condition_id,
+                    subscribed_at=state.subscribed_at,
+                    last_message_at=state.last_message_at,
+                    last_rest_snapshot_at=state.last_rest_snapshot_at,
+                    last_sequence=state.last_sequence,
+                    entry_price_touched=state.entry_price_touched,
+                    resolved=state.resolved,
+                    needs_rest_snapshot=state.needs_rest_snapshot,
+                    last_error=state.last_error,
+                )
+            )
+            if state.last_message_at is not None and (
+                last_message_at is None or state.last_message_at > last_message_at
+            ):
+                last_message_at = state.last_message_at
+            if state.last_rest_snapshot_at is not None and (
+                last_rest_snapshot_at is None or state.last_rest_snapshot_at > last_rest_snapshot_at
+            ):
+                last_rest_snapshot_at = state.last_rest_snapshot_at
+
+        return MarketWsWorkerStatus(
+            tracked_market_count=len(tracked_token_ids),
+            subscription_count=len(subscribed_token_ids),
+            tracked_token_ids=tracked_token_ids,
+            subscribed_token_ids=tuple(subscribed_token_ids),
+            entry_price_touched_token_ids=tuple(entry_price_touched_token_ids),
+            resolved_token_ids=tuple(resolved_token_ids),
+            needs_rest_snapshot_token_ids=tuple(needs_rest_snapshot_token_ids),
+            last_message_at=last_message_at,
+            last_rest_snapshot_at=last_rest_snapshot_at,
+            last_error=last_error,
+            last_result=last_result,
+            recent_results=tuple(self._recent_results),
+            subscriptions=tuple(subscriptions),
+        )
+
+    def record_error(self, reason: str, *, token_id: str | None = None) -> None:
+        self._last_error = reason
+        if token_id is not None:
+            state = self._states.get(token_id)
+            if state is not None:
+                state.last_error = reason
 
     def buyable_depth(self, token_id: str, price_limit: Decimal | None = None) -> Decimal:
         state = self._states.get(token_id)
@@ -482,12 +627,59 @@ class MarketWsWorker:
                 },
             )
             events.append(await self._publish(OutboxPriority.P0, touched))
+        self._record_result(
+            token_id,
+            state,
+            source=source,
+            reason=reason,
+            event_types=tuple(str(event.event_type) for event in events),
+        )
         return events
 
     async def _publish(self, priority: OutboxPriority, event: DomainEvent) -> DomainEvent:
         if self._event_bus is not None:
             await self._event_bus.publish(priority, event)
         return event
+
+    def _record_result(
+        self,
+        token_id: str,
+        state: _BookState,
+        *,
+        source: str,
+        reason: str,
+        event_types: tuple[str, ...],
+    ) -> None:
+        snapshot = state.snapshot
+        result = MarketWsResultSummary(
+            token_id=token_id,
+            market_slug=snapshot.market_slug,
+            condition_id=snapshot.condition_id,
+            source=source,
+            reason=reason,
+            event_types=event_types,
+            last_sequence=state.last_sequence,
+            entry_price_touched=state.entry_price_touched,
+            resolved=state.resolved,
+            needs_rest_snapshot=state.needs_rest_snapshot,
+            best_bid=snapshot.best_bid,
+            best_ask=snapshot.best_ask,
+            buyable_no_depth=snapshot.buyable_ask_depth(self._entry_price_max),
+        )
+        state.last_message_at = snapshot.received_at
+        state.last_result = result
+        if reason in {"rest_snapshot", "reconcile_rest"}:
+            state.last_rest_snapshot_at = snapshot.received_at
+            self._last_rest_snapshot_at = snapshot.received_at
+        self._last_message_at = snapshot.received_at
+        self._recent_results.append(result)
+
+    def _mark_subscribed(self, token_id: str) -> None:
+        state = self._states.get(token_id)
+        if state is None:
+            return
+        if state.subscribed_at is None:
+            state.subscribed_at = _utc_now()
 
     def _ensure_state(self, token_id: str, market: Market | None) -> _BookState:
         state = self._states.get(token_id)

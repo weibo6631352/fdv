@@ -4,10 +4,14 @@
 
 ## 文件职责
 
-- `health.py`：当前暴露 `/health`，只做进程健康检查；`/ready` 作为 M4 readiness 路由后续补齐。
+- `health.py`：暴露 `/health` 和 `/ready`。
+- `runtime.py`：暴露 `/runtime`。
 - `markets.py`：market 相关查询和后续暂停 / 恢复入口。
-- `orders.py`：订单查询和后续 SELL cancel / replace 入口。
+- `orders.py`：订单查询和 SELL cancel / replace 入口。
+- `fills.py`：成交查询。
+- `positions.py`：持仓查询。
 - `portfolio.py`：组合预算、exposure 和分配状态查询。
+- `operations.py`：受控 reconcile 操作。
 
 ## 路由层只能做
 

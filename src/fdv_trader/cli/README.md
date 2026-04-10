@@ -6,14 +6,14 @@
 
 - 解析命令行参数。
 - 加载配置。
-- 调用主进程启动入口或应用服务。
+- 启动 FastAPI 服务，或通过 Admin API 调用受控运维动作。
 - 作为 Admin API 之外的受控人工操作入口。
 
 ## 允许依赖
 
-- `fdv_trader.main`。
+- `fdv_trader.api.app`。
 - `fdv_trader.config`。
-- `fdv_trader.app` 中的应用服务。
+- Admin API HTTP client。
 - 标准库参数解析工具。
 
 ## 禁止行为
@@ -32,3 +32,10 @@
 - 是否需要连接数据库或外部 API。
 - 是否可能与 P0 交易链路争用资源。
 
+## M4 命令
+
+- `fdv-trader run`
+- `fdv-trader init-db`
+- `fdv-trader config-summary`
+- `fdv-trader status`
+- `fdv-trader reconcile`

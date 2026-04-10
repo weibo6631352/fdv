@@ -7,6 +7,8 @@
 - 生成并传播 `trace_id`。
 - 构建结构化审计事件。
 - 记录交易延迟、队列深度、锁等待、执行器等待等指标。
+- 通过内存型 `MetricsRegistry` 向 Supervisor、`/ready` 和 Admin API 暴露轻量快照。
+- 通过异步队列日志输出结构化、脱敏后的日志记录。
 - 为 outbox 和 Persistence Worker 提供统一事件模型。
 
 ## 关键指标
@@ -40,4 +42,3 @@
 - 审计事件必须包含 `trace_id`、事件类型、时间、状态和原因。
 - raw response 必须限长、脱敏，并根据优先级进入对应 outbox 队列。
 - trace id 必须能贯穿 discovery、signal、risk、order、fill、sell、reconcile。
-

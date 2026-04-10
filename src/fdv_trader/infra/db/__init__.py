@@ -24,7 +24,7 @@ from fdv_trader.infra.db.repositories import (
     PositionRepository,
     RepositoryPage,
 )
-from fdv_trader.infra.db.session import build_engine, build_session_factory
+from fdv_trader.infra.db.session import build_engine, build_session_factory, initialize_database
 
 __all__ = [
     "AllocationModel",
@@ -49,4 +49,5 @@ __all__ = [
     "RepositoryPage",
     "build_engine",
     "build_session_factory",
+    "initialize_database",
 ]

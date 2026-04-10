@@ -20,3 +20,22 @@ def build_session_factory(
     engine = build_engine(database_url, echo=echo)
     return async_sessionmaker(engine, expire_on_commit=False)
 
+
+async def initialize_database(
+    database_url: str,
+    *,
+    echo: bool = False,
+) -> None:
+    """Create the current development schema in PostgreSQL.
+
+    当前阶段不维护历史 schema 兼容层，所以开发库直接按最新 SQLAlchemy metadata 建表。
+    """
+
+    from fdv_trader.infra.db.models import Base
+
+    engine = build_engine(database_url, echo=echo)
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+    finally:
+        await engine.dispose()

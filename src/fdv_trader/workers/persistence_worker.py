@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from collections import Counter
+from collections import Counter, deque
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
@@ -240,6 +240,8 @@ class PersistenceWorkerSnapshot:
     last_persisted_at: datetime | None
     last_processed_at: datetime | None
     route_write_counts: tuple[tuple[str, int], ...]
+    last_result: PersistenceWorkerResult | None
+    recent_results: tuple[PersistenceWorkerResult, ...]
 
 
 @dataclass(slots=True)
@@ -298,6 +300,7 @@ class PersistenceWorker:
         self._low_priority_merge_window_s = max(0.0, low_priority_merge_window_s)
         self._stop_event = asyncio.Event()
         self._stats = _WorkerStats()
+        self._recent_results: deque[PersistenceWorkerResult] = deque(maxlen=8)
 
     async def run(self) -> None:
         if self._outbox is None or self._repository is None:
@@ -331,6 +334,7 @@ class PersistenceWorker:
         batch.extend(await self._drain_batch())
         coalesced_batch, merged_events = self._coalesce_low_priority(batch)
         result = await self._persist_batch(coalesced_batch, merged_events=merged_events)
+        self._recent_results.append(result)
         return result
 
     def snapshot(self) -> PersistenceWorkerSnapshot:
@@ -359,6 +363,8 @@ class PersistenceWorker:
             last_persisted_at=self._stats.last_persisted_at,
             last_processed_at=self._stats.last_processed_at,
             route_write_counts=tuple(sorted(self._stats.route_write_counts.items())),
+            last_result=self._recent_results[-1] if self._recent_results else None,
+            recent_results=tuple(self._recent_results),
         )
 
     async def _poll_event(self) -> OutboxEvent | None:

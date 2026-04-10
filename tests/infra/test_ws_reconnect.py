@@ -87,3 +87,94 @@ def test_market_ws_worker_updates_tick_size_in_registry() -> None:
         assert updated.tick_size == Decimal("0.02")
 
     asyncio.run(run())
+
+
+def test_market_ws_worker_waits_for_entry_threshold_then_overwrites_latest_snapshot() -> None:
+    async def run() -> None:
+        event_bus = EventBus()
+        registry = MarketRegistry()
+        worker = MarketWsWorker(event_bus=event_bus, registry=registry)
+        market = _market()
+        worker.track_market(market)
+
+        below_threshold_events = await worker.handle_message(
+            {
+                "type": "best_bid_ask",
+                "token_id": market.no_token_id,
+                "best_bid": "0.57",
+                "best_ask": "0.61",
+                "best_bid_size": "100",
+                "best_ask_size": "200",
+            }
+        )
+        trigger_events = await worker.handle_message(
+            {
+                "type": "best_bid_ask",
+                "token_id": market.no_token_id,
+                "best_bid": "0.56",
+                "best_ask": "0.60",
+                "best_bid_size": "110",
+                "best_ask_size": "210",
+            }
+        )
+        followup_events = await worker.handle_message(
+            {
+                "type": "best_bid_ask",
+                "token_id": market.no_token_id,
+                "best_bid": "0.55",
+                "best_ask": "0.59",
+                "best_bid_size": "120",
+                "best_ask_size": "220",
+            }
+        )
+
+        assert [str(event.event_type) for event in below_threshold_events] == [
+            DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
+        ]
+        assert [str(event.event_type) for event in trigger_events] == [
+            DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
+            DomainEventType.ENTRY_PRICE_TOUCHED.value,
+        ]
+        assert [str(event.event_type) for event in followup_events] == [
+            DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
+        ]
+
+        snapshot = worker.snapshot(market.no_token_id)
+        assert snapshot is not None
+        assert snapshot.best_bid == Decimal("0.55")
+        assert snapshot.best_ask == Decimal("0.59")
+        assert worker.status_snapshot().entry_price_touched_token_ids == (market.no_token_id,)
+
+        entry_event = await event_bus.next_trading_event()
+        assert entry_event.event_type == DomainEventType.ENTRY_PRICE_TOUCHED
+
+    asyncio.run(run())
+
+
+def test_market_ws_worker_does_not_trigger_entry_touch_above_threshold() -> None:
+    async def run() -> None:
+        event_bus = EventBus()
+        registry = MarketRegistry()
+        worker = MarketWsWorker(event_bus=event_bus, registry=registry)
+        market = _market()
+        worker.track_market(market)
+
+        events = await worker.handle_message(
+            {
+                "type": "best_bid_ask",
+                "token_id": market.no_token_id,
+                "best_bid": "0.57",
+                "best_ask": "0.61",
+                "best_bid_size": "100",
+                "best_ask_size": "200",
+            }
+        )
+
+        assert [str(event.event_type) for event in events] == [
+            DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
+        ]
+        assert worker.status_snapshot().entry_price_touched_token_ids == ()
+        assert event_bus.trading_queue_depth() == 0
+        assert event_bus.maintenance_queue_depth() == 1
+
+    asyncio.run(run())
