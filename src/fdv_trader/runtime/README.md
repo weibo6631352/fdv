@@ -4,6 +4,7 @@
 
 ## 文件职责
 
+- `account_state.py`：账户余额、持仓、open orders、fills 和买入闸门热状态快照。
 - `event_bus.py`：事件总线和优先级队列。
 - `registry.py`：market / token 索引和本地状态注册表。
 - `status.py`：runtime phase、readiness、scheduler snapshot 和 worker health 契约。

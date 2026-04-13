@@ -7,7 +7,7 @@
 - 暴露健康检查和运行状态。
 - 查询 target markets、eligible markets、orderbook 快照、持仓、open orders 和组合分配。
 - 触发受控人工操作，例如执行 reconcile 和 SELL `cancel + replace`。
-- 做 HTTP 参数校验和响应序列化；M4 默认仅在受控环境暴露，不提供应用层鉴权。
+- 做 HTTP 参数校验和响应序列化；默认仅在受控环境暴露，不提供应用层鉴权。
 
 ## 允许依赖
 
@@ -44,33 +44,7 @@ route -> AdminService -> TradingService -> RiskManager -> OrderExecutor
 - 输入：HTTP path、query、body 参数，以及 FastAPI dependency 提供的应用服务和配置对象。
 - 输出：统一响应 schema、HTTP 状态码，以及受控操作对应的可审计结果对象。
 
-## M4 路由
+## 路由清单
 
-- `GET /health`
-- `GET /ready`
-- `GET /runtime`
-- `GET /workers`
-- `GET /metrics`
-- `GET /audit-events`
-- `GET /allocations`
-- `GET /markets`
-- `GET /markets/detail`
-- `GET /markets/orderbook`
-- `GET /markets/midpoint`
-- `GET /markets/positions`
-- `GET /markets/holders`
-- `GET /markets/prices-history`
-- `GET /orders`
-- `GET /fills`
-- `GET /positions`
-- `GET /portfolio`
-- `GET /profiles/detail`
-- `GET /profiles/value`
-- `GET /profiles/activity`
-- `GET /profiles/trades`
-- `GET /profiles/positions`
-- `GET /profiles/closed-positions`
-- `GET /profiles/search`
-- `GET /outbox/pending`
-- `POST /operations/reconcile`
-- `POST /orders/cancel-replace-sell`
+- 对外 HTTP 路由、请求参数和响应结构以 [docs/api.md](../../../docs/api.md) 为准。
+- 本 README 只维护接口层职责、依赖边界和调用链，不重复展开完整路由表。

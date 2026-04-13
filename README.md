@@ -38,7 +38,6 @@
 - [配置文档](./docs/config.md)：环境变量和配置项说明。
 - [运行说明](./docs/operations.md)：启动方式、运行状态和常用运维查看项。
 - [故障处理](./docs/runbook.md)：异常定位和处理步骤。
-- [Polymarket 官方 API 对齐](./docs/polymarket-official-api.md)：当前已接入官方接口及字段口径。
 
 ## 模块接口原则
 

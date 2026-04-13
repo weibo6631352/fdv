@@ -28,7 +28,9 @@
 - 输入：命令行参数、环境变量配置，以及必要的 Admin API 调用参数。
 - 输出：进程退出码、控制台摘要，以及命令触发的受控操作结果。
 
-## M4 命令
+## 当前命令
+
+- 详细运维用法见 [docs/operations.md](../../../docs/operations.md)。
 
 - `fdv-trader run`
 - `fdv-trader init-db`

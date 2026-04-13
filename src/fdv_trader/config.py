@@ -85,18 +85,18 @@ class Settings(BaseSettings):
     polymarket_signature_type: int = Field(default=0, ge=0, le=2)
     polymarket_funder_address: str | None = None
 
-    # 策略与风控默认值偏保守；0 代表还没有准备好自动交易，不会放大仓位。
+    # 预算相关默认值保持 0，避免在未明确配置前进入自动交易；其余风控阈值对齐示例推荐值。
     portfolio_budget_usdc: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     max_order_usdc: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     max_market_usdc: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     max_total_usdc: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     entry_no_price_max: Decimal = Field(default=Decimal("0.60"), ge=Decimal("0"), le=Decimal("1"))
     exit_no_price: Decimal = Field(default=Decimal("0.70"), ge=Decimal("0"), le=Decimal("1"))
-    min_liquidity_usdc: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
-    max_spread: Decimal = Field(default=Decimal("0"), ge=Decimal("0"), le=Decimal("1"))
+    min_liquidity_usdc: Decimal = Field(default=Decimal("5"), ge=Decimal("0"))
+    max_spread: Decimal = Field(default=Decimal("0.10"), ge=Decimal("0"), le=Decimal("1"))
     market_sync_interval_seconds: int = Field(default=60, ge=1)
     order_retry_limit: int = Field(default=2, ge=0)
-    max_open_orders: int = Field(default=50, ge=0)
+    max_open_orders: int = Field(default=0, ge=0)
 
     # 性能与优先级字段必须始终有限制，避免无界队列、无界等待和热路径阻塞。
     enable_uvloop: bool = True
