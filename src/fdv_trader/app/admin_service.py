@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Literal, Mapping, Sequence
 from uuid import uuid4
 
 from fdv_trader.app.reconcile_service import ReconcileAction, ReconcilePlan
@@ -119,6 +119,79 @@ def _normalize_condition_ids(condition_ids: Sequence[str] | None) -> tuple[str, 
     return tuple(condition_id for condition_id in condition_ids if condition_id)
 
 
+MarketFeeSortField = Literal[
+    "market_slug",
+    "fee_rate_bps",
+    "fee_rate_updated_at",
+    "maker_base_fee_bps",
+    "taker_base_fee_bps",
+]
+SortDirection = Literal["asc", "desc"]
+
+
+def _market_matches_fee_filters(
+    market: Market,
+    *,
+    fees_enabled: bool | None = None,
+    fee_rate_bps_min: int | None = None,
+    fee_rate_bps_max: int | None = None,
+    maker_base_fee_bps_min: int | None = None,
+    maker_base_fee_bps_max: int | None = None,
+    taker_base_fee_bps_min: int | None = None,
+    taker_base_fee_bps_max: int | None = None,
+) -> bool:
+    if fees_enabled is not None and market.fees_enabled is not fees_enabled:
+        return False
+    if fee_rate_bps_min is not None and (market.fee_rate_bps is None or market.fee_rate_bps < fee_rate_bps_min):
+        return False
+    if fee_rate_bps_max is not None and (market.fee_rate_bps is None or market.fee_rate_bps > fee_rate_bps_max):
+        return False
+    if maker_base_fee_bps_min is not None and (
+        market.maker_base_fee_bps is None or market.maker_base_fee_bps < maker_base_fee_bps_min
+    ):
+        return False
+    if maker_base_fee_bps_max is not None and (
+        market.maker_base_fee_bps is None or market.maker_base_fee_bps > maker_base_fee_bps_max
+    ):
+        return False
+    if taker_base_fee_bps_min is not None and (
+        market.taker_base_fee_bps is None or market.taker_base_fee_bps < taker_base_fee_bps_min
+    ):
+        return False
+    if taker_base_fee_bps_max is not None and (
+        market.taker_base_fee_bps is None or market.taker_base_fee_bps > taker_base_fee_bps_max
+    ):
+        return False
+    return True
+
+
+def _market_sort_value(market: Market, sort_by: MarketFeeSortField) -> object | None:
+    return {
+        "market_slug": market.market_slug,
+        "fee_rate_bps": market.fee_rate_bps,
+        "fee_rate_updated_at": market.fee_rate_updated_at,
+        "maker_base_fee_bps": market.maker_base_fee_bps,
+        "taker_base_fee_bps": market.taker_base_fee_bps,
+    }[sort_by]
+
+
+def _sort_markets(
+    markets: Sequence[Market],
+    *,
+    sort_by: MarketFeeSortField | None = None,
+    sort_direction: SortDirection = "desc",
+) -> tuple[Market, ...]:
+    if sort_by is None:
+        return tuple(markets)
+    present = [market for market in markets if _market_sort_value(market, sort_by) is not None]
+    missing = [market for market in markets if _market_sort_value(market, sort_by) is None]
+    present.sort(
+        key=lambda market: _market_sort_value(market, sort_by),
+        reverse=sort_direction == "desc",
+    )
+    return tuple(present + missing)
+
+
 @dataclass(frozen=True, slots=True)
 class AdminService:
     """Coordinates read-only admin queries and controlled manual operations."""
@@ -178,14 +251,37 @@ class AdminService:
         limit: int = 100,
         offset: int = 0,
         trading_status: str | None = None,
+        fees_enabled: bool | None = None,
+        fee_rate_bps_min: int | None = None,
+        fee_rate_bps_max: int | None = None,
+        maker_base_fee_bps_min: int | None = None,
+        maker_base_fee_bps_max: int | None = None,
+        taker_base_fee_bps_min: int | None = None,
+        taker_base_fee_bps_max: int | None = None,
+        sort_by: MarketFeeSortField | None = None,
+        sort_direction: SortDirection = "desc",
     ) -> dict[str, Any]:
         if not self._has_db_session_factory():
             registry = self._registry_snapshot()
             account = self._account_snapshot()
-            markets = tuple(
-                market
-                for market in registry.markets
-                if trading_status is None or market.trading_status.value == trading_status
+            markets = _sort_markets(
+                tuple(
+                    market
+                    for market in registry.markets
+                    if (trading_status is None or market.trading_status.value == trading_status)
+                    and _market_matches_fee_filters(
+                        market,
+                        fees_enabled=fees_enabled,
+                        fee_rate_bps_min=fee_rate_bps_min,
+                        fee_rate_bps_max=fee_rate_bps_max,
+                        maker_base_fee_bps_min=maker_base_fee_bps_min,
+                        maker_base_fee_bps_max=maker_base_fee_bps_max,
+                        taker_base_fee_bps_min=taker_base_fee_bps_min,
+                        taker_base_fee_bps_max=taker_base_fee_bps_max,
+                    )
+                ),
+                sort_by=sort_by,
+                sort_direction=sort_direction,
             )
             page = self._slice_sequence(markets, limit=limit, offset=offset)
             items = [
@@ -206,6 +302,15 @@ class AdminService:
                 limit=limit,
                 offset=offset,
                 trading_status=trading_status,
+                fees_enabled=fees_enabled,
+                fee_rate_bps_min=fee_rate_bps_min,
+                fee_rate_bps_max=fee_rate_bps_max,
+                maker_base_fee_bps_min=maker_base_fee_bps_min,
+                maker_base_fee_bps_max=maker_base_fee_bps_max,
+                taker_base_fee_bps_min=taker_base_fee_bps_min,
+                taker_base_fee_bps_max=taker_base_fee_bps_max,
+                sort_by=sort_by,
+                sort_direction=sort_direction,
             )
 
         page = await self._with_repositories(_query)

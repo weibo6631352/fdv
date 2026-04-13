@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -501,6 +501,54 @@ def test_admin_api_supports_reconcile_and_cancel_replace_sell_routes() -> None:
 
         updated_portfolio = client.get("/portfolio").json()
         assert updated_portfolio["open_order_count"] == 2
+
+
+def test_admin_api_supports_fee_filters_and_sorting() -> None:
+    runtime = _build_runtime(ready=True)
+    second_market = replace(
+        _market(),
+        condition_id="condition-1b",
+        market_slug="token-1b-fdv",
+        no_token_id="no-token-1b",
+        yes_token_id="yes-token-1b",
+        fee_rate_bps=200,
+        taker_base_fee_bps=150,
+        maker_base_fee_bps=5,
+        fee_rate_updated_at=datetime(2026, 1, 1, 12, 3, 0, tzinfo=timezone.utc),
+    )
+    runtime.registry.upsert(second_market)
+    runtime.market_ws_worker._snapshots[second_market.no_token_id] = _orderbook(second_market)
+
+    app = create_app(runtime=runtime, admin_service=AdminService())
+
+    with TestClient(app) as client:
+        filtered = client.get(
+            "/markets",
+            params={
+                "fees_enabled": "true",
+                "fee_rate_bps_min": 150,
+                "taker_base_fee_bps_min": 120,
+                "sort_by": "fee_rate_bps",
+                "sort_direction": "desc",
+            },
+        ).json()
+        sorted_markets = client.get(
+            "/markets",
+            params={
+                "sort_by": "fee_rate_bps",
+                "sort_direction": "desc",
+            },
+        ).json()
+
+        assert filtered["total"] == 1
+        assert filtered["items"][0]["market"]["condition_id"] == "condition-1b"
+        assert filtered["items"][0]["market"]["fees"]["fee_rate_bps"] == 200
+
+        assert sorted_markets["total"] == 2
+        assert [item["market"]["condition_id"] for item in sorted_markets["items"]] == [
+            "condition-1b",
+            "condition-500m",
+        ]
 
 
 def test_admin_ready_route_reports_blockers_when_runtime_is_not_ready() -> None:

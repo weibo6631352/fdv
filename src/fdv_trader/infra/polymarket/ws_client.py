@@ -63,17 +63,25 @@ class PolymarketWebSocketClient:
     def build_user_subscription(
         self,
         condition_ids: list[str] | tuple[str, ...],
+        *,
+        auth: Mapping[str, str],
     ) -> WebSocketSubscription:
         return WebSocketSubscription(
             channel=PolymarketSubscriptionChannel.USER,
             condition_ids=tuple(condition_ids),
+            auth=auth,
         )
 
     def build_market_subscription_request(self, token_ids: list[str] | tuple[str, ...]) -> dict[str, Any]:
         return build_market_subscription_request(token_ids)
 
-    def build_user_subscription_request(self, condition_ids: list[str] | tuple[str, ...]) -> dict[str, Any]:
-        return build_user_subscription_request(condition_ids)
+    def build_user_subscription_request(
+        self,
+        condition_ids: list[str] | tuple[str, ...],
+        *,
+        auth: Mapping[str, str],
+    ) -> dict[str, Any]:
+        return build_user_subscription_request(condition_ids, auth=auth)
 
     def parse_message(
         self,
@@ -107,6 +115,7 @@ class PolymarketWebSocketClient:
         self,
         condition_ids: list[str] | tuple[str, ...],
         *,
+        auth: Mapping[str, str],
         reconnect: bool = True,
         on_connect: LifecycleHook | None = None,
         on_disconnect: LifecycleHook | None = None,
@@ -114,7 +123,7 @@ class PolymarketWebSocketClient:
     ) -> AsyncIterator[WebSocketMessage]:
         async for message in self._stream(
             self._user_url,
-            self.build_user_subscription_request(condition_ids),
+            self.build_user_subscription_request(condition_ids, auth=auth),
             reconnect=reconnect,
             on_connect=on_connect,
             on_disconnect=on_disconnect,

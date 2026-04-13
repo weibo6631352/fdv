@@ -39,7 +39,15 @@ def _first(mapping: Mapping[str, Any], *keys: str) -> Any | None:
 
 
 def _extract_token_id(message: Mapping[str, Any]) -> str | None:
-    value = _first(message, "token_id", "tokenId", "asset_id", "assetId", "market_token_id")
+    value = _first(
+        message,
+        "token_id",
+        "tokenId",
+        "asset_id",
+        "assetId",
+        "market_token_id",
+        "winning_asset_id",
+    )
     return None if value is None else str(value)
 
 
@@ -70,6 +78,30 @@ def _parse_levels(value: Any) -> tuple[PriceLevel, ...]:
             continue
         levels.append(PriceLevel(price=price, size=size))
     return tuple(levels)
+
+
+def _message_type(message: Mapping[str, Any]) -> str:
+    value = _first(message, "event_type", "message_type", "channel_event", "event", "type", "action")
+    return "" if value is None else str(value).strip().lower()
+
+
+def _extract_token_candidates(message: Mapping[str, Any]) -> tuple[str, ...]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+    direct = _extract_token_id(message)
+    if direct is not None and direct not in seen:
+        candidates.append(direct)
+        seen.add(direct)
+    for key in ("assets_ids", "clob_token_ids"):
+        value = message.get(key)
+        if not isinstance(value, (list, tuple)):
+            continue
+        for item in value:
+            text = str(item).strip()
+            if text and text not in seen:
+                candidates.append(text)
+                seen.add(text)
+    return tuple(candidates)
 
 
 def _best_price(levels: tuple[PriceLevel, ...]) -> Decimal | None:
@@ -199,12 +231,21 @@ class MarketWsWorker:
                 ),
             )
 
-    def build_subscription_request(self, no_token_id: str) -> dict[str, Any]:
+    def build_subscription_request(
+        self,
+        no_token_id: str | tuple[str, ...] | list[str],
+    ) -> dict[str, Any]:
         # 只订阅 NO token_id，避免把 YES side 的噪声带进入场信号链路。
-        self._mark_subscribed(no_token_id)
+        token_ids = (
+            tuple(str(item).strip() for item in no_token_id if str(item).strip())
+            if isinstance(no_token_id, (list, tuple))
+            else ((str(no_token_id).strip(),) if str(no_token_id).strip() else ())
+        )
+        for token_id in token_ids:
+            self._mark_subscribed(token_id)
         return {
-            "channel": "market",
-            "token_ids": [no_token_id],
+            "assets_ids": list(token_ids),
+            "type": "market",
             "custom_feature_enabled": True,
         }
 
@@ -215,13 +256,28 @@ class MarketWsWorker:
         source: str = "market_ws",
     ) -> list[DomainEvent]:
         self._last_message_at = _utc_now()
-        token_id = _extract_token_id(message)
+        message_type = _message_type(message)
+        if message_type == "price_change" and isinstance(message.get("price_changes"), list):
+            events: list[DomainEvent] = []
+            for item in message["price_changes"]:
+                if not isinstance(item, Mapping):
+                    continue
+                expanded = dict(message)
+                expanded.pop("price_changes", None)
+                expanded.update(item)
+                expanded["event_type"] = "price_change"
+                events.extend(await self.handle_message(expanded, source=source))
+            return events
+
+        token_id = self._resolve_token_id(message)
         if token_id is None:
             return []
 
         market = self._resolve_market(message, token_id)
         state = self._ensure_state(token_id, market)
-        if state.resolved and message.get("type") != "market_resolved":
+        state.last_error = None
+        self._last_error = None
+        if state.resolved and message_type != "market_resolved":
             return []
 
         sequence = _extract_sequence(message)
@@ -233,12 +289,8 @@ class MarketWsWorker:
             self.record_error("rest_snapshot_loader_unavailable", token_id=token_id)
             return []
 
-        if state.needs_rest_snapshot and message.get("type") not in {"rest_snapshot", "snapshot"}:
+        if state.needs_rest_snapshot and message_type not in {"rest_snapshot", "snapshot", "book", "orderbook"}:
             return []
-
-        message_type = str(
-            _first(message, "type", "event_type", "message_type", "channel_event") or ""
-        ).lower()
         events: list[DomainEvent] = []
 
         if message_type in {"book", "orderbook", "snapshot", "rest_snapshot"}:
@@ -700,10 +752,21 @@ class MarketWsWorker:
         self._states[token_id] = state
         return state
 
+    def _resolve_token_id(self, message: Mapping[str, Any]) -> str | None:
+        candidates = _extract_token_candidates(message)
+        if not candidates:
+            return None
+        for token_id in candidates:
+            if token_id in self._tracked_markets or token_id in self._states:
+                return token_id
+            if self._registry is not None and self._registry.get_by_no_token_id(token_id) is not None:
+                return token_id
+        return candidates[0]
+
     def _resolve_market(self, message: Mapping[str, Any], token_id: str) -> Market | None:
         if token_id in self._tracked_markets:
             return self._tracked_markets[token_id]
-        condition_id = _first(message, "condition_id", "conditionId")
+        condition_id = _first(message, "condition_id", "conditionId", "market")
         market_slug = _first(message, "market_slug", "marketSlug", "slug")
         if self._registry is not None:
             if condition_id:
@@ -746,7 +809,7 @@ class MarketWsWorker:
             or (previous.market_slug if previous else "")
         ) or None
         condition_id = str(
-            _first(payload, "condition_id", "conditionId")
+            _first(payload, "condition_id", "conditionId", "market")
             or (previous.condition_id if previous else "")
         ) or None
         tick_size = _decimal(_first(payload, "tick_size", "tickSize")) or (

@@ -12,9 +12,10 @@
 - 账户余额与 allowance 已切到 `GET /balance-allowance`。
 - open orders / 用户 trades 已对齐到官方 SDK 当前 ledger 路径。
 - Data API positions / trades 查询参数已对齐到官方当前 `user` / `market` / `eventId` 口径。
+- market / user WebSocket 已按官方当前订阅 payload 接入主运行链路。
 - 市场静态费率字段已经接入 `Market`、数据库落表和管理端 `/markets` 输出。
 - `GET /fee-rate` 已由后台对账链路接入，用于按 `token_id` 刷新本地费率缓存。
-- 管理端查询接口只读本地快照，不在 HTTP handler 内直接请求 Polymarket。
+- 管理端 `/markets` 已支持基于本地 fee 缓存字段做筛选和排序，不在 HTTP handler 内直接请求 Polymarket。
 
 ## 1. 官方基础地址
 
@@ -99,8 +100,8 @@
 | 来源 | 可拿到的费率字段 | 备注 |
 | --- | --- | --- |
 | Gamma `GET /events` / `GET /markets` 响应 | `makerBaseFee`、`takerBaseFee`、`feesEnabled`、`feeSchedule` | 已用于市场发现和权威刷新，并已写入本地 `Market` / 数据库 / `/markets` 输出 |
-| Market WS `new_market` 事件 | `fees_enabled`、`taker_base_fee`、`fee_schedule.rate`、`fee_schedule.rebate_rate` | 适合实时感知新市场 fee 配置；当前主链路未接入 |
-| Market WS `last_trade_price` 事件 | `fee_rate_bps` | 反映成交事件对应 fee rate；当前主链路未接入 |
+| Market WS `new_market` 事件 | `fees_enabled`、`taker_base_fee`、`fee_schedule.rate`、`fee_schedule.rebate_rate` | WS 主循环已接入；当前这些 fee 字段还没有回写到本地市场模型 |
+| Market WS `last_trade_price` 事件 | `fee_rate_bps` | WS 主循环已接入；当前还没有把该字段写回本地 fee 缓存 |
 
 ### 4.3 当前仓库的费率展示口径
 
@@ -122,6 +123,7 @@
 - `fee_rate_bps` / `fee_rate_updated_at`：来自 CLOB `GET /fee-rate`，由后台对账刷新后写入本地。
 - 当前后台使用 `market.no_token_id` 作为 `token_id` 去刷新 `fee_rate_bps`。
 - 管理端 `/markets` 只返回本地快照，不在请求过程中实时调用外部费率接口。
+- 管理端 `/markets` 当前支持 `fees_enabled`、`fee_rate_bps_min/max`、`maker_base_fee_bps_min/max`、`taker_base_fee_bps_min/max` 筛选，以及 `fee_rate_bps` / `fee_rate_updated_at` / `maker_base_fee_bps` / `taker_base_fee_bps` / `market_slug` 排序。
 
 ### 4.4 静态规则说明页面
 
@@ -136,19 +138,22 @@
 
 ## 5. WebSocket 在当前仓库里的状态
 
-仓库里已经有 WebSocket client / worker 封装，但截至 2026-04-13，主运行链路没有真正调用 `PolymarketWebSocketClient.stream_market_messages()` 或 `stream_user_messages()`。
+截至 2026-04-13，主运行链路已经真正调用 `PolymarketWebSocketClient.stream_market_messages()` 和 `stream_user_messages()`。
 
-当前仓库内部 helper 的订阅 payload 还是占位实现：
+当前接入方式：
 
-- market: `{"channel":"market","token_ids":[...],"custom_feature_enabled":true}`
-- user: `{"channel":"user","condition_ids":[...]}`
+- market：按官方当前 payload 订阅 `{"assets_ids":[...],"type":"market","custom_feature_enabled":true}`，订阅集来自当前 registry 中跟踪市场的 NO token ids。
+- user：按官方当前 payload 订阅 `{"auth": {...}, "markets": [...], "type":"user"}`，订阅集来自当前 registry 中跟踪市场的 condition ids。
 
-官方当前文档的写法是：
+当前仓库已经把以下官方消息形态纳入处理：
 
-- market: `{"assets_ids":[...],"type":"market","custom_feature_enabled":true}`
-- user: `{"auth": {...}, "markets": [...], "type":"user"}`
+- market WS 的 `price_change.price_changes[]`、`market_resolved.assets_ids[]`
+- user WS 的 `event_type=order|trade`、`market`、`asset_id`、`original_size`、`size_matched`、`matchtime`
 
-因此后续如果要把 WS 真正接入运行主循环，应以官方当前文档为准，不要直接复用现有占位 payload。
+当前还没有做的部分：
+
+- Market WS 里的 fee 相关字段还没有回写到本地 `Market` fee 快照。
+- 若订阅市场集合频繁变化，当前实现会重建 stream task 以更新订阅集。
 
 ## 6. 建议的后续对齐顺序
 
@@ -169,10 +174,19 @@
    - Gamma 静态费率已进入市场模型、数据库和管理端市场视图。
    - `GET /fee-rate` 已进入后台对账刷新链路。
 
+5. market / user WebSocket 订阅对齐并接入主运行链路
+   - market WS 已切到官方当前 `assets_ids` / `type=market` 订阅格式。
+   - user WS 已切到官方当前 `auth` / `markets` / `type=user` 订阅格式。
+   - 主运行链路会按当前跟踪市场集合重建订阅 stream。
+
+6. 管理端 fee 筛选和排序
+   - `/markets` 已支持基于本地 fee 缓存字段做筛选和排序。
+   - 查询只读本地快照，不在列表接口里现场请求外部 fee 接口。
+
 继续建议：
 
-1. 真正接入 WebSocket 前，先按官方当前订阅格式重写 market / user subscription payload。
-2. 若后续要做费率筛选或排序，直接基于本地缓存字段扩展查询，不在列表接口里现场请求外部 fee 接口。
+1. 若希望 fee 快照更低延迟，可把 Market WS `new_market` / `last_trade_price.fee_rate_bps` 纳入本地市场 fee 更新链路。
+2. 若后续跟踪市场数继续增大，可继续优化 WS 重订阅节流和队列背压参数。
 
 ## 7. 官方参考链接
 

@@ -4,6 +4,7 @@ import asyncio
 from decimal import Decimal
 
 from fdv_trader.domain.events import DomainEventType
+from fdv_trader.domain.order import OrderStatus
 from fdv_trader.runtime.account_state import AccountStateStore
 from fdv_trader.workers.user_ws_worker import UserWsWorker
 
@@ -69,5 +70,74 @@ def test_user_ws_worker_requires_reconcile_after_reconnect_before_buying_resumes
         store.mark_reconciled()
         assert store.snapshot().last_reconcile_at is not None
         assert store.snapshot().allow_new_buys is True
+
+    asyncio.run(run())
+
+
+def test_user_ws_worker_builds_official_subscription_payload_and_processes_official_messages() -> None:
+    async def run() -> None:
+        store = AccountStateStore()
+        worker = UserWsWorker(account_state_store=store)
+
+        payload = worker.build_subscription_request(
+            ("condition",),
+            auth={
+                "apiKey": "key",
+                "secret": "secret",
+                "passphrase": "passphrase",
+            },
+        )
+        assert payload == {
+            "auth": {
+                "apiKey": "key",
+                "secret": "secret",
+                "passphrase": "passphrase",
+            },
+            "markets": ["condition"],
+            "type": "user",
+        }
+
+        order_result = await worker.process_message(
+            {
+                "event_type": "order",
+                "type": "PLACEMENT",
+                "id": "order-1",
+                "market": "condition",
+                "asset_id": "token",
+                "side": "SELL",
+                "price": "0.57",
+                "original_size": "10",
+                "size_matched": "4",
+                "timestamp": "1672290687",
+            }
+        )
+        order = order_result.snapshot.open_orders_for_market("condition", "token")[0]
+        assert order.order_id == "order-1"
+        assert order.size_shares == Decimal("10")
+        assert order.filled_shares == Decimal("4")
+        assert order.remaining_shares == Decimal("6")
+        assert order.status == OrderStatus.PARTIALLY_FILLED
+
+        fill_result = await worker.process_message(
+            {
+                "event_type": "trade",
+                "type": "TRADE",
+                "id": "trade-1",
+                "market": "condition",
+                "asset_id": "token",
+                "taker_order_id": "order-1",
+                "side": "BUY",
+                "price": "0.57",
+                "size": "3",
+                "status": "MATCHED",
+                "matchtime": "1672290701",
+                "timestamp": "1672290701",
+            }
+        )
+        position = fill_result.snapshot.get_position("condition", "token")
+        assert position is not None
+        assert position.shares == Decimal("3")
+        assert fill_result.events[0].event_type == DomainEventType.ORDER_STATE_UPDATED
+        assert fill_result.events[1].event_type == DomainEventType.FILL_RECORDED
 
     asyncio.run(run())

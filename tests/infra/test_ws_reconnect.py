@@ -67,6 +67,18 @@ def test_market_ws_worker_emits_entry_touch_only_once() -> None:
     asyncio.run(run())
 
 
+def test_market_ws_worker_builds_official_subscription_payload() -> None:
+    worker = MarketWsWorker()
+
+    payload = worker.build_subscription_request(("no-token-1", "no-token-2"))
+
+    assert payload == {
+        "assets_ids": ["no-token-1", "no-token-2"],
+        "type": "market",
+        "custom_feature_enabled": True,
+    }
+
+
 def test_market_ws_worker_updates_tick_size_in_registry() -> None:
     async def run() -> None:
         registry = MarketRegistry()
@@ -85,6 +97,68 @@ def test_market_ws_worker_updates_tick_size_in_registry() -> None:
         updated = registry.get_by_condition_id(market.condition_id)
         assert updated is not None
         assert updated.tick_size == Decimal("0.02")
+
+    asyncio.run(run())
+
+
+def test_market_ws_worker_handles_official_price_change_batch_payload() -> None:
+    async def run() -> None:
+        worker = MarketWsWorker()
+        market = _market()
+        worker.track_market(market)
+
+        events = await worker.handle_message(
+            {
+                "event_type": "price_change",
+                "market": market.condition_id,
+                "price_changes": [
+                    {
+                        "asset_id": market.no_token_id,
+                        "price": "0.59",
+                        "size": "200",
+                        "side": "SELL",
+                        "best_bid": "0.55",
+                        "best_ask": "0.59",
+                    }
+                ],
+                "timestamp": "1757908892351",
+            }
+        )
+
+        snapshot = worker.snapshot(market.no_token_id)
+        assert snapshot is not None
+        assert snapshot.best_bid == Decimal("0.55")
+        assert snapshot.best_ask == Decimal("0.59")
+        assert [str(event.event_type) for event in events] == [
+            DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
+            DomainEventType.ENTRY_PRICE_TOUCHED.value,
+        ]
+
+    asyncio.run(run())
+
+
+def test_market_ws_worker_handles_official_market_resolved_payload_with_assets_ids() -> None:
+    async def run() -> None:
+        registry = MarketRegistry()
+        worker = MarketWsWorker(registry=registry)
+        market = _market()
+        worker.track_market(market)
+
+        events = await worker.handle_message(
+            {
+                "event_type": "market_resolved",
+                "market": market.condition_id,
+                "assets_ids": [market.yes_token_id, market.no_token_id],
+            }
+        )
+
+        assert [str(event.event_type) for event in events] == [
+            DomainEventType.MARKET_RESOLVED_OR_DISABLED.value,
+        ]
+        assert worker.status_snapshot().resolved_token_ids == (market.no_token_id,)
+        updated = registry.get_by_condition_id(market.condition_id)
+        assert updated is not None
+        assert updated.trading_status == TradingStatus.RESOLVED
 
     asyncio.run(run())
 

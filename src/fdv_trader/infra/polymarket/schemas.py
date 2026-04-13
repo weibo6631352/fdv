@@ -1156,16 +1156,19 @@ class WebSocketSubscription:
     token_ids: tuple[str, ...] = field(default_factory=tuple)
     condition_ids: tuple[str, ...] = field(default_factory=tuple)
     custom_feature_enabled: bool = False
+    auth: Mapping[str, str] | None = None
     raw: Mapping[str, Any] = field(default_factory=dict)
 
     def to_payload(self) -> dict[str, Any]:
-        payload = {"channel": self.channel.value}
+        payload = {"type": self.channel.value}
         if self.channel is PolymarketSubscriptionChannel.MARKET:
-            payload["token_ids"] = list(self.token_ids)
+            payload["assets_ids"] = list(self.token_ids)
             # Market Channel 的 best_bid_ask / new_market / market_resolved 只有开启 custom feature 才会送。
             payload["custom_feature_enabled"] = True if self.custom_feature_enabled else False
         else:
-            payload["condition_ids"] = list(self.condition_ids)
+            payload["markets"] = list(self.condition_ids)
+            if self.auth is not None:
+                payload["auth"] = {str(key): str(value) for key, value in self.auth.items()}
         payload.update(dict(self.raw))
         return payload
 
@@ -1187,8 +1190,17 @@ class WebSocketMessage:
         object.__setattr__(self, "channel", self.channel.strip())
         object.__setattr__(self, "message_type", self.message_type.strip().lower())
         object.__setattr__(self, "trace_id", self.trace_id.strip() if self.trace_id else uuid4().hex)
-        object.__setattr__(self, "token_id", self.token_id or _first_text(self.raw, "token_id", "tokenId", "asset_id", "assetId"))
-        object.__setattr__(self, "condition_id", self.condition_id or _first_text(self.raw, "condition_id", "conditionId", "condition"))
+        object.__setattr__(
+            self,
+            "token_id",
+            self.token_id
+            or _first_text(self.raw, "token_id", "tokenId", "asset_id", "assetId", "winning_asset_id"),
+        )
+        object.__setattr__(
+            self,
+            "condition_id",
+            self.condition_id or _first_text(self.raw, "condition_id", "conditionId", "condition", "market"),
+        )
         object.__setattr__(self, "market_slug", self.market_slug or _first_text(self.raw, "market_slug", "marketSlug", "slug"))
         if self.sequence is None:
             with contextlib.suppress(Exception):
@@ -1398,18 +1410,25 @@ def orderbook_to_domain_snapshot(payload: Mapping[str, Any], *, token_id: str) -
 
 def build_market_subscription_request(token_ids: Iterable[str]) -> dict[str, Any]:
     # Market Channel 的 `best_bid_ask` / `new_market` / `market_resolved` 需要 `custom_feature_enabled: true`。
-    return {
-        "channel": PolymarketSubscriptionChannel.MARKET.value,
-        "token_ids": [str(token_id).strip() for token_id in token_ids if str(token_id).strip()],
-        "custom_feature_enabled": True,
-    }
+    return WebSocketSubscription(
+        channel=PolymarketSubscriptionChannel.MARKET,
+        token_ids=tuple(str(token_id).strip() for token_id in token_ids if str(token_id).strip()),
+        custom_feature_enabled=True,
+    ).to_payload()
 
 
-def build_user_subscription_request(condition_ids: Iterable[str]) -> dict[str, Any]:
-    return {
-        "channel": PolymarketSubscriptionChannel.USER.value,
-        "condition_ids": [str(condition_id).strip() for condition_id in condition_ids if str(condition_id).strip()],
-    }
+def build_user_subscription_request(
+    condition_ids: Iterable[str],
+    *,
+    auth: Mapping[str, str],
+) -> dict[str, Any]:
+    return WebSocketSubscription(
+        channel=PolymarketSubscriptionChannel.USER,
+        condition_ids=tuple(
+            str(condition_id).strip() for condition_id in condition_ids if str(condition_id).strip()
+        ),
+        auth=auth,
+    ).to_payload()
 
 
 def parse_ws_message(
@@ -1429,7 +1448,15 @@ def parse_ws_message(
             raw_response=payload,
         )
 
-    message_type = _first_text(payload, "type", "event_type", "message_type", "channel_event", "event")
+    message_type = _first_text(
+        payload,
+        "event_type",
+        "message_type",
+        "channel_event",
+        "event",
+        "type",
+        "action",
+    )
     if message_type is None:
         message_type = "message"
     channel = channel_hint or _first_text(payload, "channel", "channel_type") or "market"
@@ -1450,8 +1477,15 @@ def parse_ws_message(
         message_type=message_type,
         payload=structured_payload,
         raw=payload,
-        token_id=_first_text(payload, "token_id", "tokenId", "asset_id", "assetId"),
-        condition_id=_first_text(payload, "condition_id", "conditionId", "condition"),
+        token_id=_first_text(
+            payload,
+            "token_id",
+            "tokenId",
+            "asset_id",
+            "assetId",
+            "winning_asset_id",
+        ),
+        condition_id=_first_text(payload, "condition_id", "conditionId", "condition", "market"),
         market_slug=_first_text(payload, "market_slug", "marketSlug", "slug"),
         sequence=sequence_value,
     )

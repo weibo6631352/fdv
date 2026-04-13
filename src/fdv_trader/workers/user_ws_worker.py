@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Awaitable, Callable, Iterable, Mapping
 from uuid import uuid4
 
@@ -49,6 +49,15 @@ def _to_datetime(value: Any | None) -> datetime | None:
     text = str(value).strip()
     if not text:
         return None
+    try:
+        numeric = Decimal(text)
+    except InvalidOperation:
+        numeric = None
+    if numeric is not None:
+        timestamp = float(numeric)
+        if timestamp > 10_000_000_000:
+            timestamp /= 1000.0
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc)
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
@@ -106,13 +115,34 @@ def _normalize_order_type(value: Any | None, *, default: OrderType = OrderType.G
     return default
 
 
+def _normalize_user_order_status(message: Mapping[str, Any]) -> OrderStatus:
+    explicit = _text(_first(message, "status", "order_status", "orderStatus"))
+    if explicit is not None:
+        return _normalize_order_status(explicit)
+    event_kind = _normalize_status(_first(message, "type", "action"))
+    matched = _to_decimal(
+        _first(message, "filled_shares", "size_matched", "matched_amount"),
+        default=Decimal("0"),
+    ) or Decimal("0")
+    original = _to_decimal(_first(message, "size_shares", "size", "original_size", "quantity"))
+    if event_kind in {"cancellation", "cancel", "cancelled", "canceled"}:
+        return OrderStatus.CANCELLED
+    if original is not None and original > 0 and matched >= original:
+        return OrderStatus.MATCHED
+    if matched > 0:
+        return OrderStatus.PARTIALLY_FILLED
+    if event_kind in {"placement", "update"}:
+        return OrderStatus.LIVE
+    return OrderStatus.CREATED
+
+
 def _message_type(message: Mapping[str, Any]) -> str:
-    value = _first(message, "type", "event_type", "message_type", "channel_event", "action")
+    value = _first(message, "event_type", "message_type", "channel_event", "type", "action")
     return _normalize_status(value)
 
 
 def _extract_condition_id(message: Mapping[str, Any]) -> str | None:
-    return _text(_first(message, "condition_id", "conditionId", "condition"))
+    return _text(_first(message, "condition_id", "conditionId", "condition", "market"))
 
 
 def _extract_token_id(message: Mapping[str, Any]) -> str | None:
@@ -366,10 +396,30 @@ class UserWsWorker:
             subscriptions=subscriptions,
         )
 
-    def build_subscription_request(self, condition_id: str) -> dict[str, Any]:
-        # User Channel 只按 condition id 订阅，避免 token 维度带来额外噪声和对齐成本。
-        self._subscribed_condition_ids[condition_id] = _utc_now()
-        return {"channel": "user", "condition_ids": [condition_id]}
+    def build_subscription_request(
+        self,
+        condition_ids: str | Iterable[str],
+        *,
+        auth: Mapping[str, str],
+    ) -> dict[str, Any]:
+        # User Channel 按官方当前 markets=condition_ids 订阅。
+        normalized = (
+            (condition_ids.strip(),)
+            if isinstance(condition_ids, str) and condition_ids.strip()
+            else tuple(
+                str(condition_id).strip()
+                for condition_id in condition_ids
+                if str(condition_id).strip()
+            )
+        )
+        subscribed_at = _utc_now()
+        for condition_id in normalized:
+            self._subscribed_condition_ids[condition_id] = subscribed_at
+        return {
+            "auth": {str(key): str(value) for key, value in auth.items()},
+            "markets": list(normalized),
+            "type": "user",
+        }
 
     def record_error(self, reason: str) -> None:
         self._last_error = reason
@@ -396,6 +446,7 @@ class UserWsWorker:
         message: Mapping[str, Any] | DomainEvent,
     ) -> UserWsProcessResult:
         self._last_message_at = _utc_now()
+        self._last_error = None
         payload = _flatten_message(message)
         message_type = _message_type(payload)
         trace_id = _extract_trace_id(payload)
@@ -480,6 +531,8 @@ class UserWsWorker:
     ) -> UserWsProcessResult:
         trace_id = trace_id or uuid4().hex
         self._last_message_at = _utc_now()
+        if connected:
+            self._last_error = None
         if connected:
             snapshot = self._account_state.mark_user_ws_connected(True)
         else:
@@ -859,11 +912,17 @@ def _iter_order_snapshots(payload: Mapping[str, Any]) -> Iterable[Order]:
             side = OrderSide.SELL
         price = _to_decimal(item.get("price"), default=Decimal("0")) or Decimal("0")
         amount_usdc = _to_decimal(item.get("amount_usdc") or item.get("amount"))
-        size_shares = _to_decimal(item.get("size_shares") or item.get("size"))
+        size_shares = _to_decimal(item.get("size_shares") or item.get("size") or item.get("original_size"))
+        filled_shares = _to_decimal(
+            item.get("filled_shares") or item.get("size_matched") or item.get("matched_amount"),
+            default=Decimal("0"),
+        ) or Decimal("0")
         notional_usdc = _to_decimal(item.get("notional_usdc"))
+        if notional_usdc is None and price is not None and size_shares is not None:
+            notional_usdc = price * size_shares
         remaining_shares = _to_decimal(item.get("remaining_shares") or item.get("remaining_size"))
         if remaining_shares is None and size_shares is not None:
-            remaining_shares = size_shares
+            remaining_shares = max(Decimal("0"), size_shares - filled_shares)
         yield Order(
             trace_id=_extract_trace_id(item),
             condition_id=condition_id,
@@ -874,15 +933,18 @@ def _iter_order_snapshots(payload: Mapping[str, Any]) -> Iterable[Order]:
             price=price,
             amount_usdc=amount_usdc,
             size_shares=size_shares,
+            filled_shares=filled_shares,
             notional_usdc=notional_usdc,
             order_id=_text(item.get("order_id") or item.get("id")),
             trade_id=_text(item.get("trade_id")),
-            status=_normalize_order_status(item.get("status")),
+            status=_normalize_user_order_status(item),
             idempotency_key=_text(item.get("idempotency_key")),
             reason=_text(item.get("reason")) or "",
             post_only=bool(item.get("post_only", False)),
-            created_at=_to_datetime(item.get("created_at")),
-            updated_at=_to_datetime(item.get("updated_at") or item.get("timestamp")),
+            created_at=_to_datetime(item.get("created_at") or item.get("timestamp")),
+            updated_at=_to_datetime(
+                item.get("updated_at") or item.get("last_update") or item.get("timestamp")
+            ),
             remaining_shares=remaining_shares,
         )
 
@@ -907,12 +969,20 @@ def _iter_fill_snapshots(payload: Mapping[str, Any]) -> Iterable[Fill]:
         token_id = _extract_token_id(item)
         if condition_id is None or token_id is None:
             continue
-        size = _coalesce_decimal(item.get("size"), item.get("filled_size"), item.get("quantity"))
+        size = _coalesce_decimal(
+            item.get("size"),
+            item.get("filled_size"),
+            item.get("quantity"),
+            item.get("matched_amount"),
+        )
         price = _coalesce_decimal(item.get("price"), item.get("avg_price"))
         side_text = _normalize_status(item.get("side"))
         status = _normalize_status(item.get("status")) or _normalize_status(item.get("trade_status"))
         if not status:
             status = "confirmed" if item.get("confirmed", False) else "matched"
+        notional_usdc = _coalesce_decimal(item.get("notional_usdc"), item.get("amount"), default=Decimal("0"))
+        if notional_usdc == Decimal("0") and size is not None and price is not None:
+            notional_usdc = price * size
         yield Fill(
             trace_id=_extract_trace_id(item),
             event_id=_extract_event_id(item),
@@ -921,14 +991,19 @@ def _iter_fill_snapshots(payload: Mapping[str, Any]) -> Iterable[Fill]:
             token_id=token_id,
             reason=_text(item.get("reason")) or status,
             created_at=_to_datetime(item.get("created_at") or item.get("timestamp")) or _utc_now(),
-            order_id=_text(item.get("order_id") or item.get("id")),
-            trade_id=_text(item.get("trade_id") or item.get("matched_trade_id")),
+            order_id=_text(item.get("order_id") or item.get("taker_order_id")),
+            trade_id=_text(item.get("trade_id") or item.get("matched_trade_id") or item.get("id")),
             side=side_text,
             price=price,
             size=size,
-            notional_usdc=_coalesce_decimal(item.get("notional_usdc"), item.get("amount")),
+            notional_usdc=notional_usdc,
             status=status,
-            confirmed_at=_to_datetime(item.get("confirmed_at")),
+            confirmed_at=_to_datetime(
+                item.get("confirmed_at")
+                or item.get("matchtime")
+                or item.get("last_update")
+                or item.get("timestamp")
+            ),
         )
 
 

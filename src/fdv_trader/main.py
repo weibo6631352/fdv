@@ -5,7 +5,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, field
 import logging
-from typing import Any
+from typing import Any, Mapping
 from uuid import uuid4
 
 from sqlalchemy import text
@@ -432,7 +432,354 @@ async def _load_reference_state(runtime: RuntimeComponents) -> dict[str, int]:
     return loaded
 
 
+def _market_ws_subscription_token_ids(runtime: RuntimeComponents) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                market.no_token_id
+                for market in runtime.registry.snapshot().markets
+                if market.no_token_id
+            }
+        )
+    )
+
+
+def _user_ws_subscription_condition_ids(runtime: RuntimeComponents) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                market.condition_id
+                for market in runtime.registry.snapshot().markets
+                if market.condition_id
+            }
+        )
+    )
+
+
+def _user_ws_auth_payload(runtime: RuntimeComponents) -> dict[str, str] | None:
+    if runtime.trading_client is None:
+        return None
+    credentials = runtime.trading_client.get_api_credentials()
+    return {
+        "apiKey": credentials.api_key,
+        "secret": credentials.api_secret,
+        "passphrase": credentials.api_passphrase,
+    }
+
+
+async def _cancel_task(task: asyncio.Task[None] | None) -> None:
+    if task is None:
+        return
+    task.cancel()
+    with suppress(asyncio.CancelledError, Exception):
+        await task
+
+
+def _drain_queue(queue: asyncio.Queue[Mapping[str, Any]]) -> None:
+    while not queue.empty():
+        with suppress(asyncio.QueueEmpty):
+            queue.get_nowait()
+
+
+async def _stream_market_ws_messages(
+    runtime: RuntimeComponents,
+    token_ids: tuple[str, ...],
+    queue: asyncio.Queue[Mapping[str, Any]],
+) -> None:
+    async def on_connect(attempt: int) -> None:
+        runtime.supervisor.heartbeat_worker(
+            "market_ws",
+            state=WorkerLifecycleState.RUNNING,
+            healthy=True,
+            detail=f"connected subscribed={len(token_ids)} attempt={attempt}",
+        )
+        _sync_runtime_metrics(runtime)
+
+    async def on_disconnect(attempt: int) -> None:
+        runtime.supervisor.heartbeat_worker(
+            "market_ws",
+            state=WorkerLifecycleState.PAUSED,
+            healthy=True,
+            detail=f"disconnected attempt={attempt}",
+        )
+        _sync_runtime_metrics(runtime)
+
+    async def on_reconnect(attempt: int, exc: Exception) -> None:
+        runtime.market_ws_worker.record_error(str(exc))
+        runtime.supervisor.heartbeat_worker(
+            "market_ws",
+            state=WorkerLifecycleState.DEGRADED,
+            healthy=False,
+            detail=f"reconnecting attempt={attempt}",
+            last_error=str(exc),
+        )
+        _sync_runtime_metrics(runtime)
+
+    async for message in runtime.polymarket_ws_client.stream_market_messages(
+        token_ids,
+        reconnect=True,
+        on_connect=on_connect,
+        on_disconnect=on_disconnect,
+        on_reconnect=on_reconnect,
+    ):
+        payload = message.payload if isinstance(message.payload, Mapping) else message.raw
+        await queue.put(dict(payload))
+
+
+async def _stream_user_ws_messages(
+    runtime: RuntimeComponents,
+    condition_ids: tuple[str, ...],
+    auth: Mapping[str, str],
+    queue: asyncio.Queue[Mapping[str, Any]],
+) -> None:
+    async def on_connect(attempt: int) -> None:
+        await runtime.user_ws_worker.set_connection_state(
+            True,
+            trace_id=f"user-ws-connected-{uuid4().hex}",
+            reason="user_ws_connected",
+        )
+        runtime.supervisor.heartbeat_worker(
+            "user_ws",
+            state=WorkerLifecycleState.RUNNING,
+            healthy=True,
+            detail=f"connected subscribed={len(condition_ids)} attempt={attempt}",
+        )
+        _sync_runtime_metrics(runtime)
+
+    async def on_disconnect(attempt: int) -> None:
+        await runtime.user_ws_worker.set_connection_state(
+            False,
+            trace_id=f"user-ws-disconnected-{uuid4().hex}",
+            reason="user_ws_disconnected",
+        )
+        runtime.supervisor.heartbeat_worker(
+            "user_ws",
+            state=WorkerLifecycleState.PAUSED,
+            healthy=True,
+            detail=f"disconnected attempt={attempt}",
+        )
+        _sync_runtime_metrics(runtime)
+
+    async def on_reconnect(attempt: int, exc: Exception) -> None:
+        runtime.user_ws_worker.record_error(str(exc))
+        await runtime.user_ws_worker.set_connection_state(
+            False,
+            trace_id=f"user-ws-reconnecting-{uuid4().hex}",
+            reason="user_ws_reconnecting",
+        )
+        runtime.supervisor.heartbeat_worker(
+            "user_ws",
+            state=WorkerLifecycleState.DEGRADED,
+            healthy=False,
+            detail=f"reconnecting attempt={attempt}",
+            last_error=str(exc),
+        )
+        _sync_runtime_metrics(runtime)
+
+    async for message in runtime.polymarket_ws_client.stream_user_messages(
+        condition_ids,
+        auth=auth,
+        reconnect=True,
+        on_connect=on_connect,
+        on_disconnect=on_disconnect,
+        on_reconnect=on_reconnect,
+    ):
+        payload = message.payload if isinstance(message.payload, Mapping) else message.raw
+        await queue.put(dict(payload))
+
+
+async def _run_market_ws(runtime: RuntimeComponents) -> None:
+    queue: asyncio.Queue[Mapping[str, Any]] = asyncio.Queue(maxsize=512)
+    stream_task: asyncio.Task[None] | None = None
+    subscribed_token_ids: tuple[str, ...] = ()
+    try:
+        while True:
+            if stream_task is not None and stream_task.done():
+                exc = None if stream_task.cancelled() else stream_task.exception()
+                if exc is not None:
+                    runtime.market_ws_worker.record_error(str(exc))
+                    runtime.supervisor.mark_worker_error(
+                        "market_ws",
+                        detail="stream_failed",
+                        last_error=str(exc),
+                    )
+                stream_task = None
+                subscribed_token_ids = ()
+
+            desired_token_ids = _market_ws_subscription_token_ids(runtime)
+            if desired_token_ids != subscribed_token_ids:
+                await _cancel_task(stream_task)
+                stream_task = None
+                subscribed_token_ids = ()
+                _drain_queue(queue)
+                if desired_token_ids:
+                    runtime.market_ws_worker.build_subscription_request(desired_token_ids)
+                    stream_task = asyncio.create_task(
+                        _stream_market_ws_messages(runtime, desired_token_ids, queue),
+                        name="fdv:market-ws-stream",
+                    )
+                    subscribed_token_ids = desired_token_ids
+                    runtime.supervisor.heartbeat_worker(
+                        "market_ws",
+                        state=WorkerLifecycleState.RUNNING,
+                        healthy=True,
+                        detail=f"subscribing count={len(subscribed_token_ids)}",
+                    )
+                else:
+                    runtime.supervisor.heartbeat_worker(
+                        "market_ws",
+                        state=WorkerLifecycleState.PAUSED,
+                        healthy=True,
+                        detail="no_markets",
+                    )
+                    _sync_runtime_metrics(runtime)
+
+            try:
+                message = await asyncio.wait_for(queue.get(), timeout=1.0)
+            except TimeoutError:
+                continue
+
+            await runtime.market_ws_worker.handle_message(message, source="market_ws")
+            runtime.supervisor.heartbeat_worker(
+                "market_ws",
+                state=WorkerLifecycleState.RUNNING,
+                healthy=True,
+                detail=f"subscribed={len(subscribed_token_ids)}",
+            )
+            _sync_runtime_metrics(runtime)
+    except asyncio.CancelledError:
+        await _cancel_task(stream_task)
+        runtime.supervisor.heartbeat_worker(
+            "market_ws",
+            state=WorkerLifecycleState.STOPPED,
+            healthy=True,
+            detail="cancelled",
+        )
+        raise
+
+
+async def _run_user_ws(runtime: RuntimeComponents) -> None:
+    queue: asyncio.Queue[Mapping[str, Any]] = asyncio.Queue(maxsize=512)
+    stream_task: asyncio.Task[None] | None = None
+    subscribed_condition_ids: tuple[str, ...] = ()
+    subscribed_auth: dict[str, str] | None = None
+    try:
+        while True:
+            if stream_task is not None and stream_task.done():
+                exc = None if stream_task.cancelled() else stream_task.exception()
+                if exc is not None:
+                    runtime.user_ws_worker.record_error(str(exc))
+                    runtime.supervisor.mark_worker_error(
+                        "user_ws",
+                        detail="stream_failed",
+                        last_error=str(exc),
+                    )
+                stream_task = None
+                subscribed_condition_ids = ()
+                subscribed_auth = None
+
+            desired_condition_ids = _user_ws_subscription_condition_ids(runtime)
+            try:
+                desired_auth = _user_ws_auth_payload(runtime) if desired_condition_ids else None
+            except Exception as exc:
+                runtime.user_ws_worker.record_error(str(exc))
+                await runtime.user_ws_worker.set_connection_state(
+                    False,
+                    trace_id=f"user-ws-auth-failed-{uuid4().hex}",
+                    reason="user_ws_auth_failed",
+                )
+                runtime.supervisor.mark_worker_error(
+                    "user_ws",
+                    detail="auth_failed",
+                    last_error=str(exc),
+                )
+                _sync_runtime_metrics(runtime)
+                await asyncio.sleep(5.0)
+                continue
+
+            if desired_condition_ids != subscribed_condition_ids or desired_auth != subscribed_auth:
+                await _cancel_task(stream_task)
+                stream_task = None
+                subscribed_condition_ids = ()
+                subscribed_auth = None
+                _drain_queue(queue)
+                if desired_condition_ids and desired_auth is not None:
+                    runtime.user_ws_worker.build_subscription_request(
+                        desired_condition_ids,
+                        auth=desired_auth,
+                    )
+                    stream_task = asyncio.create_task(
+                        _stream_user_ws_messages(runtime, desired_condition_ids, desired_auth, queue),
+                        name="fdv:user-ws-stream",
+                    )
+                    subscribed_condition_ids = desired_condition_ids
+                    subscribed_auth = dict(desired_auth)
+                    runtime.supervisor.heartbeat_worker(
+                        "user_ws",
+                        state=WorkerLifecycleState.RUNNING,
+                        healthy=True,
+                        detail=f"subscribing count={len(subscribed_condition_ids)}",
+                    )
+                else:
+                    await runtime.user_ws_worker.set_connection_state(
+                        False,
+                        trace_id=f"user-ws-paused-{uuid4().hex}",
+                        reason="user_ws_not_started",
+                    )
+                    runtime.supervisor.heartbeat_worker(
+                        "user_ws",
+                        state=WorkerLifecycleState.PAUSED,
+                        healthy=True,
+                        detail="no_markets_or_auth",
+                    )
+                    _sync_runtime_metrics(runtime)
+
+            try:
+                message = await asyncio.wait_for(queue.get(), timeout=1.0)
+            except TimeoutError:
+                continue
+
+            await runtime.user_ws_worker.process_message(message)
+            runtime.supervisor.heartbeat_worker(
+                "user_ws",
+                state=WorkerLifecycleState.RUNNING,
+                healthy=True,
+                detail=f"subscribed={len(subscribed_condition_ids)}",
+            )
+            _sync_runtime_metrics(runtime)
+    except asyncio.CancelledError:
+        await _cancel_task(stream_task)
+        await runtime.user_ws_worker.set_connection_state(
+            False,
+            trace_id=f"user-ws-stopped-{uuid4().hex}",
+            reason="user_ws_stopped",
+        )
+        runtime.supervisor.heartbeat_worker(
+            "user_ws",
+            state=WorkerLifecycleState.STOPPED,
+            healthy=True,
+            detail="cancelled",
+        )
+        raise
+
+
 def _start_background_tasks(runtime: RuntimeComponents) -> None:
+    runtime.background_tasks["market_ws"] = asyncio.create_task(
+        _run_supervised_loop(
+            runtime,
+            name="market_ws",
+            runner=lambda: _run_market_ws(runtime),
+        ),
+        name="fdv:market-ws",
+    )
+    runtime.background_tasks["user_ws"] = asyncio.create_task(
+        _run_supervised_loop(
+            runtime,
+            name="user_ws",
+            runner=lambda: _run_user_ws(runtime),
+        ),
+        name="fdv:user-ws",
+    )
     runtime.background_tasks["strategy"] = asyncio.create_task(
         _run_supervised_loop(
             runtime,

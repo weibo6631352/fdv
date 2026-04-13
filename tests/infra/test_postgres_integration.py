@@ -118,6 +118,31 @@ async def test_persistence_repository_and_admin_service_round_trip(
             "trading_status": "eligible",
         }
     )
+    await repository.save_market_snapshot(
+        {
+            "trace_id": "trace-market-2",
+            "source": "integration_test",
+            "condition_id": "condition-1b",
+            "market_slug": "token-fdv-1b",
+            "no_token_id": "no-token-1b",
+            "yes_token_id": "yes-token-1b",
+            "event_id": "event-2",
+            "event_title": "Token FDV above 1B in 2026?",
+            "event_slug": "token-fdv-1b",
+            "tick_size": "0.01",
+            "min_order_size": "1",
+            "neg_risk": False,
+            "fees_enabled": True,
+            "maker_base_fee_bps": 5,
+            "taker_base_fee_bps": 150,
+            "fee_rate_bps": 200,
+            "fee_rate_updated_at": "2026-01-01T12:03:00+00:00",
+            "category": "Crypto",
+            "tags": ["crypto", "fdv"],
+            "matched_keywords": ["crypto", "fdv", "1b"],
+            "trading_status": "eligible",
+        }
+    )
     await repository.save_fill(
         {
             "trace_id": "trace-fill",
@@ -144,14 +169,26 @@ async def test_persistence_repository_and_admin_service_round_trip(
     service = AdminService(runtime=runtime)
 
     markets = await service.list_markets(limit=10, offset=0)
+    filtered_markets = await service.list_markets(
+        limit=10,
+        offset=0,
+        fee_rate_bps_min=150,
+        sort_by="fee_rate_bps",
+        sort_direction="desc",
+    )
     fills = await service.list_fills(limit=10, offset=0)
 
-    assert markets["total"] == 1
-    assert markets["items"][0]["market"]["market_slug"] == "token-fdv-500m"
-    assert markets["items"][0]["market"]["trading_status"] == "eligible"
-    assert markets["items"][0]["market"]["fees"]["enabled"] is True
-    assert markets["items"][0]["market"]["fees"]["taker_base_fee_bps"] == 100
-    assert markets["items"][0]["market"]["fees"]["fee_rate_bps"] == 125
+    assert markets["total"] == 2
+    assert {item["market"]["market_slug"] for item in markets["items"]} == {
+        "token-fdv-500m",
+        "token-fdv-1b",
+    }
+    assert filtered_markets["total"] == 1
+    assert filtered_markets["items"][0]["market"]["market_slug"] == "token-fdv-1b"
+    assert filtered_markets["items"][0]["market"]["trading_status"] == "eligible"
+    assert filtered_markets["items"][0]["market"]["fees"]["enabled"] is True
+    assert filtered_markets["items"][0]["market"]["fees"]["taker_base_fee_bps"] == 150
+    assert filtered_markets["items"][0]["market"]["fees"]["fee_rate_bps"] == 200
 
     assert fills["total"] == 1
     assert fills["items"][0]["trace_id"] == "trace-fill"

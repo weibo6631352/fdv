@@ -167,11 +167,48 @@ class MarketRepository(BaseRepository):
         limit: int = 100,
         offset: int = 0,
         trading_status: str | None = None,
+        fees_enabled: bool | None = None,
+        fee_rate_bps_min: int | None = None,
+        fee_rate_bps_max: int | None = None,
+        maker_base_fee_bps_min: int | None = None,
+        maker_base_fee_bps_max: int | None = None,
+        taker_base_fee_bps_min: int | None = None,
+        taker_base_fee_bps_max: int | None = None,
+        sort_by: str | None = None,
+        sort_direction: str = "desc",
     ) -> RepositoryPage[Market]:
         limit, offset = _limit_offset(limit, offset)
-        stmt = select(MarketModel).order_by(MarketModel.updated_at.desc(), MarketModel.id.desc())
+        stmt = select(MarketModel)
         if trading_status is not None:
             stmt = stmt.where(MarketModel.trading_status == trading_status)
+        if fees_enabled is not None:
+            stmt = stmt.where(MarketModel.fees_enabled.is_(fees_enabled))
+        if fee_rate_bps_min is not None:
+            stmt = stmt.where(MarketModel.fee_rate_bps >= fee_rate_bps_min)
+        if fee_rate_bps_max is not None:
+            stmt = stmt.where(MarketModel.fee_rate_bps <= fee_rate_bps_max)
+        if maker_base_fee_bps_min is not None:
+            stmt = stmt.where(MarketModel.maker_base_fee_bps >= maker_base_fee_bps_min)
+        if maker_base_fee_bps_max is not None:
+            stmt = stmt.where(MarketModel.maker_base_fee_bps <= maker_base_fee_bps_max)
+        if taker_base_fee_bps_min is not None:
+            stmt = stmt.where(MarketModel.taker_base_fee_bps >= taker_base_fee_bps_min)
+        if taker_base_fee_bps_max is not None:
+            stmt = stmt.where(MarketModel.taker_base_fee_bps <= taker_base_fee_bps_max)
+
+        sort_column = {
+            "market_slug": MarketModel.market_slug,
+            "fee_rate_bps": MarketModel.fee_rate_bps,
+            "fee_rate_updated_at": MarketModel.fee_rate_updated_at,
+            "maker_base_fee_bps": MarketModel.maker_base_fee_bps,
+            "taker_base_fee_bps": MarketModel.taker_base_fee_bps,
+        }.get(sort_by or "")
+        if sort_column is None:
+            stmt = stmt.order_by(MarketModel.updated_at.desc(), MarketModel.id.desc())
+        elif sort_direction == "asc":
+            stmt = stmt.order_by(sort_column.asc().nullslast(), MarketModel.market_slug.asc(), MarketModel.id.desc())
+        else:
+            stmt = stmt.order_by(sort_column.desc().nullslast(), MarketModel.market_slug.asc(), MarketModel.id.desc())
         rows, total = await self._paginate(stmt, limit=limit, offset=offset)
         return RepositoryPage(items=tuple(row.to_domain() for row in rows), total=total, limit=limit, offset=offset)
 
