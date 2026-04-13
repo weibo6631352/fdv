@@ -10,19 +10,24 @@ from fdv_trader.domain.events import DomainEvent, DomainEventType
 from fdv_trader.domain.market import Market
 from fdv_trader.observability.trace import ensure_trace_id
 from fdv_trader.runtime.registry import MarketRegistry
+from fdv_trader.strategies.fdv_default.strategy import FDVDefaultStrategy
+from fdv_trader.strategy_api.interfaces import StrategyModule
+from fdv_trader.strategy_api.models import UniverseDecision
 
 
 class MarketService:
-    """Coordinates market discovery, classification, and registry updates."""
+    """Coordinates market discovery, strategy universe filtering, and registry updates."""
 
     def __init__(
         self,
         *,
         classifier: MarketClassifier | None = None,
+        strategy_module: StrategyModule | None = None,
         registry: MarketRegistry | None = None,
         market_tracker: Any | None = None,
     ) -> None:
         self._classifier = classifier or MarketClassifier()
+        self._strategy_module = strategy_module or FDVDefaultStrategy()
         self._registry = registry
         self._market_tracker = market_tracker
 
@@ -41,41 +46,54 @@ class MarketService:
 
         market: Market | None = None
         subscription_request: dict[str, Any] | None = None
+        universe_decision: UniverseDecision | None = None
         if classification.accepted:
-            market = classification.to_market()
+            candidate_market = classification.to_market()
             if existing_market is not None:
-                market = market.with_fee_schedule(
+                candidate_market = candidate_market.with_fee_schedule(
                     fees_enabled=(
-                        market.fees_enabled
-                        if market.fees_enabled is not None
+                        candidate_market.fees_enabled
+                        if candidate_market.fees_enabled is not None
                         else existing_market.fees_enabled
                     ),
                     maker_base_fee_bps=(
-                        market.maker_base_fee_bps
-                        if market.maker_base_fee_bps is not None
+                        candidate_market.maker_base_fee_bps
+                        if candidate_market.maker_base_fee_bps is not None
                         else existing_market.maker_base_fee_bps
                     ),
                     taker_base_fee_bps=(
-                        market.taker_base_fee_bps
-                        if market.taker_base_fee_bps is not None
+                        candidate_market.taker_base_fee_bps
+                        if candidate_market.taker_base_fee_bps is not None
                         else existing_market.taker_base_fee_bps
                     ),
                 )
                 if existing_market.fee_rate_bps is not None:
-                    market = market.with_fee_rate(
+                    candidate_market = candidate_market.with_fee_rate(
                         existing_market.fee_rate_bps,
                         fee_rate_updated_at=existing_market.fee_rate_updated_at,
                     )
-            if self._registry is not None:
-                self._registry.upsert(market)
-            if self._market_tracker is not None:
-                self._market_tracker.track_market(market)
-                if hasattr(self._market_tracker, "build_subscription_request"):
-                    subscription_request = self._market_tracker.build_subscription_request(
-                        market.no_token_id
-                    )
 
-        discovery_kind = "market_updated" if existing_market is not None else "market_discovered"
+            universe_decision = self._strategy_module.select_market(candidate_market)
+            if universe_decision.selected:
+                market = candidate_market
+                if self._registry is not None:
+                    self._registry.upsert(market)
+                if self._market_tracker is not None:
+                    self._market_tracker.track_market(market)
+                    if hasattr(self._market_tracker, "build_subscription_request"):
+                        subscription_request = self._market_tracker.build_subscription_request(
+                            market.no_token_id
+                        )
+
+        discovery_kind = (
+            DomainEventType.MARKET_UPDATED.value
+            if market is not None and existing_market is not None
+            else (
+                DomainEventType.MARKET_DISCOVERED.value
+                if market is not None
+                else DomainEventType.MARKET_FILTERED_OUT.value
+            )
+        )
         event = self._build_event(
             classification,
             trace_id=trace_id,
@@ -84,6 +102,7 @@ class MarketService:
             discovery_kind=discovery_kind,
             raw_market=raw_market,
             market=market,
+            universe_decision=universe_decision,
         )
         return MarketDiscoveryOutcome(
             trace_id=trace_id,
@@ -94,6 +113,7 @@ class MarketService:
             discovery_kind=discovery_kind,
             subscription_request=subscription_request,
             raw_market=raw_market,
+            universe_decision=universe_decision,
         )
 
     def _lookup_existing_market(
@@ -120,13 +140,14 @@ class MarketService:
         discovery_kind: str,
         raw_market: Mapping[str, Any],
         market: Market | None,
+        universe_decision: UniverseDecision | None,
     ) -> DomainEvent:
         event_type = (
             DomainEventType.MARKET_UPDATED
-            if classification.accepted and discovery_kind == DomainEventType.MARKET_UPDATED.value
+            if market is not None and discovery_kind == DomainEventType.MARKET_UPDATED.value
             else (
                 DomainEventType.MARKET_DISCOVERED
-                if classification.accepted
+                if market is not None
                 else DomainEventType.MARKET_FILTERED_OUT
             )
         )
@@ -140,7 +161,9 @@ class MarketService:
             "classification_detail": classification.reject_detail,
             "matched_fields": classification.matched_fields,
             "matched_keywords": classification.matched_keywords,
-            "accepted": classification.accepted,
+            "accepted": market is not None,
+            "strategy_selected": universe_decision.selected if universe_decision is not None else None,
+            "strategy_reason": universe_decision.reason if universe_decision is not None else None,
             "market": _serialize_market(market),
             "raw_market": raw_market,
             "discovered_at": discovered_at.isoformat(),
@@ -151,10 +174,21 @@ class MarketService:
             event_id=uuid4().hex,
             market_slug=classification.market_slug,
             condition_id=classification.condition_id,
-            reason=classification.reject_reason.value if classification.reject_reason else "",
+            reason=self._event_reason(classification, universe_decision),
             created_at=discovered_at,
             payload=payload,
         )
+
+    @staticmethod
+    def _event_reason(
+        classification: ClassificationResult,
+        universe_decision: UniverseDecision | None,
+    ) -> str:
+        if universe_decision is not None and not universe_decision.selected:
+            return universe_decision.reason
+        if classification.reject_reason is not None:
+            return classification.reject_reason.value
+        return ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,10 +201,11 @@ class MarketDiscoveryOutcome:
     discovery_kind: str
     subscription_request: dict[str, Any] | None
     raw_market: Mapping[str, Any]
+    universe_decision: UniverseDecision | None = None
 
     @property
     def accepted(self) -> bool:
-        return self.classification.accepted
+        return self.market is not None
 
 
 def _serialize_market(market: Market | None) -> dict[str, Any] | None:

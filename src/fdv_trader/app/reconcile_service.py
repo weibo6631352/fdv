@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import StrEnum
-from itertools import count
 from uuid import uuid4
 
 from fdv_trader.domain.market import Market, TradingStatus
@@ -20,8 +19,9 @@ from fdv_trader.domain.position import Position
 from fdv_trader.domain.strategy import StrategyEngine
 from fdv_trader.runtime.account_state import AccountSnapshot
 from fdv_trader.runtime.registry import MarketRegistrySnapshot
-
-EXIT_NO_PRICE = Decimal("0.70")
+from fdv_trader.strategies.fdv_default.strategy import FDVDefaultStrategy
+from fdv_trader.strategy_api.interfaces import StrategyModule
+from fdv_trader.strategy_api.models import StrategyAction, StrategyContext, StrategyDecision
 
 
 class ReconcileActionType(StrEnum):
@@ -123,16 +123,16 @@ class ReconcilePlan:
 
 
 class ReconcileService:
-    """Builds reconcile diffs and repair intents from registry and account snapshots."""
+    """Builds reconcile diffs and strategy-driven repair intents from hot snapshots."""
 
     def __init__(
         self,
         *,
+        strategy_module: StrategyModule | None = None,
         strategy_engine: StrategyEngine | None = None,
-        sell_price: Decimal = EXIT_NO_PRICE,
     ) -> None:
+        self._strategy_module = strategy_module or FDVDefaultStrategy()
         self._strategy_engine = strategy_engine or StrategyEngine()
-        self._sell_price = sell_price
 
     def build_reconcile_plan(
         self,
@@ -183,17 +183,30 @@ class ReconcileService:
             market.condition_id,
             market.no_token_id,
         )
-        pause_trading = market.trading_status in {
-            TradingStatus.PAUSED,
-            TradingStatus.CLOSED,
-            TradingStatus.RESOLVED,
-        } or account_snapshot.is_market_paused(market.condition_id)
-        pause_reason = _pause_reason(market, account_snapshot)
+        recovery = self._strategy_module.decide_recovery(
+            StrategyContext(
+                trace_id=trace_id,
+                market=market,
+                account_snapshot=account_snapshot,
+                position=position,
+                open_orders=tuple((*open_buy_orders, *open_sell_orders)),
+            )
+        )
+
+        pause_trading = (
+            market.trading_status in {TradingStatus.PAUSED, TradingStatus.CLOSED, TradingStatus.RESOLVED}
+            or account_snapshot.is_market_paused(market.condition_id)
+            or recovery.pause_market
+        )
+        pause_reason = recovery.pause_reason or _pause_reason(market, account_snapshot)
 
         actions: list[ReconcileAction] = []
+        cancel_order_ids = set(recovery.cancel_order_ids)
 
         for order in open_buy_orders:
             order_id = _normalize_order_id(order)
+            if cancel_order_ids and order_id not in cancel_order_ids:
+                continue
             actions.append(
                 ReconcileAction(
                     action_type=ReconcileActionType.CANCEL_OPEN_BUY,
@@ -215,11 +228,31 @@ class ReconcileService:
                 )
             )
 
-        target_sell_shares = _position_shares(position)
+        target_sell_shares = max(recovery.target_sell_size_shares, Decimal("0"))
         open_sell_shares = sum((_order_open_size(order) for order in open_sell_orders), Decimal("0"))
 
         shortage = max(target_sell_shares - open_sell_shares, Decimal("0"))
         if shortage > Decimal("0"):
+            sell_intent = _decision_to_sell_intent(
+                trace_id=trace_id,
+                market=market,
+                decision=self._strategy_module.decide_exit(
+                    StrategyContext(
+                        trace_id=trace_id,
+                        market=market,
+                        account_snapshot=account_snapshot,
+                        position=position,
+                        open_orders=open_sell_orders,
+                        metadata={"size_shares": shortage},
+                    )
+                ),
+            ) or self._strategy_engine.build_sell_intent(
+                trace_id=trace_id,
+                condition_id=market.condition_id,
+                no_token_id=market.no_token_id,
+                size_shares=shortage,
+                market_slug=market.market_slug,
+            )
             actions.append(
                 ReconcileAction(
                     action_type=ReconcileActionType.SUBMIT_MISSING_SELL,
@@ -229,14 +262,8 @@ class ReconcileService:
                     market_slug=market.market_slug,
                     reason="sell_coverage_short",
                     target_size_shares=shortage,
-                    target_notional_usdc=shortage * self._sell_price,
-                    intent=self._strategy_engine.build_sell_intent(
-                        trace_id=trace_id,
-                        condition_id=market.condition_id,
-                        no_token_id=market.no_token_id,
-                        size_shares=shortage,
-                        market_slug=market.market_slug,
-                    ),
+                    target_notional_usdc=shortage * sell_intent.price,
+                    intent=sell_intent,
                 )
             )
 
@@ -328,3 +355,23 @@ def _pause_reason(market: Market, account_snapshot: AccountSnapshot) -> str:
     if account_snapshot.is_market_paused(market.condition_id):
         return dict(account_snapshot.pause_reasons).get(market.condition_id, "manual_pause")
     return ""
+
+
+def _decision_to_sell_intent(
+    *,
+    trace_id: str,
+    market: Market,
+    decision: StrategyDecision,
+) -> SellOrderIntent | None:
+    if decision.action != StrategyAction.SELL:
+        return None
+    if decision.price is None or decision.size_shares is None or decision.size_shares <= Decimal("0"):
+        return None
+    return SellOrderIntent(
+        trace_id=trace_id,
+        condition_id=market.condition_id,
+        token_id=market.no_token_id,
+        price=decision.price,
+        size_shares=decision.size_shares,
+        market_slug=decision.market_slug or market.market_slug,
+    )

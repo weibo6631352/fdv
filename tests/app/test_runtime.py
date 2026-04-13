@@ -22,6 +22,7 @@ def test_build_runtime_wires_m2_components() -> None:
     )
 
     assert runtime.market_discovery_worker is not None
+    assert runtime.active_strategy.name == "fdv_default"
     assert runtime.market_service is not None
     assert runtime.market_ws_worker is not None
     assert runtime.user_ws_worker is not None

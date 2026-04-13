@@ -177,7 +177,7 @@ class MarketDiscoveryWorker:
             discovered_at=raw_event.discovered_at,
         )
         classification = outcome.classification
-        if classification.accepted:
+        if outcome.accepted:
             self._remember(raw_event)
 
         event = MarketDiscoveryEvent(
@@ -199,7 +199,12 @@ class MarketDiscoveryWorker:
                 else None,
                 "classification_detail": classification.reject_detail,
                 "matched_keywords": classification.matched_keywords,
-                "accepted": classification.accepted,
+                "accepted": outcome.accepted,
+                "strategy_reason": (
+                    outcome.universe_decision.reason
+                    if outcome.universe_decision is not None
+                    else None
+                ),
                 "discovery_kind": outcome.discovery_kind,
                 "subscription_request": outcome.subscription_request,
                 "raw_market": raw_event.payload,

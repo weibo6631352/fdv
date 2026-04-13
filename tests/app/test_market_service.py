@@ -3,6 +3,7 @@ from __future__ import annotations
 from fdv_trader.app.market_service import MarketService
 from fdv_trader.domain.events import DomainEventType
 from fdv_trader.runtime.registry import MarketRegistry
+from fdv_trader.strategy_api.models import UniverseDecision
 
 
 class _Tracker:
@@ -61,3 +62,40 @@ def test_market_service_marks_existing_market_as_updated() -> None:
     assert second.accepted
     assert second.discovery_kind == DomainEventType.MARKET_UPDATED.value
     assert second.event.event_type == DomainEventType.MARKET_UPDATED
+
+
+def test_market_service_respects_strategy_universe_filter() -> None:
+    class _RejectingStrategy:
+        @property
+        def spec(self):
+            from fdv_trader.strategy_api.models import StrategySpec
+
+            return StrategySpec(name="rejecting")
+
+        def select_market(self, market):
+            return UniverseDecision.exclude(reason="strategy_filtered_out")
+
+        def decide_entry(self, context):
+            raise AssertionError("not used")
+
+        def decide_exit(self, context):
+            raise AssertionError("not used")
+
+        def decide_recovery(self, context):
+            raise AssertionError("not used")
+
+    registry = MarketRegistry()
+    tracker = _Tracker()
+    service = MarketService(
+        strategy_module=_RejectingStrategy(),
+        registry=registry,
+        market_tracker=tracker,
+    )
+
+    outcome = service.ingest_raw_market(_raw_market(), source="gamma", trace_id="trace")
+
+    assert outcome.accepted is False
+    assert outcome.market is None
+    assert outcome.event.event_type == DomainEventType.MARKET_FILTERED_OUT
+    assert outcome.event.reason == "strategy_filtered_out"
+    assert tracker.markets == []

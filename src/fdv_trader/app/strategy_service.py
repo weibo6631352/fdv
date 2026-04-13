@@ -19,20 +19,25 @@ from fdv_trader.domain.strategy import StrategyEngine
 from fdv_trader.observability.trace import ensure_trace_id
 from fdv_trader.runtime.account_state import AccountSnapshot
 from fdv_trader.runtime.registry import MarketRegistry
+from fdv_trader.strategies.fdv_default.strategy import FDVDefaultStrategy
+from fdv_trader.strategy_api.interfaces import StrategyModule
+from fdv_trader.strategy_api.models import StrategyAction, StrategyContext, StrategyDecision
 
 OrderbookReader = Callable[[str], OrderbookSnapshot | None]
 
 
 class StrategyService:
-    """Builds allocation and buy intent candidates from hot runtime snapshots."""
+    """Builds allocation plans and bridges active strategy decisions into order intents."""
 
     def __init__(
         self,
         *,
+        strategy_module: StrategyModule | None = None,
         strategy_engine: StrategyEngine | None = None,
         registry: MarketRegistry | None = None,
         orderbook_reader: OrderbookReader | None = None,
     ) -> None:
+        self._strategy_module = strategy_module or FDVDefaultStrategy()
         self._strategy_engine = strategy_engine or StrategyEngine()
         self._registry = registry
         self._orderbook_reader = orderbook_reader
@@ -86,7 +91,7 @@ class StrategyService:
                 reason="missing_market_state",
             )
 
-        if account_snapshot is not None and resolved_market is not None:
+        if account_snapshot is not None:
             if not account_snapshot.allow_new_buys or account_snapshot.is_market_paused(
                 resolved_market.condition_id
             ):
@@ -143,18 +148,48 @@ class StrategyService:
             max_spread=max_spread,
         )
         allocation = _pick_allocation(plan.allocations, resolved_market.condition_id)
-        intent = None
         reason = plan.reason
+        intent: BuyOrderIntent | None = None
+        focus_position = position_index.get((resolved_market.condition_id, resolved_market.no_token_id))
+        focus_open_orders = tuple(
+            order
+            for order in open_orders
+            if order.condition_id == resolved_market.condition_id and order.token_id == resolved_market.no_token_id
+        )
+
         if allocation is not None:
             reason = allocation.reason or reason
             if allocation.buy_budget_usdc > Decimal("0"):
-                intent = self._strategy_engine.build_buy_intent(
-                    trace_id=trace_id,
-                    condition_id=resolved_market.condition_id,
-                    no_token_id=resolved_market.no_token_id,
-                    amount_usdc=allocation.buy_budget_usdc,
-                    market_slug=resolved_market.market_slug,
+                decision = self._strategy_module.decide_entry(
+                    StrategyContext(
+                        trace_id=trace_id,
+                        market=resolved_market,
+                        orderbook=resolved_orderbook,
+                        account_snapshot=account_snapshot,
+                        position=focus_position,
+                        open_orders=focus_open_orders,
+                        now=resolved_orderbook.received_at,
+                        metadata={
+                            "allocation": allocation,
+                            "allocation_plan": plan,
+                            "amount_usdc": allocation.buy_budget_usdc,
+                            "buy_budget_usdc": allocation.buy_budget_usdc,
+                            "portfolio_budget_usdc": portfolio_budget_usdc,
+                            "available_usdc": available_usdc,
+                            "max_order_usdc": max_order_usdc,
+                            "max_market_usdc": max_market_usdc,
+                            "max_total_usdc": max_total_usdc,
+                        },
+                    )
                 )
+                intent = _decision_to_buy_intent(
+                    trace_id=trace_id,
+                    market=resolved_market,
+                    decision=decision,
+                )
+                if intent is None and decision.reason:
+                    reason = decision.reason
+
         return StrategyEntryPlan(
             trace_id=trace_id,
             market=resolved_market,
@@ -175,13 +210,29 @@ class StrategyService:
         size_shares: Decimal,
         market_slug: str | None = None,
     ) -> SellOrderIntent:
-        return self._strategy_engine.build_sell_intent(
-            trace_id=trace_id,
-            condition_id=condition_id,
-            no_token_id=no_token_id,
-            size_shares=size_shares,
-            market_slug=market_slug,
+        market = self._resolve_market(condition_id=condition_id, token_id=no_token_id)
+        decision = self._strategy_module.decide_exit(
+            StrategyContext(
+                trace_id=trace_id,
+                market=market,
+                open_orders=(),
+                metadata={
+                    "size_shares": size_shares,
+                    "market_slug": market_slug,
+                },
+            )
         )
+        intent = _decision_to_sell_intent(
+            trace_id=trace_id,
+            market=market,
+            token_id=no_token_id,
+            condition_id=condition_id,
+            market_slug=market_slug,
+            decision=decision,
+        )
+        if intent is None:
+            raise ValueError("strategy did not return a valid SELL decision")
+        return intent
 
     def build_cancel_intent(
         self,
@@ -275,14 +326,14 @@ class StrategyService:
         open_orders: tuple[Order, ...],
         entry_no_price_max: Decimal,
     ) -> AllocationMarketSnapshot:
-        classification_passed = _market_has_target_classification(market)
+        universe_decision = self._strategy_module.select_market(market)
         return AllocationMarketSnapshot(
             market=market,
             orderbook=orderbook,
             position=position,
             open_orders=open_orders,
-            classification_passed=classification_passed,
-            classification_reason=None if classification_passed else "not_crypto_fdv_500m",
+            classification_passed=universe_decision.selected,
+            classification_reason=None if universe_decision.selected else universe_decision.reason,
             tradable=market.trading_status == TradingStatus.ELIGIBLE,
             risk_allowed=True,
             market_active=market.trading_status == TradingStatus.ELIGIBLE,
@@ -370,9 +421,44 @@ def _ask_depth_notional(orderbook: OrderbookSnapshot, price_cap: Decimal) -> Dec
     return depth_usdc
 
 
-def _market_has_target_classification(market: Market) -> bool:
-    matched_keywords = {keyword.strip().lower() for keyword in market.matched_keywords}
-    category_tokens = {str(market.category or "").strip().lower()}
-    category_tokens.update(tag.strip().lower() for tag in market.tags)
-    has_crypto = "crypto" in category_tokens or "cryptocurrency" in category_tokens
-    return has_crypto and "fdv" in matched_keywords and "500m" in matched_keywords
+def _decision_to_buy_intent(
+    *,
+    trace_id: str,
+    market: Market,
+    decision: StrategyDecision,
+) -> BuyOrderIntent | None:
+    if decision.action != StrategyAction.BUY:
+        return None
+    if decision.price is None or decision.amount_usdc is None or decision.amount_usdc <= Decimal("0"):
+        return None
+    return BuyOrderIntent(
+        trace_id=trace_id,
+        condition_id=market.condition_id,
+        token_id=market.no_token_id,
+        price=decision.price,
+        amount_usdc=decision.amount_usdc,
+        market_slug=decision.market_slug or market.market_slug,
+    )
+
+
+def _decision_to_sell_intent(
+    *,
+    trace_id: str,
+    market: Market | None,
+    token_id: str,
+    condition_id: str,
+    market_slug: str | None,
+    decision: StrategyDecision,
+) -> SellOrderIntent | None:
+    if decision.action != StrategyAction.SELL:
+        return None
+    if decision.price is None or decision.size_shares is None or decision.size_shares <= Decimal("0"):
+        return None
+    return SellOrderIntent(
+        trace_id=trace_id,
+        condition_id=condition_id if market is None else market.condition_id,
+        token_id=token_id if market is None else market.no_token_id,
+        price=decision.price,
+        size_shares=decision.size_shares,
+        market_slug=decision.market_slug or market_slug or (market.market_slug if market is not None else None),
+    )
