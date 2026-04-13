@@ -18,7 +18,7 @@
    `sudo -u postgres psql -c "CREATE USER fdv WITH PASSWORD 'fdv';"`
    `sudo -u postgres psql -c "CREATE DATABASE fdv OWNER fdv;"`
    已存在时改为执行 `ALTER USER` / `ALTER DATABASE OWNER`。
-4. 填写 `.env` 中的数据库字段或 `DATABASE_URL`。
+4. 参考 [`.env.example`](../.env.example) 填写 `.env` 中的数据库字段或 `DATABASE_URL`。
 5. 调用 `fdv_trader.infra.db.initialize_database`，按当前 SQLAlchemy metadata 创建开发库表结构。
 6. 启动服务：`uvicorn fdv_trader.api.app:create_app --factory --host 127.0.0.1 --port 8000`。
 7. 服务启动时会依次完成配置校验、日志初始化、线程池/进程池创建、数据库连通性检查、参考快照加载和首次 reconcile。
@@ -33,6 +33,13 @@
 - 查看运行状态：`GET /runtime`
 - 触发受控 reconcile：`POST /operations/reconcile`
 - 本地策略回放：调用 `fdv_trader.strategy_api.replay.run_entry_replay`
+
+## 本地回归
+
+- 默认回归：`pytest`
+- 策略契约回归：`pytest tests/strategies/contract -q`
+- PostgreSQL 集成回归：先设置 `FDV_TEST_POSTGRES_DSN`，再运行 `pytest tests/infra/test_postgres_integration.py -q`
+- 未设置 `FDV_TEST_POSTGRES_DSN` 时，PostgreSQL 集成测试会显示为 `skipped`，这是预期行为
 
 ## 开发环境数据库说明
 
@@ -50,7 +57,7 @@
 
 ## 人工操作原则
 
-- 人工操作只通过 Admin API / CLI 触发。
+- 人工操作只通过 Admin API 触发。
 - `cancel + replace` 必须先确认原 SELL order 已取消或进入终态，再提交新的 SELL。
 - `cancel + replace` 只允许 SELL，不提供 BUY 绕过路径。
 - 新 SELL 价格必须满足 market tick size。

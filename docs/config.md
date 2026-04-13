@@ -10,7 +10,7 @@
 | 组合预算 | `PORTFOLIO_BUDGET_USDC`、`MAX_ORDER_USDC`、`MAX_MARKET_USDC` | 控制总预算、单笔和单 market 上限 |
 | 策略价格 | `ENTRY_NO_PRICE_MAX`、`EXIT_NO_PRICE` | 默认应保持 `0.60` 和 `0.70` |
 | 风控阈值 | `MIN_LIQUIDITY_USDC`、`MAX_SPREAD`、`MAX_OPEN_ORDERS` | 下单前硬门禁 |
-| 策略配置 | `STRATEGY_CONFIG_PATH` | 当前固定策略入口读取的结构化配置文件路径 |
+| 策略配置 | `STRATEGY_CONFIG_PATH` | 当前固定策略入口读取的 `.json` / `.toml` 配置文件路径 |
 | 同步与重试 | `MARKET_SYNC_INTERVAL_SECONDS`、`ORDER_RETRY_LIMIT` | reconcile 与失败处理 |
 | 性能隔离 | `TRADING_EVENT_QUEUE_MAX_SIZE`、`TRADING_WORKER_THREADS` | 交易主链路与后台维护 / 异步支撑队列及执行器隔离 |
 | 超时告警 | `ORDER_SUBMIT_TIMEOUT_MS`、`CRITICAL_LOCK_TIMEOUT_MS` | 防止交易链路无限等待 |
@@ -33,7 +33,8 @@
 - 当 `DATABASE_URL` 为空时，运行时会用上述拆分字段拼接 PostgreSQL 连接串。
 
 策略配置约定：
-- `STRATEGY_CONFIG_PATH` 指向当前策略入口 `src/fdv_trader/strategies/current/strategy.py` 的结构化配置。
+- `STRATEGY_CONFIG_PATH` 指向当前策略入口读取的结构化配置文件，不指向 `strategy.py` 本身。
+- 当前固定策略入口在 `src/fdv_trader/strategies/current/strategy.py`。
 - 当前内置加载器支持 `.json` 和 `.toml`。
 
 ## 密钥规则

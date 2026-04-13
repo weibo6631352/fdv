@@ -39,6 +39,13 @@
 - [运行说明](./docs/operations.md)：启动方式、运行状态和常用运维查看项。
 - [故障处理](./docs/runbook.md)：异常定位和处理步骤。
 
+## 策略与测试入口
+
+- 当前运行策略固定在 [src/fdv_trader/strategies/current/strategy.py](./src/fdv_trader/strategies/current/strategy.py)。
+- 策略参数定义位于 [src/fdv_trader/strategies/current/config.py](./src/fdv_trader/strategies/current/config.py)。
+- 日常本地回归直接运行 `pytest`。
+- PostgreSQL 集成测试默认允许跳过；需要验证真实建表和持久化链路时，先设置 `FDV_TEST_POSTGRES_DSN` 再运行 `pytest tests/infra/test_postgres_integration.py -q`。
+
 ## 模块接口原则
 
 - Domain 层只能使用系统内部 DTO，不依赖 FastAPI、SQLAlchemy、Polymarket SDK、WebSocket client 或环境变量。

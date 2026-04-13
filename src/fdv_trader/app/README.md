@@ -8,7 +8,7 @@
 - 编排入场信号、资金分配、风控检查和订单执行。
 - 编排 FAK fill / no fill / partial fill 后的资金释放和 GTC SELL。
 - 编排 reconcile 差异检测与修复动作。
-- 编排 Admin API / CLI 触发的人工操作。
+- 编排 Admin API 触发的人工操作。
 
 ## 文件职责
 

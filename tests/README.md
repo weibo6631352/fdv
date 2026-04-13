@@ -30,3 +30,9 @@
 - 涉及并发、线程池、锁、队列和降级策略的改动，必须补延迟、超时或优先级测试。
 - 测试中应显式模拟数据库慢、日志慢、Admin 查询慢、低优先级队列积压和 WS 重连。
 - 测试不能依赖真实 Polymarket 账户、生产数据库或真实私钥。
+
+## 运行约定
+
+- 默认本地回归直接运行 `pytest`。
+- `tests/infra/test_postgres_integration.py` 依赖真实 PostgreSQL；未设置 `FDV_TEST_POSTGRES_DSN` 时显示 `skipped` 属于预期。
+- 需要验证真实 PostgreSQL 建表和持久化链路时，设置 `FDV_TEST_POSTGRES_DSN` 后单独运行该文件。
