@@ -10,7 +10,6 @@ from polymarket_trader.domain.events import DomainEvent, DomainEventType
 from polymarket_trader.domain.market import Market
 from polymarket_trader.observability.trace import ensure_trace_id
 from polymarket_trader.runtime.registry import MarketRegistry
-from polymarket_trader.strategy_api.defaults import PassiveStrategy
 from polymarket_trader.strategy_api.interfaces import StrategyModule
 from polymarket_trader.strategy_api.models import UniverseDecision
 
@@ -21,13 +20,13 @@ class MarketService:
     def __init__(
         self,
         *,
+        strategy_module: StrategyModule,
         classifier: MarketClassifier | None = None,
-        strategy_module: StrategyModule | None = None,
         registry: MarketRegistry | None = None,
         market_tracker: Any | None = None,
     ) -> None:
         self._classifier = classifier or MarketClassifier()
-        self._strategy_module = strategy_module or PassiveStrategy()
+        self._strategy_module = strategy_module
         self._registry = registry
         self._market_tracker = market_tracker
 

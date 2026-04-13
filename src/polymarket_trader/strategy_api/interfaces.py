@@ -15,31 +15,6 @@ from polymarket_trader.strategy_api.models import (
 
 
 @runtime_checkable
-class UniverseSelector(Protocol):
-    def select_market(self, market: Market) -> UniverseDecision: ...
-
-
-@runtime_checkable
-class EntryPolicy(Protocol):
-    def decide_entry(self, context: StrategyContext) -> StrategyDecision: ...
-
-
-@runtime_checkable
-class SizingPolicy(Protocol):
-    def size_entry(self, context: StrategyContext) -> EntrySizing: ...
-
-
-@runtime_checkable
-class ExitPolicy(Protocol):
-    def decide_exit(self, context: StrategyContext) -> StrategyDecision: ...
-
-
-@runtime_checkable
-class RecoveryPolicy(Protocol):
-    def decide_recovery(self, context: StrategyContext) -> RecoveryDecision: ...
-
-
-@runtime_checkable
 class StrategyModule(Protocol):
     @property
     def spec(self) -> StrategySpec: ...

@@ -3,6 +3,7 @@ from __future__ import annotations
 from polymarket_trader.app.market_service import MarketService
 from polymarket_trader.domain.events import DomainEventType
 from polymarket_trader.runtime.registry import MarketRegistry
+from polymarket_trader.strategy_api.models import StrategySpec
 from polymarket_trader.strategy_api.models import UniverseDecision
 
 
@@ -35,10 +36,32 @@ def _raw_market(*, condition_id: str = "condition", market_slug: str = "sample-m
     }
 
 
+class _AcceptingStrategy:
+    @property
+    def spec(self):
+        return StrategySpec(name="accepting")
+
+    def select_market(self, market):
+        return UniverseDecision.include(reason="accepted")
+
+    def decide_entry(self, context):
+        raise AssertionError("not used")
+
+    def decide_exit(self, context):
+        raise AssertionError("not used")
+
+    def decide_recovery(self, context):
+        raise AssertionError("not used")
+
+
 def test_market_service_ingests_market_into_registry_and_tracker() -> None:
     registry = MarketRegistry()
     tracker = _Tracker()
-    service = MarketService(registry=registry, market_tracker=tracker)
+    service = MarketService(
+        strategy_module=_AcceptingStrategy(),
+        registry=registry,
+        market_tracker=tracker,
+    )
 
     outcome = service.ingest_raw_market(_raw_market(), source="gamma", trace_id="trace")
 
@@ -53,7 +76,10 @@ def test_market_service_ingests_market_into_registry_and_tracker() -> None:
 
 def test_market_service_marks_existing_market_as_updated() -> None:
     registry = MarketRegistry()
-    service = MarketService(registry=registry)
+    service = MarketService(
+        strategy_module=_AcceptingStrategy(),
+        registry=registry,
+    )
 
     first = service.ingest_raw_market(_raw_market(), source="gamma", trace_id="trace-1")
     second = service.ingest_raw_market(_raw_market(), source="gamma", trace_id="trace-2")
@@ -68,8 +94,6 @@ def test_market_service_respects_strategy_universe_filter() -> None:
     class _RejectingStrategy:
         @property
         def spec(self):
-            from polymarket_trader.strategy_api.models import StrategySpec
-
             return StrategySpec(name="rejecting")
 
         def select_market(self, market):

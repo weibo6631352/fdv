@@ -19,7 +19,6 @@ from polymarket_trader.domain.strategy import StrategyEngine
 from polymarket_trader.observability.trace import ensure_trace_id
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistry
-from polymarket_trader.strategy_api.defaults import PassiveStrategy
 from polymarket_trader.strategy_api.interfaces import StrategyModule
 from polymarket_trader.strategy_api.models import StrategyAction, StrategyContext, StrategyDecision
 
@@ -32,12 +31,12 @@ class StrategyService:
     def __init__(
         self,
         *,
-        strategy_module: StrategyModule | None = None,
+        strategy_module: StrategyModule,
         strategy_engine: StrategyEngine | None = None,
         registry: MarketRegistry | None = None,
         orderbook_reader: OrderbookReader | None = None,
     ) -> None:
-        self._strategy_module = strategy_module or PassiveStrategy()
+        self._strategy_module = strategy_module
         self._strategy_engine = strategy_engine or StrategyEngine()
         self._registry = registry
         self._orderbook_reader = orderbook_reader

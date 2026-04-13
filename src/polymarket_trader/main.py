@@ -222,8 +222,6 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     market_discovery_worker = MarketDiscoveryWorker(
         market_service=market_service,
         event_bus=event_bus,
-        registry=registry,
-        market_tracker=market_ws_worker,
     )
     scheduler = Scheduler()
     supervisor = Supervisor(

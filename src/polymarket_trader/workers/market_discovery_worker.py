@@ -3,11 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from itertools import count
-from typing import Any, Iterable, Mapping
+from typing import Iterable, Mapping
 from uuid import uuid4
 
 from polymarket_trader.app.market_service import MarketDiscoveryOutcome, MarketService
-from polymarket_trader.domain.classifier import MarketClassifier
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from polymarket_trader.infra.polymarket.schemas import RawMarketEvent
 from polymarket_trader.runtime.event_bus import EventBus
@@ -45,20 +44,14 @@ class MarketDiscoveryWorker:
     def __init__(
         self,
         *,
-        classifier: MarketClassifier | None = None,
         market_service: MarketService | None = None,
         event_bus: EventBus | None = None,
-        registry: Any | None = None,
-        market_tracker: Any | None = None,
         source_name: str = "gamma",
         retry_delay_seconds: int = 30,
     ) -> None:
-        self._classifier = classifier or MarketClassifier()
-        self._market_service = market_service or MarketService(
-            classifier=self._classifier,
-            registry=registry,
-            market_tracker=market_tracker,
-        )
+        if market_service is None:
+            raise ValueError("market_service is required")
+        self._market_service = market_service
         self._event_bus = event_bus
         self._source_name = source_name
         self._retry_delay_seconds = retry_delay_seconds

@@ -82,56 +82,6 @@ async def get_market_midpoint(
     return payload
 
 
-@router.get("/holders")
-async def get_market_holders(
-    condition_id: str = Query(pattern=r"^0x[a-fA-F0-9]{64}$"),
-    limit: int = Query(default=20, ge=1, le=20),
-    min_balance: int = Query(default=1, ge=0, le=999999),
-    service: AdminService = Depends(get_admin_service),
-) -> dict[str, object]:
-    try:
-        return await service.list_market_holders(
-            condition_id=condition_id,
-            limit=limit,
-            min_balance=min_balance,
-        )
-    except PolymarketClientError as exc:
-        raise HTTPException(status_code=502, detail="market_holders_upstream_unavailable") from exc
-    except RuntimeError as exc:
-        if str(exc) != "data_client unavailable":
-            raise
-        raise HTTPException(status_code=503, detail="data_client_unavailable") from exc
-
-
-@router.get("/positions")
-async def get_market_positions(
-    condition_id: str = Query(pattern=r"^0x[a-fA-F0-9]{64}$"),
-    address: str | None = Query(default=None, pattern=r"^0x[a-fA-F0-9]{40}$"),
-    status: Literal["OPEN", "CLOSED", "ALL"] | None = Query(default=None),
-    sort_by: Literal["TOKENS", "CASH_PNL", "REALIZED_PNL", "TOTAL_PNL"] | None = Query(default=None),
-    sort_direction: Literal["ASC", "DESC"] | None = Query(default=None),
-    limit: int = Query(default=50, ge=0, le=500),
-    offset: int = Query(default=0, ge=0, le=10000),
-    service: AdminService = Depends(get_admin_service),
-) -> dict[str, object]:
-    try:
-        return await service.list_market_positions(
-            condition_id=condition_id,
-            address=address,
-            status=status,
-            sort_by=sort_by,
-            sort_direction=sort_direction,
-            limit=limit,
-            offset=offset,
-        )
-    except PolymarketClientError as exc:
-        raise HTTPException(status_code=502, detail="market_positions_upstream_unavailable") from exc
-    except RuntimeError as exc:
-        if str(exc) != "data_client unavailable":
-            raise
-        raise HTTPException(status_code=503, detail="data_client_unavailable") from exc
-
-
 @router.get("/prices-history")
 async def get_market_prices_history(
     token_id: str = Query(min_length=1),

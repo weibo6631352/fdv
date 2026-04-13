@@ -17,7 +17,6 @@ from polymarket_trader.api.routes import (
     outbox,
     portfolio,
     positions,
-    profiles,
 )
 from polymarket_trader.api.routes import runtime as runtime_route
 from polymarket_trader.main import create_runtime, shutdown_runtime
@@ -56,7 +55,6 @@ def create_app(*, runtime: Any | None = None, admin_service: AdminService | None
     app.include_router(fills.router)
     app.include_router(positions.router)
     app.include_router(portfolio.router)
-    app.include_router(profiles.router)
     app.include_router(outbox.router)
     app.include_router(operations.router)
     return app

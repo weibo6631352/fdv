@@ -145,7 +145,9 @@ class ReconcileWorker:
         trading_client: PolymarketTradingClient | None = None,
     ) -> None:
         self._event_bus = event_bus
-        self._reconcile_service = reconcile_service or ReconcileService()
+        if reconcile_service is None:
+            raise ValueError("reconcile_service is required")
+        self._reconcile_service = reconcile_service
         self._registry_snapshot_provider = registry_snapshot_provider
         self._account_snapshot_provider = account_snapshot_provider
         self._account_state_store = account_state_store

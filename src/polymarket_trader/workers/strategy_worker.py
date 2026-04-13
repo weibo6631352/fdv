@@ -60,7 +60,9 @@ class StrategyWorker:
         order_retry_limit: int | None = None,
     ) -> None:
         self._event_bus = event_bus
-        self._strategy_service = strategy_service or StrategyService()
+        if strategy_service is None:
+            raise ValueError("strategy_service is required")
+        self._strategy_service = strategy_service
         self._trading_service = trading_service or TradingService()
         self._account_state_store = account_state_store
         self._positions_provider = positions_provider or self._build_positions_provider()
