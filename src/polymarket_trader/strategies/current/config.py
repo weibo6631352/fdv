@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 # 当前策略的交易阈值直接写在 Python 常量里。
-# 二次开发如果只想调整入场/退出/盘口门槛，优先改这个文件。
+# 调整入场/退出/盘口门槛时，优先改这个文件。
 
 # NO 侧允许主动买入的最高价格。
 # 当前策略只在盘口 ask 不高于这个价格时才会考虑入场。

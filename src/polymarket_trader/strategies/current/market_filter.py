@@ -4,7 +4,7 @@ from polymarket_trader.domain.market import Market
 from polymarket_trader.strategy_api.models import DiscoveryEndpoint, DiscoveryQuery, UniverseDecision
 
 # 当前策略的 discovery / universe 词直接写死在这里。
-# 这样二次开发改市场筛选时，只需要盯这个文件，不必来回跳配置。
+# 调整市场筛选时，只需要盯这个文件，不必来回跳配置。
 DISCOVERY_TITLE_SEARCHES: tuple[str, ...] = ("fdv", "fully diluted valuation")
 REQUIRED_CATEGORY_TOKENS: frozenset[str] = frozenset(("crypto", "cryptocurrency"))
 REQUIRED_EVENT_TOKENS: tuple[str, ...] = ("fdv",)
@@ -15,7 +15,7 @@ def build_discovery_queries() -> tuple[DiscoveryQuery, ...]:
     """声明远端 discovery 查询。
 
     这里放的是“去 Gamma 扫什么”的业务语义，不是框架级配置。
-    二次开发时通常只需要改本文件顶部这些常量。
+    调整筛选范围时通常只需要改本文件顶部这些常量。
     """
 
     queries: list[DiscoveryQuery] = []

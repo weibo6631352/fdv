@@ -1,6 +1,6 @@
 # Current Strategy
 
-这里是仓库里唯一保留的策略目录，也是二次开发优先落点。
+这里是仓库里唯一保留的策略目录。
 
 - [strategy.py](./strategy.py)：运行时固定装配入口，只做模块装配和委托。
 - [config.py](./config.py)：当前策略的交易阈值常量，直接写 Python，不再读取 `.env` / `.json` / `.toml`。
@@ -14,4 +14,4 @@
 - 当前 WebSocket 订阅由框架根据 registry 自动生成。
 - 策略只通过 discovery、universe 选择和订阅保留规则间接影响订阅范围。
 
-如果要做二次开发，优先改这里，不要先去动 worker、执行链路和平台底座。
+调整当前策略时，优先改这里，不要先去动 worker、执行链路和平台底座。

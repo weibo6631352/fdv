@@ -38,7 +38,7 @@ from polymarket_trader.strategies.current.trading_strategy import (
 class CurrentStrategy:
     """当前运行时固定装配的策略入口。
 
-    二次开发时优先阅读：
+    调整当前策略时优先阅读：
     - `config.py`：交易阈值常量
     - `market_filter.py`：市场筛选与 discovery
     - `trading_strategy.py`：分配、入场、退出、恢复
