@@ -16,7 +16,6 @@
 | 超时告警 | `ORDER_SUBMIT_TIMEOUT_MS`、`CRITICAL_LOCK_TIMEOUT_MS` | 防止交易链路无限等待 |
 | 数据库 | `DATABASE_URL`、`DATABASE_HOST` | PostgreSQL 连接地址；支持完整 URL 或拆分字段 |
 | 密钥 | `POLYMARKET_API_KEY`、`WALLET_PRIVATE_KEY` | 只能通过安全环境注入 |
-| CLI 管理面地址 | `FDV_ADMIN_API_URL`、`ADMIN_API_URL` | `fdv-trader status/config-summary/reconcile` 默认访问的 Admin API 基地址 |
 
 ## 默认值原则
 
@@ -26,15 +25,12 @@
 - 超时配置必须有明确单位，变量名统一使用 `_MS` 或 `_SECONDS`。
 
 数据库初始化约定：
-- 开发环境先准备 PostgreSQL，再执行 `fdv-trader init-db` 按当前 metadata 建表。
+- 开发环境先准备 PostgreSQL，再调用 `fdv_trader.infra.db.initialize_database` 按当前 metadata 建表。
 - 当前阶段不维护历史 schema 兼容层；模型调整后可以直接重建开发库再初始化。
 
 数据库连接加载约定：
 - `DATABASE_URL` 优先级最高；一旦填写，`DATABASE_DRIVER`、`DATABASE_HOST`、`DATABASE_PORT`、`DATABASE_NAME`、`DATABASE_USER`、`DATABASE_PASSWORD` 会被忽略。
 - 当 `DATABASE_URL` 为空时，运行时会用上述拆分字段拼接 PostgreSQL 连接串。
-
-CLI 管理面地址约定：
-- `fdv-trader status`、`config-summary`、`reconcile` 读取 `FDV_ADMIN_API_URL`，回退到 `ADMIN_API_URL`，默认值是 `http://127.0.0.1:8000`。
 
 策略配置约定：
 - `STRATEGY_CONFIG_PATH` 指向当前策略入口 `src/fdv_trader/strategies/current/strategy.py` 的结构化配置。

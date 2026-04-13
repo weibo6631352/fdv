@@ -21,7 +21,7 @@
 
 | 层级 | 目录 | 主要职责 |
 | --- | --- | --- |
-| Interfaces | [api](./src/fdv_trader/api/README.md)、[cli](./src/fdv_trader/cli/README.md) | Admin API、健康检查、命令行入口 |
+| Interfaces | [api](./src/fdv_trader/api/README.md) | Admin API、健康检查 |
 | Application | [app](./src/fdv_trader/app/README.md) | 用例编排，组合 domain 与 infra |
 | Domain | [domain](./src/fdv_trader/domain/README.md) | 分类、分配、风控、策略、订单和持仓规则 |
 | Infrastructure | [infra](./src/fdv_trader/infra/README.md) | Polymarket、数据库、outbox 和外部 I/O 适配 |
@@ -46,5 +46,5 @@
 - Infra 层负责外部协议适配，必须把 Polymarket / DB / WS 的响应转换为内部 DTO 后再向上返回。
 - Order Executor 是唯一允许创建、签名、提交、取消和替换订单的模块。
 - Risk Manager 是任何下单前的强制门禁。新增下单入口必须显式经过 Risk Manager。
-- Admin API / CLI 只能调用应用服务，不能直接碰交易热状态写锁，不能绕过风控。
+- Admin API 只能调用应用服务，不能直接碰交易热状态写锁，不能绕过风控。
 - Persistence Worker 和数据库写入只能异步承接 outbox 事件，不能反向阻塞交易主链路。

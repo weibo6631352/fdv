@@ -13,7 +13,7 @@
 2. 若是 `db_not_ready`，先修复 PostgreSQL 连通性。
 3. 若是 `trading_client_not_ready`，检查密钥、wallet signer 和运行环境。
 4. 若是 `user_ws_not_connected` 或 `market_ws_not_connected`，保持自动下单关闭，先做人工 reconcile。
-5. 若是 `reconcile_not_fresh`，执行 `fdv-trader reconcile` 或 `POST /operations/reconcile`。
+5. 若是 `reconcile_not_fresh`，执行 `POST /operations/reconcile`。
 
 ## Market WS 断线
 

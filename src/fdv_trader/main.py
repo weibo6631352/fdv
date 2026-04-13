@@ -46,7 +46,8 @@ from fdv_trader.runtime import RuntimePhase, Scheduler, Supervisor, WorkerLifecy
 from fdv_trader.runtime.account_state import AccountStateStore
 from fdv_trader.runtime.event_bus import EventBus
 from fdv_trader.runtime.registry import MarketRegistry
-from fdv_trader.strategy_api.loader import LoadedStrategy, load_strategy
+from fdv_trader.strategies.current.strategy import build_strategy as build_current_strategy
+from fdv_trader.strategy_api.interfaces import StrategyModule
 from fdv_trader.workers.market_discovery_worker import MarketDiscoveryWorker
 from fdv_trader.workers.market_ws_worker import MarketWsWorker
 from fdv_trader.workers.persistence_worker import PersistenceWorker
@@ -61,7 +62,7 @@ logger = logging.getLogger(__name__)
 class RuntimeComponents:
     settings: Settings
     readiness: StartupReadiness
-    strategy: LoadedStrategy
+    strategy: StrategyModule
     logging_runtime: LoggingRuntime
     gamma_client: GammaClient
     clob_client: ClobClient
@@ -99,7 +100,7 @@ class RuntimeComponents:
 def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     settings = settings or load_settings()
     readiness = settings.validate_startup_readiness()
-    strategy = load_strategy(config_path=settings.strategy_config_path)
+    strategy = build_current_strategy(config_path=settings.strategy_config_path)
     logging_runtime = configure_logging()
     metrics = MetricsRegistry()
     trading_thread_pool = ThreadPoolExecutor(
@@ -171,12 +172,12 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         rest_snapshot_loader=load_market_rest_snapshot,
     )
     market_service = MarketService(
-        strategy_module=strategy.strategy,
+        strategy_module=strategy,
         registry=registry,
         market_tracker=market_ws_worker,
     )
     strategy_service = StrategyService(
-        strategy_module=strategy.strategy,
+        strategy_module=strategy,
         registry=registry,
         orderbook_reader=market_ws_worker.snapshot,
     )
@@ -201,7 +202,7 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         max_open_orders=settings.max_open_orders,
         order_retry_limit=settings.order_retry_limit,
     )
-    reconcile_service = ReconcileService(strategy_module=strategy.strategy)
+    reconcile_service = ReconcileService(strategy_module=strategy)
     reconcile_worker = ReconcileWorker(
         event_bus=event_bus,
         reconcile_service=reconcile_service,

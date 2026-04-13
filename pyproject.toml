@@ -28,9 +28,6 @@ dev = [
   "ruff>=0.4",
 ]
 
-[project.scripts]
-fdv-trader = "fdv_trader.cli.main:main"
-
 [tool.setuptools.packages.find]
 where = ["src"]
 

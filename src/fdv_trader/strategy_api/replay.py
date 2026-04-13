@@ -12,7 +12,7 @@ from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from fdv_trader.domain.position import Position
 from fdv_trader.runtime.registry import MarketRegistry
 from fdv_trader.strategy_api.config_loader import load_mapping_file
-from fdv_trader.strategy_api.loader import load_strategy
+from fdv_trader.strategies.current.strategy import build_strategy as build_current_strategy
 
 
 def run_entry_replay(
@@ -21,7 +21,7 @@ def run_entry_replay(
     strategy_config_path: str | None = None,
 ) -> dict[str, Any]:
     fixture = load_mapping_file(fixture_path)
-    loaded_strategy = load_strategy(config_path=strategy_config_path)
+    strategy = build_current_strategy(config_path=strategy_config_path)
     registry = MarketRegistry()
     markets = tuple(_load_market(item) for item in _list(fixture, "markets"))
     for market in markets:
@@ -32,7 +32,7 @@ def run_entry_replay(
     budgets = _mapping(fixture, "budgets")
     target = _mapping(fixture, "target")
     plan = StrategyService(
-        strategy_module=loaded_strategy.strategy,
+        strategy_module=strategy,
         registry=registry,
         orderbook_reader=orderbooks.get,
     ).build_entry_plan(
@@ -53,9 +53,9 @@ def run_entry_replay(
     return {
         "fixture_path": str(Path(fixture_path)),
         "strategy": {
-            "name": loaded_strategy.name,
-            "module_path": loaded_strategy.module_path,
-            "capabilities": list(loaded_strategy.spec.capabilities),
+            "name": strategy.spec.name,
+            "module_path": "fdv_trader.strategies.current.strategy",
+            "capabilities": list(strategy.spec.capabilities),
         },
         "plan": _serialize_plan(plan),
     }

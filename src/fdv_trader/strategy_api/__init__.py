@@ -8,12 +8,6 @@ from fdv_trader.strategy_api.interfaces import (
     StrategyModule,
     UniverseSelector,
 )
-from fdv_trader.strategy_api.loader import (
-    DEFAULT_STRATEGY_MODULE_PATH,
-    LoadedStrategy,
-    load_strategy,
-    resolve_strategy_module_path,
-)
 from fdv_trader.strategy_api.models import (
     EntrySizing,
     RecoveryDecision,
@@ -27,10 +21,8 @@ from fdv_trader.strategy_api.models import (
 
 __all__ = [
     "EntryPolicy",
-    "DEFAULT_STRATEGY_MODULE_PATH",
     "EntrySizing",
     "ExitPolicy",
-    "LoadedStrategy",
     "load_mapping_file",
     "load_strategy_config",
     "RecoveryDecision",
@@ -45,6 +37,4 @@ __all__ = [
     "StrategySpec",
     "UniverseDecision",
     "UniverseSelector",
-    "load_strategy",
-    "resolve_strategy_module_path",
 ]

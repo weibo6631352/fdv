@@ -7,7 +7,6 @@
 | 目录 | 角色 | 说明 |
 | --- | --- | --- |
 | [api](./api/README.md) | Interface | FastAPI Admin API 和健康检查 |
-| [cli](./cli/README.md) | Interface | 命令行入口 |
 | [app](./app/README.md) | Application | 用例编排与服务协调 |
 | [domain](./domain/README.md) | Domain | 纯业务规则和内部 DTO |
 | [infra](./infra/README.md) | Infrastructure | Polymarket、DB、outbox、外部 I/O |
@@ -20,7 +19,7 @@
 推荐方向：
 
 ```text
-api / cli / workers -> app -> domain
+api / workers -> app -> domain
 app -> infra / runtime / observability
 infra -> domain
 runtime -> domain
@@ -30,7 +29,7 @@ observability -> domain-friendly DTO or primitives
 禁止方向：
 
 ```text
-domain -> api / cli / app / infra / runtime / workers
+domain -> api / app / infra / runtime / workers
 infra/db -> api
 api/routes -> infra/polymarket directly
 workers -> Polymarket SDK directly
@@ -43,4 +42,3 @@ workers -> Polymarket SDK directly
 - 状态热路径由 runtime 维护，外部查询读取快照或仓储数据。
 - 审计事件由 observability / outbox 统一承接，不在业务路径散落手写日志。
 - Polymarket SDK 对象不得泄漏到 domain。
-

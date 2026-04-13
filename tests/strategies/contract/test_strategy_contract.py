@@ -11,7 +11,7 @@ from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from fdv_trader.domain.position import Position
 from fdv_trader.runtime.account_state import AccountSnapshot
 from fdv_trader.strategy_api.models import EntrySizing, StrategyAction, StrategyContext
-from fdv_trader.strategy_api.loader import load_strategy
+from fdv_trader.strategies.current.strategy import build_strategy as build_current_strategy
 from fdv_trader.strategies.template.strategy import build_strategy as build_template_strategy
 
 
@@ -19,7 +19,7 @@ from fdv_trader.strategies.template.strategy import build_strategy as build_temp
     ("strategy_factory", "market"),
     [
         (
-            load_strategy,
+            build_current_strategy,
             Market(
                 condition_id="condition-current",
                 market_slug="slug-current",
@@ -46,8 +46,6 @@ from fdv_trader.strategies.template.strategy import build_strategy as build_temp
 )
 def test_strategy_contract_positive_path(strategy_factory, market: Market) -> None:
     strategy = strategy_factory()
-    if hasattr(strategy, "strategy"):
-        strategy = strategy.strategy
 
     received_at = datetime.now(timezone.utc)
     orderbook = OrderbookSnapshot(

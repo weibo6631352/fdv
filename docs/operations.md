@@ -7,8 +7,7 @@
 - 当前 Admin API 默认只允许在本机或受控内网暴露，不提供应用层鉴权。
 - 对外 HTTP 接口清单、请求参数和返回结构以 [api.md](./api.md) 为准。
 - 当前受控写接口只有 `POST /operations/reconcile` 和 `POST /orders/cancel-replace-sell`。
-- CLI 的 `status`、`config-summary`、`reconcile` 都通过 Admin API 调用运行中的服务，不在本地重建第二套 runtime。
-- `fdv-trader replay` 是本地策略回放工具，不调用运行中的 Admin API。
+- 后端进程直接通过 ASGI 启动，不再维护单独 CLI 壳子。
 
 ## 初始启动顺序
 
@@ -20,26 +19,25 @@
    `sudo -u postgres psql -c "CREATE DATABASE fdv OWNER fdv;"`
    已存在时改为执行 `ALTER USER` / `ALTER DATABASE OWNER`。
 4. 填写 `.env` 中的数据库字段或 `DATABASE_URL`。
-5. 执行 `fdv-trader init-db`，按当前 SQLAlchemy metadata 创建开发库表结构。
-6. 启动服务：`fdv-trader run --host 127.0.0.1 --port 8000`。
+5. 调用 `fdv_trader.infra.db.initialize_database`，按当前 SQLAlchemy metadata 创建开发库表结构。
+6. 启动服务：`uvicorn fdv_trader.api.app:create_app --factory --host 127.0.0.1 --port 8000`。
 7. 服务启动时会依次完成配置校验、日志初始化、线程池/进程池创建、数据库连通性检查、参考快照加载和首次 reconcile。
 8. 先检查 `/health`，确认进程存活；再检查 `/ready`，确认 DB、交易客户端、WS 状态、outbox 和自动下单闸门。
-9. 用 `/runtime` 或 `fdv-trader status` 查看 phase、队列深度、最近 reconcile、Persistence backlog 和降级状态。
+9. 用 `/runtime` 查看 phase、队列深度、最近 reconcile、Persistence backlog 和降级状态。
 10. 当 `/ready` 的 `ready_to_trade` 为 `true` 且 runtime phase 为 `trading_enabled` 时，才允许自动下单。
 
 ## 常用命令
 
-- 启动服务：`fdv-trader run`
-- 初始化数据库：`fdv-trader init-db`
-- 查看配置摘要：`fdv-trader config-summary`
-- 查看运行状态：`fdv-trader status`
-- 触发受控 reconcile：`fdv-trader reconcile`
-- 本地策略回放：`fdv-trader replay --fixture tests/strategies/fixtures/entry_replay.json`
+- 启动服务：`uvicorn fdv_trader.api.app:create_app --factory --host 127.0.0.1 --port 8000`
+- 初始化数据库：调用 `fdv_trader.infra.db.initialize_database`
+- 查看运行状态：`GET /runtime`
+- 触发受控 reconcile：`POST /operations/reconcile`
+- 本地策略回放：调用 `fdv_trader.strategy_api.replay.run_entry_replay`
 
 ## 开发环境数据库说明
 
-- `fdv-trader init-db` 只负责按当前源码模型建表，不做历史 schema 迁移。
-- 当前仓库没有 Alembic；开发阶段如果 schema 改动不兼容，优先重建开发库后重新执行 `fdv-trader init-db`。
+- `initialize_database` 只负责按当前源码模型建表，不做历史 schema 迁移。
+- 当前仓库没有 Alembic；开发阶段如果 schema 改动不兼容，优先重建开发库后重新执行 `initialize_database`。
 - PostgreSQL 仍然只是审计、复盘、调试和恢复参考，不是交易状态唯一真相来源。
 
 ## 停止顺序
