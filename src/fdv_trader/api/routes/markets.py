@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from fdv_trader.api.deps import get_admin_service
 from fdv_trader.app.admin_service import AdminService
@@ -29,6 +30,58 @@ async def get_market_detail(
     return payload
 
 
+@router.get("/orderbook")
+async def get_market_orderbook(
+    market_slug: str | None = Query(default=None),
+    condition_id: str | None = Query(default=None),
+    token_id: str | None = Query(default=None),
+    service: AdminService = Depends(get_admin_service),
+) -> dict[str, object]:
+    if not any((market_slug, condition_id, token_id)):
+        raise HTTPException(status_code=422, detail="market_slug, condition_id, or token_id is required")
+    try:
+        payload = await service.get_market_orderbook(
+            market_slug=market_slug,
+            condition_id=condition_id,
+            token_id=token_id,
+        )
+    except PolymarketClientError as exc:
+        raise HTTPException(status_code=502, detail="market_orderbook_upstream_unavailable") from exc
+    except RuntimeError as exc:
+        if str(exc) != "clob_client unavailable":
+            raise
+        raise HTTPException(status_code=503, detail="clob_client_unavailable") from exc
+    if payload is None:
+        raise HTTPException(status_code=404, detail="market not found")
+    return payload
+
+
+@router.get("/midpoint")
+async def get_market_midpoint(
+    market_slug: str | None = Query(default=None),
+    condition_id: str | None = Query(default=None),
+    token_id: str | None = Query(default=None),
+    service: AdminService = Depends(get_admin_service),
+) -> dict[str, object]:
+    if not any((market_slug, condition_id, token_id)):
+        raise HTTPException(status_code=422, detail="market_slug, condition_id, or token_id is required")
+    try:
+        payload = await service.get_market_midpoint(
+            market_slug=market_slug,
+            condition_id=condition_id,
+            token_id=token_id,
+        )
+    except PolymarketClientError as exc:
+        raise HTTPException(status_code=502, detail="market_midpoint_upstream_unavailable") from exc
+    except RuntimeError as exc:
+        if str(exc) != "clob_client unavailable":
+            raise
+        raise HTTPException(status_code=503, detail="clob_client_unavailable") from exc
+    if payload is None:
+        raise HTTPException(status_code=404, detail="market not found")
+    return payload
+
+
 @router.get("/holders")
 async def get_market_holders(
     condition_id: str = Query(pattern=r"^0x[a-fA-F0-9]{64}$"),
@@ -48,6 +101,62 @@ async def get_market_holders(
         if str(exc) != "data_client unavailable":
             raise
         raise HTTPException(status_code=503, detail="data_client_unavailable") from exc
+
+
+@router.get("/positions")
+async def get_market_positions(
+    condition_id: str = Query(pattern=r"^0x[a-fA-F0-9]{64}$"),
+    address: str | None = Query(default=None, pattern=r"^0x[a-fA-F0-9]{40}$"),
+    status: Literal["OPEN", "CLOSED", "ALL"] | None = Query(default=None),
+    sort_by: Literal["TOKENS", "CASH_PNL", "REALIZED_PNL", "TOTAL_PNL"] | None = Query(default=None),
+    sort_direction: Literal["ASC", "DESC"] | None = Query(default=None),
+    limit: int = Query(default=50, ge=0, le=500),
+    offset: int = Query(default=0, ge=0, le=10000),
+    service: AdminService = Depends(get_admin_service),
+) -> dict[str, object]:
+    try:
+        return await service.list_market_positions(
+            condition_id=condition_id,
+            address=address,
+            status=status,
+            sort_by=sort_by,
+            sort_direction=sort_direction,
+            limit=limit,
+            offset=offset,
+        )
+    except PolymarketClientError as exc:
+        raise HTTPException(status_code=502, detail="market_positions_upstream_unavailable") from exc
+    except RuntimeError as exc:
+        if str(exc) != "data_client unavailable":
+            raise
+        raise HTTPException(status_code=503, detail="data_client_unavailable") from exc
+
+
+@router.get("/prices-history")
+async def get_market_prices_history(
+    token_id: str = Query(min_length=1),
+    start_ts: float | None = Query(default=None, ge=0),
+    end_ts: float | None = Query(default=None, ge=0),
+    interval: Literal["max", "all", "1m", "1w", "1d", "6h", "1h"] | None = Query(default=None),
+    fidelity: int | None = Query(default=None, ge=1),
+    service: AdminService = Depends(get_admin_service),
+) -> dict[str, object]:
+    if start_ts is not None and end_ts is not None and start_ts > end_ts:
+        raise HTTPException(status_code=422, detail="start_ts must be <= end_ts")
+    try:
+        return await service.get_market_prices_history(
+            token_id=token_id,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            interval=interval,
+            fidelity=fidelity,
+        )
+    except PolymarketClientError as exc:
+        raise HTTPException(status_code=502, detail="market_prices_history_upstream_unavailable") from exc
+    except RuntimeError as exc:
+        if str(exc) != "clob_client unavailable":
+            raise
+        raise HTTPException(status_code=503, detail="clob_client_unavailable") from exc
 
 
 @router.get("")

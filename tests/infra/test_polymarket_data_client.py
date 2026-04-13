@@ -27,7 +27,25 @@ async def test_data_client_list_positions_uses_official_query_params_and_maps_cu
                     "size": 3,
                     "avgPrice": 0.5,
                     "initialValue": 1.5,
+                    "currentValue": 1.8,
+                    "cashPnl": 0.3,
+                    "percentPnl": 20,
+                    "totalBought": 3,
+                    "realizedPnl": 0.1,
+                    "percentRealizedPnl": 5,
+                    "curPrice": 0.6,
+                    "redeemable": False,
+                    "mergeable": False,
+                    "title": "Token FDV 500M",
                     "slug": "token-fdv-500m",
+                    "icon": "https://example.com/icon.png",
+                    "eventSlug": "event-fdv-500m",
+                    "outcome": "No",
+                    "outcomeIndex": 1,
+                    "oppositeOutcome": "Yes",
+                    "oppositeAsset": "token-1-yes",
+                    "endDate": "2026-01-01T00:00:00Z",
+                    "negativeRisk": False,
                 }
             ],
         )
@@ -62,6 +80,186 @@ async def test_data_client_list_positions_uses_official_query_params_and_maps_cu
     assert position.shares == Decimal("3")
     assert position.cost_usdc == Decimal("1.5")
     assert position.market_slug == "token-fdv-500m"
+    assert position.current_value == Decimal("1.8")
+    assert position.cash_pnl == Decimal("0.3")
+    assert position.total_bought == Decimal("3")
+    assert position.redeemable is False
+    assert position.outcome == "No"
+    assert position.opposite_asset == "token-1-yes"
+
+
+async def test_data_client_list_closed_positions_uses_official_query_params_and_maps_current_fields() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/closed-positions"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "proxyWallet": "0x56687bf447db6ffa42ffe2204a05edaa20f55839",
+                    "asset": "token-2",
+                    "conditionId": "0x" + "2" * 64,
+                    "avgPrice": 0.42,
+                    "totalBought": 10,
+                    "realizedPnl": 2.5,
+                    "curPrice": 1,
+                    "timestamp": 1700000000,
+                    "title": "Token FDV 1B",
+                    "slug": "token-fdv-1b",
+                    "icon": "https://example.com/icon.png",
+                    "eventSlug": "event-fdv-1b",
+                    "outcome": "Yes",
+                    "outcomeIndex": 0,
+                    "oppositeOutcome": "No",
+                    "oppositeAsset": "token-2-no",
+                    "endDate": "2026-01-01T00:00:00Z",
+                }
+            ],
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(
+        base_url="https://data-api.polymarket.com",
+        transport=transport,
+        trust_env=False,
+    ) as client:
+        data = DataClient(client=client)
+        positions = await data.list_closed_positions(
+            user_address="0x56687bf447db6ffa42ffe2204a05edaa20f55839",
+            market_ids=("0x" + "2" * 64,),
+            title="FDV",
+            limit=10,
+            offset=5,
+            sort_by="REALIZEDPNL",
+            sort_direction="DESC",
+        )
+
+    request = requests[0]
+    assert request.url.params.get("user") == "0x56687bf447db6ffa42ffe2204a05edaa20f55839"
+    assert request.url.params.get("market") == "0x" + "2" * 64
+    assert request.url.params.get("title") == "FDV"
+    assert request.url.params.get("limit") == "10"
+    assert request.url.params.get("offset") == "5"
+    assert request.url.params.get("sortBy") == "REALIZEDPNL"
+    assert request.url.params.get("sortDirection") == "DESC"
+    assert len(positions) == 1
+    position = positions[0]
+    assert position.proxy_wallet == "0x56687bf447db6ffa42ffe2204a05edaa20f55839"
+    assert position.token_id == "token-2"
+    assert position.condition_id == "0x" + "2" * 64
+    assert position.realized_pnl == Decimal("2.5")
+    assert position.timestamp == datetime.fromtimestamp(1700000000, tz=timezone.utc)
+    assert position.market_slug == "token-fdv-1b"
+    assert position.outcome == "Yes"
+
+
+async def test_data_client_get_user_value_uses_official_query_params_and_maps_current_fields() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/value"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "user": "0x56687bf447db6ffa42ffe2204a05edaa20f55839",
+                    "value": 123.45,
+                }
+            ],
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(
+        base_url="https://data-api.polymarket.com",
+        transport=transport,
+        trust_env=False,
+    ) as client:
+        data = DataClient(client=client)
+        value = await data.get_user_value(
+            user_address="0x56687bf447db6ffa42ffe2204a05edaa20f55839",
+            market_ids=("0x" + "2" * 64,),
+        )
+
+    request = requests[0]
+    assert request.url.params.get("user") == "0x56687bf447db6ffa42ffe2204a05edaa20f55839"
+    assert request.url.params.get("market") == "0x" + "2" * 64
+    assert value.user_address == "0x56687bf447db6ffa42ffe2204a05edaa20f55839"
+    assert value.value == Decimal("123.45")
+
+
+async def test_data_client_list_market_positions_uses_official_query_params_and_maps_current_fields() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/market-positions"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "token": "token-2",
+                    "positions": [
+                        {
+                            "proxyWallet": "0x56687bf447db6ffa42ffe2204a05edaa20f55839",
+                            "name": "Trader",
+                            "profileImage": "https://example.com/profile.png",
+                            "verified": True,
+                            "asset": "token-2",
+                            "conditionId": "0x" + "2" * 64,
+                            "avgPrice": 0.42,
+                            "size": 10,
+                            "currPrice": 0.6,
+                            "currentValue": 6,
+                            "cashPnl": 1.8,
+                            "totalBought": 4.2,
+                            "realizedPnl": 0.5,
+                            "totalPnl": 2.3,
+                            "outcome": "Yes",
+                            "outcomeIndex": 0,
+                        }
+                    ],
+                }
+            ],
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(
+        base_url="https://data-api.polymarket.com",
+        transport=transport,
+        trust_env=False,
+    ) as client:
+        data = DataClient(client=client)
+        positions = await data.list_market_positions(
+            condition_id="0x" + "2" * 64,
+            user_address="0x56687bf447db6ffa42ffe2204a05edaa20f55839",
+            status="OPEN",
+            sort_by="TOTAL_PNL",
+            sort_direction="DESC",
+            limit=50,
+            offset=10,
+        )
+
+    request = requests[0]
+    assert request.url.params.get("market") == "0x" + "2" * 64
+    assert request.url.params.get("user") == "0x56687bf447db6ffa42ffe2204a05edaa20f55839"
+    assert request.url.params.get("status") == "OPEN"
+    assert request.url.params.get("sortBy") == "TOTAL_PNL"
+    assert request.url.params.get("sortDirection") == "DESC"
+    assert request.url.params.get("limit") == "50"
+    assert request.url.params.get("offset") == "10"
+    assert len(positions) == 1
+    group = positions[0]
+    assert group.token_id == "token-2"
+    assert len(group.positions) == 1
+    position = group.positions[0]
+    assert position.proxy_wallet == "0x56687bf447db6ffa42ffe2204a05edaa20f55839"
+    assert position.avg_price == Decimal("0.42")
+    assert position.current_value == Decimal("6")
+    assert position.total_pnl == Decimal("2.3")
+    assert position.outcome == "Yes"
 
 
 async def test_data_client_list_trades_uses_official_query_params_and_maps_current_fields() -> None:
@@ -81,7 +279,17 @@ async def test_data_client_list_trades_uses_official_query_params_and_maps_curre
                     "size": 4,
                     "price": 0.25,
                     "timestamp": 1700000000,
+                    "title": "Token FDV 1B",
                     "slug": "token-fdv-1b",
+                    "icon": "https://example.com/icon.png",
+                    "eventSlug": "event-fdv-1b",
+                    "outcome": "Yes",
+                    "outcomeIndex": 0,
+                    "name": "Trader",
+                    "pseudonym": "trader-1",
+                    "bio": "active trader",
+                    "profileImage": "https://example.com/profile.png",
+                    "profileImageOptimized": "https://example.com/profile-optimized.png",
                     "transactionHash": "0xabc",
                 }
             ],
@@ -124,6 +332,12 @@ async def test_data_client_list_trades_uses_official_query_params_and_maps_curre
     assert trade.notional_usdc == Decimal("1.00")
     assert trade.market_slug == "token-fdv-1b"
     assert trade.confirmed_at == datetime.fromtimestamp(1700000000, tz=timezone.utc)
+    assert trade.proxy_wallet == "0x56687bf447db6ffa42ffe2204a05edaa20f55839"
+    assert trade.title == "Token FDV 1B"
+    assert trade.event_slug == "event-fdv-1b"
+    assert trade.outcome == "Yes"
+    assert trade.profile_image_optimized == "https://example.com/profile-optimized.png"
+    assert trade.transaction_hash == "0xabc"
 
 
 async def test_data_client_list_activity_uses_official_query_params_and_maps_current_fields() -> None:

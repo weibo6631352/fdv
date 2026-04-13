@@ -1044,6 +1044,33 @@ class ClobOrderbookDTO:
 
 
 @dataclass(frozen=True, slots=True)
+class ClobPriceHistoryPointDTO:
+    raw: Mapping[str, Any]
+    timestamp: datetime = field(default_factory=_utc_now)
+    price: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        timestamp = _coerce_datetime(_first_value(self.raw, "t", "timestamp", "ts"))
+        if timestamp is not None:
+            object.__setattr__(self, "timestamp", timestamp)
+        object.__setattr__(self, "price", self.price if self.price is not None else _coerce_decimal(_first_value(self.raw, "p", "price")))
+
+
+@dataclass(frozen=True, slots=True)
+class ClobPriceHistoryDTO:
+    raw: Mapping[str, Any]
+    history: tuple[ClobPriceHistoryPointDTO, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if not self.history:
+            points = tuple(
+                ClobPriceHistoryPointDTO(raw=item)
+                for item in _iter_mappings(self.raw, "history", "items", "results")
+            )
+            object.__setattr__(self, "history", points)
+
+
+@dataclass(frozen=True, slots=True)
 class ClobOrderDTO:
     raw: Mapping[str, Any]
     token_id: str
@@ -1244,6 +1271,7 @@ class DataPositionDTO:
     shares: Decimal
     cost_usdc: Decimal
     market_slug: str | None = None
+    proxy_wallet: str | None = None
     open_buy_shares: Decimal = Decimal("0")
     open_sell_shares: Decimal = Decimal("0")
     pending_buy_shares: Decimal = Decimal("0")
@@ -1252,12 +1280,33 @@ class DataPositionDTO:
     last_trade_id: str | None = None
     confirmation_status: str = "unknown"
     updated_at: datetime = field(default_factory=_utc_now)
+    avg_price: Decimal | None = None
+    initial_value: Decimal | None = None
+    current_value: Decimal | None = None
+    cash_pnl: Decimal | None = None
+    percent_pnl: Decimal | None = None
+    total_bought: Decimal | None = None
+    realized_pnl: Decimal | None = None
+    percent_realized_pnl: Decimal | None = None
+    cur_price: Decimal | None = None
+    redeemable: bool | None = None
+    mergeable: bool | None = None
+    title: str | None = None
+    icon: str | None = None
+    event_slug: str | None = None
+    outcome: str | None = None
+    outcome_index: int | None = None
+    opposite_outcome: str | None = None
+    opposite_asset: str | None = None
+    end_date: datetime | None = None
+    negative_risk: bool | None = None
     raw_summary: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "condition_id", str(self.condition_id).strip())
         object.__setattr__(self, "token_id", str(self.token_id).strip())
         object.__setattr__(self, "market_slug", self.market_slug or _first_text(self.raw, "market_slug", "marketSlug", "slug"))
+        object.__setattr__(self, "proxy_wallet", self.proxy_wallet or _first_text(self.raw, "proxyWallet", "proxy_wallet"))
         object.__setattr__(self, "shares", self.shares if self.shares is not None else _coerce_decimal(_first_value(self.raw, "shares", "size", "quantity")) or Decimal("0"))
         cost_usdc = self.cost_usdc
         if cost_usdc is None:
@@ -1277,6 +1326,48 @@ class DataPositionDTO:
         updated_at = _coerce_datetime(_first_value(self.raw, "updated_at", "updatedAt", "timestamp"))
         if updated_at is not None:
             object.__setattr__(self, "updated_at", updated_at)
+        object.__setattr__(self, "avg_price", self.avg_price if self.avg_price is not None else _coerce_decimal(_first_value(self.raw, "avg_price", "avgPrice")))
+        object.__setattr__(self, "initial_value", self.initial_value if self.initial_value is not None else _coerce_decimal(_first_value(self.raw, "initialValue", "initial_value")))
+        object.__setattr__(self, "current_value", self.current_value if self.current_value is not None else _coerce_decimal(_first_value(self.raw, "currentValue", "current_value")))
+        object.__setattr__(self, "cash_pnl", self.cash_pnl if self.cash_pnl is not None else _coerce_decimal(_first_value(self.raw, "cashPnl", "cash_pnl")))
+        object.__setattr__(self, "percent_pnl", self.percent_pnl if self.percent_pnl is not None else _coerce_decimal(_first_value(self.raw, "percentPnl", "percent_pnl")))
+        object.__setattr__(self, "total_bought", self.total_bought if self.total_bought is not None else _coerce_decimal(_first_value(self.raw, "totalBought", "total_bought")))
+        object.__setattr__(self, "realized_pnl", self.realized_pnl if self.realized_pnl is not None else _coerce_decimal(_first_value(self.raw, "realizedPnl", "realized_pnl")))
+        object.__setattr__(
+            self,
+            "percent_realized_pnl",
+            self.percent_realized_pnl
+            if self.percent_realized_pnl is not None
+            else _coerce_decimal(_first_value(self.raw, "percentRealizedPnl", "percent_realized_pnl")),
+        )
+        object.__setattr__(self, "cur_price", self.cur_price if self.cur_price is not None else _coerce_decimal(_first_value(self.raw, "curPrice", "cur_price")))
+        object.__setattr__(self, "redeemable", self.redeemable if self.redeemable is not None else _coerce_bool(_first_value(self.raw, "redeemable")))
+        object.__setattr__(self, "mergeable", self.mergeable if self.mergeable is not None else _coerce_bool(_first_value(self.raw, "mergeable")))
+        object.__setattr__(self, "title", self.title or _first_text(self.raw, "title"))
+        object.__setattr__(self, "icon", self.icon or _first_text(self.raw, "icon"))
+        object.__setattr__(self, "event_slug", self.event_slug or _first_text(self.raw, "eventSlug", "event_slug"))
+        object.__setattr__(self, "outcome", self.outcome or _first_text(self.raw, "outcome"))
+        object.__setattr__(
+            self,
+            "outcome_index",
+            self.outcome_index
+            if self.outcome_index is not None
+            else _coerce_int(_first_value(self.raw, "outcomeIndex", "outcome_index")),
+        )
+        object.__setattr__(self, "opposite_outcome", self.opposite_outcome or _first_text(self.raw, "oppositeOutcome", "opposite_outcome"))
+        object.__setattr__(self, "opposite_asset", self.opposite_asset or _first_text(self.raw, "oppositeAsset", "opposite_asset"))
+        object.__setattr__(
+            self,
+            "end_date",
+            self.end_date if self.end_date is not None else _coerce_datetime(_first_value(self.raw, "endDate", "end_date")),
+        )
+        object.__setattr__(
+            self,
+            "negative_risk",
+            self.negative_risk
+            if self.negative_risk is not None
+            else _coerce_bool(_first_value(self.raw, "negativeRisk", "negative_risk")),
+        )
         summary = self.raw_summary.strip() if self.raw_summary else ""
         if not summary:
             summary = _summary(self.raw) or ""
@@ -1301,17 +1392,192 @@ class DataPositionDTO:
 
 
 @dataclass(frozen=True, slots=True)
+class DataClosedPositionDTO:
+    raw: Mapping[str, Any]
+    proxy_wallet: str | None = None
+    token_id: str | None = None
+    condition_id: str | None = None
+    avg_price: Decimal | None = None
+    total_bought: Decimal | None = None
+    realized_pnl: Decimal | None = None
+    cur_price: Decimal | None = None
+    timestamp: datetime = field(default_factory=_utc_now)
+    title: str | None = None
+    market_slug: str | None = None
+    icon: str | None = None
+    event_slug: str | None = None
+    outcome: str | None = None
+    outcome_index: int | None = None
+    opposite_outcome: str | None = None
+    opposite_asset: str | None = None
+    end_date: datetime | None = None
+    raw_summary: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "proxy_wallet", self.proxy_wallet or _first_text(self.raw, "proxyWallet", "proxy_wallet"))
+        object.__setattr__(self, "token_id", self.token_id or _first_text(self.raw, "asset", "token_id", "tokenId", "asset_id", "assetId"))
+        object.__setattr__(self, "condition_id", self.condition_id or _first_text(self.raw, "conditionId", "condition_id", "condition"))
+        object.__setattr__(self, "avg_price", self.avg_price if self.avg_price is not None else _coerce_decimal(_first_value(self.raw, "avgPrice", "avg_price")))
+        object.__setattr__(self, "total_bought", self.total_bought if self.total_bought is not None else _coerce_decimal(_first_value(self.raw, "totalBought", "total_bought")))
+        object.__setattr__(self, "realized_pnl", self.realized_pnl if self.realized_pnl is not None else _coerce_decimal(_first_value(self.raw, "realizedPnl", "realized_pnl")))
+        object.__setattr__(self, "cur_price", self.cur_price if self.cur_price is not None else _coerce_decimal(_first_value(self.raw, "curPrice", "cur_price")))
+        timestamp = _coerce_datetime(_first_value(self.raw, "timestamp", "updated_at", "updatedAt"))
+        if timestamp is not None:
+            object.__setattr__(self, "timestamp", timestamp)
+        object.__setattr__(self, "title", self.title or _first_text(self.raw, "title"))
+        object.__setattr__(self, "market_slug", self.market_slug or _first_text(self.raw, "slug", "marketSlug", "market_slug"))
+        object.__setattr__(self, "icon", self.icon or _first_text(self.raw, "icon"))
+        object.__setattr__(self, "event_slug", self.event_slug or _first_text(self.raw, "eventSlug", "event_slug"))
+        object.__setattr__(self, "outcome", self.outcome or _first_text(self.raw, "outcome"))
+        object.__setattr__(
+            self,
+            "outcome_index",
+            self.outcome_index
+            if self.outcome_index is not None
+            else _coerce_int(_first_value(self.raw, "outcomeIndex", "outcome_index")),
+        )
+        object.__setattr__(self, "opposite_outcome", self.opposite_outcome or _first_text(self.raw, "oppositeOutcome", "opposite_outcome"))
+        object.__setattr__(self, "opposite_asset", self.opposite_asset or _first_text(self.raw, "oppositeAsset", "opposite_asset"))
+        object.__setattr__(
+            self,
+            "end_date",
+            self.end_date if self.end_date is not None else _coerce_datetime(_first_value(self.raw, "endDate", "end_date")),
+        )
+        summary = self.raw_summary.strip() if self.raw_summary else ""
+        if not summary:
+            summary = _summary(self.raw) or ""
+        object.__setattr__(self, "raw_summary", summary)
+
+
+@dataclass(frozen=True, slots=True)
+class DataUserValueDTO:
+    raw: Mapping[str, Any]
+    user_address: str | None = None
+    value: Decimal | None = None
+    raw_summary: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "user_address", self.user_address or _first_text(self.raw, "user", "userAddress", "proxyWallet"))
+        object.__setattr__(self, "value", self.value if self.value is not None else _coerce_decimal(_first_value(self.raw, "value")) or Decimal("0"))
+        summary = self.raw_summary.strip() if self.raw_summary else ""
+        if not summary:
+            summary = _summary(self.raw) or ""
+        object.__setattr__(self, "raw_summary", summary)
+
+
+@dataclass(frozen=True, slots=True)
+class DataMarketPositionDTO:
+    raw: Mapping[str, Any]
+    proxy_wallet: str | None = None
+    name: str | None = None
+    profile_image: str | None = None
+    verified: bool | None = None
+    token_id: str | None = None
+    condition_id: str | None = None
+    avg_price: Decimal | None = None
+    size: Decimal | None = None
+    current_price: Decimal | None = None
+    current_value: Decimal | None = None
+    cash_pnl: Decimal | None = None
+    total_bought: Decimal | None = None
+    realized_pnl: Decimal | None = None
+    total_pnl: Decimal | None = None
+    outcome: str | None = None
+    outcome_index: int | None = None
+    raw_summary: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "proxy_wallet", self.proxy_wallet or _first_text(self.raw, "proxyWallet", "proxy_wallet"))
+        object.__setattr__(self, "name", self.name or _first_text(self.raw, "name"))
+        object.__setattr__(self, "profile_image", self.profile_image or _first_text(self.raw, "profileImage", "profile_image"))
+        object.__setattr__(self, "verified", self.verified if self.verified is not None else _coerce_bool(_first_value(self.raw, "verified")))
+        object.__setattr__(self, "token_id", self.token_id or _first_text(self.raw, "asset", "token_id", "tokenId"))
+        object.__setattr__(self, "condition_id", self.condition_id or _first_text(self.raw, "conditionId", "condition_id", "condition"))
+        object.__setattr__(self, "avg_price", self.avg_price if self.avg_price is not None else _coerce_decimal(_first_value(self.raw, "avgPrice", "avg_price")))
+        object.__setattr__(self, "size", self.size if self.size is not None else _coerce_decimal(_first_value(self.raw, "size")))
+        object.__setattr__(
+            self,
+            "current_price",
+            self.current_price if self.current_price is not None else _coerce_decimal(_first_value(self.raw, "currPrice", "currentPrice", "current_price")),
+        )
+        object.__setattr__(
+            self,
+            "current_value",
+            self.current_value if self.current_value is not None else _coerce_decimal(_first_value(self.raw, "currentValue", "current_value")),
+        )
+        object.__setattr__(self, "cash_pnl", self.cash_pnl if self.cash_pnl is not None else _coerce_decimal(_first_value(self.raw, "cashPnl", "cash_pnl")))
+        object.__setattr__(
+            self,
+            "total_bought",
+            self.total_bought if self.total_bought is not None else _coerce_decimal(_first_value(self.raw, "totalBought", "total_bought")),
+        )
+        object.__setattr__(
+            self,
+            "realized_pnl",
+            self.realized_pnl if self.realized_pnl is not None else _coerce_decimal(_first_value(self.raw, "realizedPnl", "realized_pnl")),
+        )
+        object.__setattr__(
+            self,
+            "total_pnl",
+            self.total_pnl if self.total_pnl is not None else _coerce_decimal(_first_value(self.raw, "totalPnl", "total_pnl")),
+        )
+        object.__setattr__(self, "outcome", self.outcome or _first_text(self.raw, "outcome"))
+        object.__setattr__(
+            self,
+            "outcome_index",
+            self.outcome_index
+            if self.outcome_index is not None
+            else _coerce_int(_first_value(self.raw, "outcomeIndex", "outcome_index")),
+        )
+        summary = self.raw_summary.strip() if self.raw_summary else ""
+        if not summary:
+            summary = _summary(self.raw) or ""
+        object.__setattr__(self, "raw_summary", summary)
+
+
+@dataclass(frozen=True, slots=True)
+class DataMarketPositionsDTO:
+    raw: Mapping[str, Any]
+    token_id: str | None = None
+    positions: tuple[DataMarketPositionDTO, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "token_id", self.token_id or _first_text(self.raw, "token", "token_id", "tokenId"))
+        if not self.positions:
+            object.__setattr__(
+                self,
+                "positions",
+                tuple(
+                    DataMarketPositionDTO(raw=item)
+                    for item in _iter_mappings(self.raw, "positions", "items", "results")
+                ),
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class DataTradeDTO:
     raw: Mapping[str, Any]
     trade_id: str
     order_id: str | None
     condition_id: str
     token_id: str
+    proxy_wallet: str | None = None
     market_slug: str | None = None
     side: str | None = None
     price: Decimal | None = None
     size_shares: Decimal | None = None
     notional_usdc: Decimal | None = None
+    title: str | None = None
+    icon: str | None = None
+    event_slug: str | None = None
+    outcome: str | None = None
+    outcome_index: int | None = None
+    name: str | None = None
+    pseudonym: str | None = None
+    bio: str | None = None
+    profile_image: str | None = None
+    profile_image_optimized: str | None = None
+    transaction_hash: str | None = None
     status: str = "confirmed"
     confirmed_at: datetime = field(default_factory=_utc_now)
     raw_summary: str = ""
@@ -1321,6 +1587,7 @@ class DataTradeDTO:
         object.__setattr__(self, "order_id", self.order_id or _first_text(self.raw, "order_id", "orderId"))
         object.__setattr__(self, "condition_id", str(self.condition_id).strip())
         object.__setattr__(self, "token_id", str(self.token_id).strip())
+        object.__setattr__(self, "proxy_wallet", self.proxy_wallet or _first_text(self.raw, "proxyWallet", "proxy_wallet"))
         object.__setattr__(self, "market_slug", self.market_slug or _first_text(self.raw, "market_slug", "marketSlug", "slug"))
         object.__setattr__(self, "side", self.side or _first_text(self.raw, "side"))
         object.__setattr__(self, "price", self.price if self.price is not None else _coerce_decimal(_first_value(self.raw, "price", "trade_price", "tradePrice")))
@@ -1331,6 +1598,31 @@ class DataTradeDTO:
         if notional_usdc is None and self.price is not None and self.size_shares is not None:
             notional_usdc = self.price * self.size_shares
         object.__setattr__(self, "notional_usdc", notional_usdc)
+        object.__setattr__(self, "title", self.title or _first_text(self.raw, "title"))
+        object.__setattr__(self, "icon", self.icon or _first_text(self.raw, "icon"))
+        object.__setattr__(self, "event_slug", self.event_slug or _first_text(self.raw, "eventSlug", "event_slug"))
+        object.__setattr__(self, "outcome", self.outcome or _first_text(self.raw, "outcome"))
+        object.__setattr__(
+            self,
+            "outcome_index",
+            self.outcome_index
+            if self.outcome_index is not None
+            else _coerce_int(_first_value(self.raw, "outcomeIndex", "outcome_index")),
+        )
+        object.__setattr__(self, "name", self.name or _first_text(self.raw, "name"))
+        object.__setattr__(self, "pseudonym", self.pseudonym or _first_text(self.raw, "pseudonym"))
+        object.__setattr__(self, "bio", self.bio or _first_text(self.raw, "bio"))
+        object.__setattr__(self, "profile_image", self.profile_image or _first_text(self.raw, "profileImage", "profile_image"))
+        object.__setattr__(
+            self,
+            "profile_image_optimized",
+            self.profile_image_optimized or _profile_image_optimized_url(_first_value(self.raw, "profileImageOptimized", "profile_image_optimized")),
+        )
+        object.__setattr__(
+            self,
+            "transaction_hash",
+            self.transaction_hash or _first_text(self.raw, "transactionHash", "transaction_hash"),
+        )
         confirmed_at = _coerce_datetime(_first_value(self.raw, "confirmed_at", "confirmedAt", "timestamp"))
         if confirmed_at is not None:
             object.__setattr__(self, "confirmed_at", confirmed_at)
@@ -1638,6 +1930,11 @@ def normalize_orderbook_payload(
     )
 
 
+def normalize_price_history_payload(payload: Mapping[str, Any]) -> ClobPriceHistoryDTO:
+    normalized = _unwrap_mapping(payload)
+    return ClobPriceHistoryDTO(raw=normalized)
+
+
 def orderbook_payload_to_snapshot(
     payload: Mapping[str, Any],
     *,
@@ -1721,6 +2018,21 @@ def normalize_position_payload(payload: Mapping[str, Any]) -> DataPositionDTO:
         confirmation_status=_first_text(normalized, "confirmation_status", "confirmationStatus") or "unknown",
         updated_at=_coerce_datetime(_first_value(normalized, "updated_at", "updatedAt")) or _utc_now(),
     )
+
+
+def normalize_closed_position_payload(payload: Mapping[str, Any]) -> DataClosedPositionDTO:
+    normalized = _unwrap_mapping(payload)
+    return DataClosedPositionDTO(raw=normalized)
+
+
+def normalize_market_positions_payload(payload: Mapping[str, Any]) -> DataMarketPositionsDTO:
+    normalized = _unwrap_mapping(payload)
+    return DataMarketPositionsDTO(raw=normalized)
+
+
+def normalize_user_value_payload(payload: Mapping[str, Any]) -> DataUserValueDTO:
+    normalized = _unwrap_mapping(payload)
+    return DataUserValueDTO(raw=normalized)
 
 
 def normalize_trade_payload(payload: Mapping[str, Any]) -> DataTradeDTO:
@@ -1939,11 +2251,17 @@ __all__ = [
     "ClobOrderDTO",
     "ClobOrderRequest",
     "ClobOrderbookDTO",
+    "ClobPriceHistoryDTO",
+    "ClobPriceHistoryPointDTO",
     "DataActivityDTO",
+    "DataClosedPositionDTO",
     "DataHolderDTO",
+    "DataMarketPositionDTO",
+    "DataMarketPositionsDTO",
     "DataMarketHoldersDTO",
     "DataPositionDTO",
     "DataTradeDTO",
+    "DataUserValueDTO",
     "GammaEventDTO",
     "GammaMarketDTO",
     "GammaProfileSearchResultDTO",
@@ -1972,13 +2290,17 @@ __all__ = [
     "normalize_balance_allowance_payload",
     "normalize_fill_payload",
     "normalize_activity_payload",
+    "normalize_closed_position_payload",
+    "normalize_user_value_payload",
     "normalize_gamma_event",
     "normalize_gamma_market",
     "normalize_gamma_profile",
     "normalize_gamma_profile_search",
     "normalize_market_holders_payload",
+    "normalize_market_positions_payload",
     "normalize_order_payload",
     "normalize_orderbook_payload",
+    "normalize_price_history_payload",
     "normalize_position_payload",
     "normalize_trade_payload",
     "orderbook_payload_to_snapshot",

@@ -26,14 +26,22 @@
 | `GET` | `/allocations` | 资金分配分页查询 |
 | `GET` | `/markets` | 市场分页查询 |
 | `GET` | `/markets/detail` | 单 market 详情 |
+| `GET` | `/markets/orderbook` | 市场盘口快照 |
+| `GET` | `/markets/midpoint` | 市场中间价 |
+| `GET` | `/markets/positions` | 市场持仓分析 |
 | `GET` | `/markets/holders` | 市场持有人列表 |
+| `GET` | `/markets/prices-history` | 市场价格历史 |
 | `GET` | `/orders` | 订单分页查询 |
 | `POST` | `/orders/cancel-replace-sell` | 人工取消并重挂 SELL |
 | `GET` | `/fills` | fills 分页查询 |
 | `GET` | `/positions` | 持仓分页查询 |
 | `GET` | `/portfolio` | 组合与账户摘要 |
 | `GET` | `/profiles/detail` | 用户公开资料详情 |
+| `GET` | `/profiles/value` | 用户总持仓价值 |
 | `GET` | `/profiles/activity` | 用户公开活动列表 |
+| `GET` | `/profiles/trades` | 用户成交列表 |
+| `GET` | `/profiles/positions` | 用户当前持仓分析 |
+| `GET` | `/profiles/closed-positions` | 用户已平仓持仓 |
 | `GET` | `/profiles/search` | 用户公开资料搜索 |
 | `GET` | `/outbox/pending` | outbox 待处理事件 |
 | `POST` | `/operations/reconcile` | 手动触发 reconcile |
@@ -59,7 +67,7 @@
 }
 ```
 
-`/profiles/activity` 返回：
+`/profiles/activity`、`/profiles/trades`、`/profiles/positions`、`/profiles/closed-positions` 返回：
 
 ```json
 {
@@ -71,7 +79,7 @@
 
 说明：
 
-- 不返回 `total`，因为上游官方 `GET /activity` 当前不提供总数。
+- 不返回 `total`，因为这四类接口当前都直连上游官方列表响应，而官方当前都不提供总数。
 
 `/markets/holders` 返回：
 
@@ -87,6 +95,49 @@
 说明：
 
 - 不返回 `total`，因为上游官方 `GET /holders` 当前不提供总数。
+
+`/markets/prices-history` 返回：
+
+```json
+{
+  "token_id": "no-token-500m",
+  "interval": "1h",
+  "fidelity": 60,
+  "history": [
+    {
+      "timestamp": "2026-04-13T10:00:00+00:00",
+      "price": "0.54"
+    }
+  ]
+}
+```
+
+`/markets/midpoint` 返回：
+
+```json
+{
+  "token_id": "no-token-500m",
+  "condition_id": "condition-500m",
+  "market_slug": "token-500m-fdv",
+  "source": "hot",
+  "midpoint": "0.57",
+  "best_bid": "0.55",
+  "best_ask": "0.59",
+  "last_trade_price": "0.54",
+  "spread": "0.04",
+  "received_at": "2026-04-13T10:00:00+00:00"
+}
+```
+
+`/profiles/value` 返回：
+
+```json
+{
+  "address": "0x1111111111111111111111111111111111111111",
+  "condition_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "value": "123.45"
+}
+```
 
 `/profiles/search` 返回：
 
@@ -247,7 +298,130 @@
 
 - 与 `/markets.items[]` 单项结构一致。
 
-### 3.6 `GET /markets/holders`
+### 3.6 `GET /markets/orderbook`
+
+用途：
+
+- 查询单个 market 当前盘口快照，适合详情页实时价格、spread 和深度展示。
+
+查询参数：
+
+- `market_slug`
+- `condition_id`
+- `token_id`
+
+约束：
+
+- 三者至少给一个。
+- 若只给 `market_slug` 或 `condition_id`，内部默认取该 market 的 `no_token_id`。
+
+关键返回字段：
+
+- `token_id`
+- `condition_id`
+- `market_slug`
+- `source`
+- `orderbook.best_bid`
+- `orderbook.best_ask`
+- `orderbook.best_bid_size`
+- `orderbook.best_ask_size`
+- `orderbook.last_trade_price`
+- `orderbook.tick_size`
+- `orderbook.spread`
+- `orderbook.bids`
+- `orderbook.asks`
+
+说明：
+
+- 优先返回本地 `market_ws_worker` 热态快照，`source=hot`。
+- 热态缺失时回退 `ClobClient.get_orderbook()`，`source=rest`。
+- 上游 Polymarket 暂时不可用时返回 `502 market_orderbook_upstream_unavailable`。
+
+### 3.7 `GET /markets/midpoint`
+
+用途：
+
+- 查询单个 market 当前中间价，适合前端高频轻量轮询和卡片价格展示。
+
+查询参数：
+
+- `market_slug`
+- `condition_id`
+- `token_id`
+
+约束：
+
+- 三者至少给一个。
+- 若只给 `market_slug` 或 `condition_id`，内部默认取该 market 的 `no_token_id`。
+
+关键返回字段：
+
+- `token_id`
+- `condition_id`
+- `market_slug`
+- `source`
+- `midpoint`
+- `best_bid`
+- `best_ask`
+- `last_trade_price`
+- `spread`
+- `received_at`
+
+说明：
+
+- 当本地热态 snapshot 同时存在 `best_bid` 和 `best_ask` 时，直接本地计算 midpoint，`source=hot`。
+- 热态缺失时回退 `ClobClient.get_midpoint()`，`source=rest`。
+- 上游 Polymarket 暂时不可用时返回 `502 market_midpoint_upstream_unavailable`。
+
+### 3.8 `GET /markets/positions`
+
+用途：
+
+- 查询单个 market 的持仓分析列表，按 outcome token 分组，适合市场分析页、排行榜和头部持仓展示。
+
+查询参数：
+
+| 参数 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `condition_id` | `str` | 必填 | `0x` 开头的 64 位 condition id |
+| `address` | `str` | `null` | 可选，单个用户地址 |
+| `status` | `str` | `null` | `OPEN` / `CLOSED` / `ALL` |
+| `sort_by` | `str` | `null` | `TOKENS` / `CASH_PNL` / `REALIZED_PNL` / `TOTAL_PNL` |
+| `sort_direction` | `str` | `null` | `ASC` / `DESC` |
+| `limit` | `int` | `50` | `0..500`，每个 outcome token 返回上限 |
+| `offset` | `int` | `0` | `0..10000`，每个 outcome token 的分页 offset |
+
+返回结构：
+
+- `condition_id`
+- `address`
+- `status`
+- `sort_by`
+- `sort_direction`
+- `limit`
+- `offset`
+- `items[].token_id`
+- `items[].positions[].proxy_wallet`
+- `items[].positions[].name`
+- `items[].positions[].profile_image`
+- `items[].positions[].verified`
+- `items[].positions[].avg_price`
+- `items[].positions[].size`
+- `items[].positions[].current_price`
+- `items[].positions[].current_value`
+- `items[].positions[].cash_pnl`
+- `items[].positions[].realized_pnl`
+- `items[].positions[].total_pnl`
+- `items[].positions[].outcome`
+- `items[].positions[].outcome_index`
+
+说明：
+
+- 该接口直连 `DataClient.list_market_positions()`。
+- 返回按 outcome token 分组，前端可直接按 `items[]` 渲染不同 outcome 榜单。
+- 上游 Polymarket 暂时不可用时返回 `502 market_positions_upstream_unavailable`。
+
+### 3.9 `GET /markets/holders`
 
 用途：
 
@@ -277,7 +451,41 @@
 - 返回按 token 分组，不同 outcome 会拆成不同 `items[]`。
 - 上游 Polymarket 暂时不可用时返回 `502 market_holders_upstream_unavailable`。
 
-### 3.7 `GET /profiles/detail`
+### 3.10 `GET /markets/prices-history`
+
+用途：
+
+- 查询单个 token 的历史价格序列，适合前端做走势回放、局部区间放大和基础图表展示。
+
+查询参数：
+
+| 参数 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `token_id` | `str` | 必填 | 官方 `market` 参数，对应 asset id |
+| `start_ts` | `float` | `null` | 可选，Unix 时间戳下界 |
+| `end_ts` | `float` | `null` | 可选，Unix 时间戳上界 |
+| `interval` | `str` | `null` | `max` / `all` / `1m` / `1w` / `1d` / `6h` / `1h` |
+| `fidelity` | `int` | `null` | 分钟精度，`>=1` |
+
+约束：
+
+- `start_ts`、`end_ts` 同时存在时必须满足 `start_ts <= end_ts`。
+
+关键返回字段：
+
+- `token_id`
+- `interval`
+- `fidelity`
+- `history[].timestamp`
+- `history[].price`
+
+说明：
+
+- 该接口直连 `ClobClient.get_prices_history()`。
+- 返回时间统一转成 ISO 8601 UTC 字符串；上游原始字段是 `t`。
+- 上游 Polymarket 暂时不可用时返回 `502 market_prices_history_upstream_unavailable`。
+
+### 3.11 `GET /profiles/detail`
 
 用途：
 
@@ -308,7 +516,32 @@
 - 找不到 profile 时返回 `404 profile not found`。
 - 上游 Polymarket 暂时不可用时返回 `502 profile_upstream_unavailable`。
 
-### 3.8 `GET /profiles/activity`
+### 3.12 `GET /profiles/value`
+
+用途：
+
+- 查询某个用户当前持仓总价值，适合资料页首屏摘要、卡片展示和快速排序。
+
+查询参数：
+
+| 参数 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `address` | `str` | 必填 | `0x` 开头的 40 位钱包地址 |
+| `condition_id` | `str` | `null` | 可选，单个 condition id，按单市场过滤总价值 |
+
+关键返回字段：
+
+- `address`
+- `condition_id`
+- `value`
+
+说明：
+
+- 该接口直连 `DataClient.get_user_value()`。
+- `value` 为字符串化 `Decimal`。
+- 上游 Polymarket 暂时不可用时返回 `502 profile_value_upstream_unavailable`。
+
+### 3.13 `GET /profiles/activity`
 
 用途：
 
@@ -361,7 +594,155 @@
 - 时间统一输出 ISO 8601 UTC 字符串；上游原始 `timestamp` 是 Unix 时间戳。
 - 上游 Polymarket 暂时不可用时返回 `502 profile_activity_upstream_unavailable`。
 
-### 3.9 `GET /profiles/search`
+### 3.14 `GET /profiles/trades`
+
+用途：
+
+- 按钱包地址查询 Polymarket 用户成交列表，适合前端展示交易记录、成交回放和基础筛选。
+
+查询参数：
+
+| 参数 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `address` | `str` | 必填 | `0x` 开头的 40 位钱包地址 |
+| `limit` | `int` | `100` | `0..10000` |
+| `offset` | `int` | `0` | `0..10000` |
+| `condition_id` | `str` | `null` | 可选，单个 condition id |
+| `event_id` | `int` | `null` | 可选，单个 event id |
+| `side` | `str` | `null` | `BUY` / `SELL` |
+| `taker_only` | `bool` | `true` | 是否只看 taker trades |
+| `filter_type` | `str` | `null` | `CASH` / `TOKENS` |
+| `filter_amount` | `Decimal` | `null` | 与 `filter_type` 成对出现，`>=0` |
+
+约束：
+
+- `condition_id` 和 `event_id` 互斥。
+- `filter_type` 和 `filter_amount` 必须同时提供。
+
+单项结构重点：
+
+- `trade_id`
+- `order_id`
+- `proxy_wallet`
+- `condition_id`
+- `token_id`
+- `market_slug`
+- `side`
+- `price`
+- `size`
+- `notional_usdc`
+- `timestamp`
+- `title`
+- `event_slug`
+- `outcome`
+- `transaction_hash`
+
+说明：
+
+- 该接口直连 `DataClient.list_trades()`，对外统一转成 snake_case。
+- `timestamp` 对应上游成交时间；上游原始字段是 `timestamp`。
+- `size` 保持前端使用习惯，内部仍映射到 `DataTradeDTO.size_shares`。
+- 上游 Polymarket 暂时不可用时返回 `502 profile_trades_upstream_unavailable`。
+
+### 3.15 `GET /profiles/positions`
+
+用途：
+
+- 按钱包地址查询 Polymarket 当前持仓分析视图，适合前端展示持仓列表、浮盈亏和市场标签。
+
+查询参数：
+
+| 参数 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `address` | `str` | 必填 | `0x` 开头的 40 位钱包地址 |
+| `limit` | `int` | `100` | `0..500` |
+| `offset` | `int` | `0` | `0..10000` |
+| `condition_id` | `str` | `null` | 可选，单个 condition id |
+| `event_id` | `int` | `null` | 可选，单个 event id |
+| `size_threshold` | `Decimal` | `null` | 可选，`>=0` |
+| `redeemable` | `bool` | `null` | 可选，过滤可 redeem 持仓 |
+| `mergeable` | `bool` | `null` | 可选，过滤可 merge 持仓 |
+| `sort_by` | `str` | `null` | `CURRENT` / `INITIAL` / `TOKENS` / `CASHPNL` / `PERCENTPNL` / `TITLE` / `RESOLVING` / `PRICE` / `AVGPRICE` |
+| `sort_direction` | `str` | `null` | `ASC` / `DESC` |
+| `title` | `str` | `null` | 按市场标题模糊过滤，最大 100 字符 |
+
+约束：
+
+- `condition_id` 和 `event_id` 互斥。
+
+单项结构重点：
+
+- `proxy_wallet`
+- `condition_id`
+- `token_id`
+- `market_slug`
+- `shares`
+- `cost_usdc`
+- `avg_price`
+- `initial_value`
+- `current_value`
+- `cash_pnl`
+- `realized_pnl`
+- `redeemable`
+- `mergeable`
+- `title`
+- `event_slug`
+- `outcome`
+- `end_date`
+- `negative_risk`
+
+说明：
+
+- 该接口直连 `DataClient.list_positions()`，对外统一转成 snake_case。
+- `cost_usdc` 是本地对 `initialValue` 的统一命名，便于和站内持仓视图对齐。
+- 上游 Polymarket 暂时不可用时返回 `502 profile_positions_upstream_unavailable`。
+
+### 3.16 `GET /profiles/closed-positions`
+
+用途：
+
+- 按钱包地址查询 Polymarket 已平仓持仓，适合前端做用户复盘和 realized pnl 排序。
+
+查询参数：
+
+| 参数 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `address` | `str` | 必填 | `0x` 开头的 40 位钱包地址 |
+| `limit` | `int` | `10` | `0..50` |
+| `offset` | `int` | `0` | `0..100000` |
+| `condition_id` | `str` | `null` | 可选，单个 condition id |
+| `event_id` | `int` | `null` | 可选，单个 event id |
+| `sort_by` | `str` | `null` | `REALIZEDPNL` / `TITLE` / `PRICE` / `AVGPRICE` / `TIMESTAMP` |
+| `sort_direction` | `str` | `null` | `ASC` / `DESC` |
+| `title` | `str` | `null` | 按市场标题模糊过滤，最大 100 字符 |
+
+约束：
+
+- `condition_id` 和 `event_id` 互斥。
+
+单项结构重点：
+
+- `proxy_wallet`
+- `condition_id`
+- `token_id`
+- `avg_price`
+- `total_bought`
+- `realized_pnl`
+- `cur_price`
+- `timestamp`
+- `title`
+- `market_slug`
+- `event_slug`
+- `outcome`
+- `end_date`
+
+说明：
+
+- 该接口直连 `DataClient.list_closed_positions()`，对外统一转成 snake_case。
+- 时间统一输出 ISO 8601 UTC 字符串；上游原始 `timestamp` 是 Unix 时间戳。
+- 上游 Polymarket 暂时不可用时返回 `502 profile_closed_positions_upstream_unavailable`。
+
+### 3.17 `GET /profiles/search`
 
 用途：
 
@@ -393,7 +774,7 @@
 - 该接口直连 `GammaClient.search_public_profiles()`，只取 `profiles` 和 `pagination`，不透出 events / tags 结果。
 - 上游 Polymarket 暂时不可用时返回 `502 profile_search_upstream_unavailable`。
 
-### 3.10 `GET /orders`
+### 3.18 `GET /orders`
 
 用途：
 
@@ -438,7 +819,7 @@
 - `open_only=true` 时只返回运行态 open orders。
 - `open_only=false` 且存在 DB session factory 时，走仓储快照查询。
 
-### 3.11 `GET /fills`
+### 3.19 `GET /fills`
 
 用途：
 
@@ -471,7 +852,7 @@
 - `status`
 - `confirmed_at`
 
-### 3.12 `GET /positions`
+### 3.20 `GET /positions`
 
 用途：
 
@@ -502,7 +883,7 @@
 - `confirmation_status`
 - `updated_at`
 
-### 3.13 `GET /portfolio`
+### 3.21 `GET /portfolio`
 
 用途：
 
@@ -528,7 +909,7 @@
 - 当前 `available_usdc` 直接等于 `balance_usdc`。
 - 若仓储可用，会补 `recent_allocations`；否则返回空数组。
 
-### 3.14 `GET /audit-events`
+### 3.22 `GET /audit-events`
 
 用途：
 
@@ -564,7 +945,7 @@
 - `reason`
 - `created_at`
 
-### 3.15 `GET /allocations`
+### 3.23 `GET /allocations`
 
 用途：
 
@@ -594,7 +975,7 @@
 - `release_reason`
 - `idempotency_key`
 
-### 3.16 `GET /workers`
+### 3.24 `GET /workers`
 
 用途：
 
@@ -609,7 +990,7 @@
 - `scheduler`
 - `workers`
 
-### 3.17 `GET /metrics`
+### 3.25 `GET /metrics`
 
 用途：
 
@@ -623,7 +1004,7 @@
 - `queue_depths`
 - `metrics`
 
-### 3.18 `GET /outbox/pending`
+### 3.26 `GET /outbox/pending`
 
 用途：
 
@@ -768,8 +1149,16 @@ Admin API 是人工查询和受控操作入口，不是交易策略入口。
 - 判断能否自动交易用 `/ready`
 - 本地排障先看 `/runtime`
 - 市场扫描和费率筛选用 `/markets`
+- 市场实时盘口用 `/markets/orderbook`
+- 市场轻量价格轮询用 `/markets/midpoint`
+- 市场持仓榜单和分析用 `/markets/positions`
+- 市场价格走势回放用 `/markets/prices-history`
 - 用户资料查询用 `/profiles/detail`
+- 用户价值摘要用 `/profiles/value`
 - 用户活动回放用 `/profiles/activity`
+- 用户成交记录用 `/profiles/trades`
+- 用户当前持仓分析用 `/profiles/positions`
+- 用户已平仓复盘用 `/profiles/closed-positions`
 - 用户搜索入口用 `/profiles/search`
 - 市场持有人展示用 `/markets/holders`
 - 人工修复只用 `/operations/reconcile` 和 `/orders/cancel-replace-sell`

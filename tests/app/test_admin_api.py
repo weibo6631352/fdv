@@ -39,9 +39,16 @@ from fdv_trader.infra.db import RepositoryPage
 from fdv_trader.infra.polymarket import PolymarketResponseError
 from fdv_trader.infra.polymarket.schemas import (
     normalize_activity_payload,
+    normalize_closed_position_payload,
     normalize_gamma_profile,
     normalize_gamma_profile_search,
     normalize_market_holders_payload,
+    normalize_market_positions_payload,
+    normalize_orderbook_payload,
+    normalize_position_payload,
+    normalize_price_history_payload,
+    normalize_trade_payload,
+    normalize_user_value_payload,
 )
 from fdv_trader.runtime.account_state import AccountStateStore
 from fdv_trader.runtime.event_bus import EventBus
@@ -174,6 +181,11 @@ class FakeDataClient:
         *,
         activities: tuple[object, ...] | None = None,
         holders: tuple[object, ...] | None = None,
+        market_positions: tuple[object, ...] | None = None,
+        trades: tuple[object, ...] | None = None,
+        user_value: object | None = None,
+        positions: tuple[object, ...] | None = None,
+        closed_positions: tuple[object, ...] | None = None,
         error: Exception | None = None,
     ) -> None:
         self._activities = activities or (
@@ -224,9 +236,126 @@ class FakeDataClient:
                 }
             ),
         )
+        self._market_positions = market_positions or (
+            normalize_market_positions_payload(
+                {
+                    "token": "no-token-500m",
+                    "positions": [
+                        {
+                            "proxyWallet": "0x1111111111111111111111111111111111111111",
+                            "name": "FDV Watcher",
+                            "profileImage": "https://example.com/profile.png",
+                            "verified": True,
+                            "asset": "no-token-500m",
+                            "conditionId": "0x" + "1" * 64,
+                            "avgPrice": 0.5,
+                            "size": 5,
+                            "currPrice": 0.6,
+                            "currentValue": 3,
+                            "cashPnl": 0.5,
+                            "totalBought": 2.5,
+                            "realizedPnl": 0.1,
+                            "totalPnl": 0.6,
+                            "outcome": "No",
+                            "outcomeIndex": 1,
+                        }
+                    ],
+                }
+            ),
+        )
+        self._trades = trades or (
+            normalize_trade_payload(
+                {
+                    "proxyWallet": "0x1111111111111111111111111111111111111111",
+                    "asset": "no-token-500m",
+                    "conditionId": "0x" + "1" * 64,
+                    "side": "SELL",
+                    "size": 5,
+                    "price": 0.7,
+                    "timestamp": 1704100800,
+                    "title": "Crypto FDV 500M",
+                    "slug": "token-500m-fdv",
+                    "icon": "https://example.com/icon.png",
+                    "eventSlug": "crypto-fdv-500m",
+                    "outcome": "No",
+                    "outcomeIndex": 1,
+                    "name": "FDV Watcher",
+                    "pseudonym": "fdv-watch-001",
+                    "bio": "fdv watcher",
+                    "profileImage": "https://example.com/profile.png",
+                    "profileImageOptimized": "https://example.com/profile-optimized.png",
+                    "transactionHash": "0xtrade2",
+                }
+            ),
+        )
+        self._user_value = user_value or normalize_user_value_payload(
+            {
+                "user": "0x1111111111111111111111111111111111111111",
+                "value": 123.45,
+            }
+        )
+        self._positions = positions or (
+            normalize_position_payload(
+                {
+                    "proxyWallet": "0x1111111111111111111111111111111111111111",
+                    "asset": "no-token-500m",
+                    "conditionId": "0x" + "1" * 64,
+                    "size": 5,
+                    "avgPrice": 0.5,
+                    "initialValue": 2.5,
+                    "currentValue": 3,
+                    "cashPnl": 0.5,
+                    "percentPnl": 20,
+                    "totalBought": 5,
+                    "realizedPnl": 0.1,
+                    "percentRealizedPnl": 2,
+                    "curPrice": 0.6,
+                    "redeemable": False,
+                    "mergeable": False,
+                    "title": "Crypto FDV 500M",
+                    "slug": "token-500m-fdv",
+                    "icon": "https://example.com/icon.png",
+                    "eventSlug": "crypto-fdv-500m",
+                    "outcome": "No",
+                    "outcomeIndex": 1,
+                    "oppositeOutcome": "Yes",
+                    "oppositeAsset": "yes-token-500m",
+                    "endDate": "2026-02-01T00:00:00Z",
+                    "negativeRisk": False,
+                }
+            ),
+        )
+        self._closed_positions = closed_positions or (
+            normalize_closed_position_payload(
+                {
+                    "proxyWallet": "0x1111111111111111111111111111111111111111",
+                    "asset": "yes-token-1b",
+                    "conditionId": "0x" + "2" * 64,
+                    "avgPrice": 0.42,
+                    "totalBought": 10,
+                    "realizedPnl": 2.5,
+                    "curPrice": 1,
+                    "timestamp": 1704100800,
+                    "title": "Crypto FDV 1B",
+                    "slug": "token-1b-fdv",
+                    "icon": "https://example.com/icon-1b.png",
+                    "eventSlug": "crypto-fdv-1b",
+                    "outcome": "Yes",
+                    "outcomeIndex": 0,
+                    "oppositeOutcome": "No",
+                    "oppositeAsset": "no-token-1b",
+                    "endDate": "2026-03-01T00:00:00Z",
+                }
+            ),
+        )
         self._error = error
         self.calls: list[dict[str, object]] = []
         self.holder_calls: list[dict[str, object]] = []
+        self.market_position_calls: list[dict[str, object]] = []
+        self.trade_calls: list[dict[str, object]] = []
+        self.value_calls: list[dict[str, object]] = []
+        self.position_calls: list[dict[str, object]] = []
+        self.closed_position_calls: list[dict[str, object]] = []
 
     async def list_activity(self, **kwargs: object) -> tuple[object, ...]:
         self.calls.append(kwargs)
@@ -239,6 +368,93 @@ class FakeDataClient:
         if self._error is not None:
             raise self._error
         return self._holders
+
+    async def list_market_positions(self, **kwargs: object) -> tuple[object, ...]:
+        self.market_position_calls.append(kwargs)
+        if self._error is not None:
+            raise self._error
+        return self._market_positions
+
+    async def list_trades(self, **kwargs: object) -> tuple[object, ...]:
+        self.trade_calls.append(kwargs)
+        if self._error is not None:
+            raise self._error
+        return self._trades
+
+    async def get_user_value(self, **kwargs: object) -> object:
+        self.value_calls.append(kwargs)
+        if self._error is not None:
+            raise self._error
+        return self._user_value
+
+    async def list_positions(self, **kwargs: object) -> tuple[object, ...]:
+        self.position_calls.append(kwargs)
+        if self._error is not None:
+            raise self._error
+        return self._positions
+
+    async def list_closed_positions(self, **kwargs: object) -> tuple[object, ...]:
+        self.closed_position_calls.append(kwargs)
+        if self._error is not None:
+            raise self._error
+        return self._closed_positions
+
+
+class FakeClobClient:
+    def __init__(
+        self,
+        *,
+        history: object | None = None,
+        orderbook: object | None = None,
+        midpoint: Decimal | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self._history = history or normalize_price_history_payload(
+            {
+                "history": [
+                    {"t": 1704100800, "p": 0.52},
+                    {"t": 1704104400, "p": 0.54},
+                ]
+            }
+        )
+        self._orderbook = orderbook or normalize_orderbook_payload(
+            {
+                "market": "condition-500m",
+                "asset_id": "no-token-500m",
+                "timestamp": 1704100800,
+                "bids": [{"price": "0.55", "size": "100"}],
+                "asks": [{"price": "0.59", "size": "200"}],
+                "min_order_size": "1",
+                "tick_size": "0.01",
+                "last_trade_price": "0.54",
+            },
+            token_id="no-token-500m",
+            market_slug="token-500m-fdv",
+            condition_id="condition-500m",
+        )
+        self._midpoint = midpoint or Decimal("0.57")
+        self._error = error
+        self.history_calls: list[dict[str, object]] = []
+        self.orderbook_calls: list[dict[str, object]] = []
+        self.midpoint_calls: list[dict[str, object]] = []
+
+    async def get_orderbook(self, token_id: str, **kwargs: object) -> object:
+        self.orderbook_calls.append({"token_id": token_id, **kwargs})
+        if self._error is not None:
+            raise self._error
+        return self._orderbook
+
+    async def get_midpoint(self, token_id: str, **kwargs: object) -> Decimal:
+        self.midpoint_calls.append({"token_id": token_id, **kwargs})
+        if self._error is not None:
+            raise self._error
+        return self._midpoint
+
+    async def get_prices_history(self, token_id: str, **kwargs: object) -> object:
+        self.history_calls.append({"token_id": token_id, **kwargs})
+        if self._error is not None:
+            raise self._error
+        return self._history
 
 
 class FakeReconcileWorker:
@@ -544,6 +760,7 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
         readiness=readiness,
         registry=registry,
         gamma_client=FakeGammaClient(),
+        clob_client=FakeClobClient(),
         data_client=FakeDataClient(),
         account_state_store=account_state_store,
         market_ws_worker=fake_market_ws_worker,
@@ -571,6 +788,20 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         metrics = client.get("/metrics").json()
         markets = client.get("/markets").json()
         market_detail = client.get("/markets/detail", params={"market_slug": "token-500m-fdv"}).json()
+        market_orderbook = client.get("/markets/orderbook", params={"market_slug": "token-500m-fdv"}).json()
+        market_midpoint = client.get("/markets/midpoint", params={"market_slug": "token-500m-fdv"}).json()
+        market_positions = client.get(
+            "/markets/positions",
+            params={
+                "condition_id": "0x" + "1" * 64,
+                "address": "0x1111111111111111111111111111111111111111",
+                "status": "OPEN",
+                "sort_by": "TOTAL_PNL",
+                "sort_direction": "DESC",
+                "limit": 50,
+                "offset": 10,
+            },
+        ).json()
         market_holders = client.get(
             "/markets/holders",
             params={
@@ -579,9 +810,26 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
                 "min_balance": 1,
             },
         ).json()
+        market_prices_history = client.get(
+            "/markets/prices-history",
+            params={
+                "token_id": "no-token-500m",
+                "start_ts": 1704100800,
+                "end_ts": 1704104400,
+                "interval": "1h",
+                "fidelity": 60,
+            },
+        ).json()
         profile_detail = client.get(
             "/profiles/detail",
             params={"address": "0x1111111111111111111111111111111111111111"},
+        ).json()
+        profile_value = client.get(
+            "/profiles/value",
+            params={
+                "address": "0x1111111111111111111111111111111111111111",
+                "condition_id": "0x" + "1" * 64,
+            },
         ).json()
         profile_search = client.get(
             "/profiles/search",
@@ -602,8 +850,48 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
                 "side": "SELL",
             },
         ).json()
+        profile_trades = client.get(
+            "/profiles/trades",
+            params={
+                "address": "0x1111111111111111111111111111111111111111",
+                "limit": 25,
+                "offset": 5,
+                "condition_id": "0x" + "1" * 64,
+                "side": "SELL",
+                "taker_only": "false",
+                "filter_type": "CASH",
+                "filter_amount": "10",
+            },
+        ).json()
+        profile_positions = client.get(
+            "/profiles/positions",
+            params={
+                "address": "0x1111111111111111111111111111111111111111",
+                "limit": 50,
+                "offset": 10,
+                "condition_id": "0x" + "1" * 64,
+                "size_threshold": "2",
+                "redeemable": "false",
+                "mergeable": "false",
+                "sort_by": "TOKENS",
+                "sort_direction": "DESC",
+                "title": "Crypto",
+            },
+        ).json()
+        profile_closed_positions = client.get(
+            "/profiles/closed-positions",
+            params={
+                "address": "0x1111111111111111111111111111111111111111",
+                "limit": 10,
+                "offset": 5,
+                "condition_id": "0x" + "2" * 64,
+                "sort_by": "REALIZEDPNL",
+                "sort_direction": "DESC",
+                "title": "Crypto",
+            },
+        ).json()
         orders = client.get("/orders").json()
-        positions = client.get("/positions").json()
+        hot_positions = client.get("/positions").json()
         fills = client.get("/fills").json()
         portfolio = client.get("/portfolio").json()
 
@@ -633,16 +921,44 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert markets["items"][0]["entry_price_touched"] is True
         assert market_detail["market"]["condition_id"] == "condition-500m"
         assert market_detail["market"]["market_slug"] == "token-500m-fdv"
+        assert market_orderbook["token_id"] == "no-token-500m"
+        assert market_orderbook["source"] == "hot"
+        assert market_orderbook["orderbook"]["best_bid"] == "0.55"
+        assert market_orderbook["orderbook"]["best_ask"] == "0.59"
+        assert market_midpoint["token_id"] == "no-token-500m"
+        assert market_midpoint["source"] == "hot"
+        assert market_midpoint["midpoint"] == "0.57"
+        assert market_midpoint["spread"] == "0.04"
+        assert market_positions["condition_id"] == "0x" + "1" * 64
+        assert market_positions["address"] == "0x1111111111111111111111111111111111111111"
+        assert market_positions["items"][0]["token_id"] == "no-token-500m"
+        assert market_positions["items"][0]["positions"][0]["current_value"] == "3"
+        assert market_positions["items"][0]["positions"][0]["total_pnl"] == "0.6"
+        assert runtime.data_client.market_position_calls[0]["condition_id"] == "0x" + "1" * 64
+        assert runtime.data_client.market_position_calls[0]["status"] == "OPEN"
+        assert runtime.data_client.market_position_calls[0]["sort_by"] == "TOTAL_PNL"
         assert market_holders["condition_id"] == "0x" + "1" * 64
         assert market_holders["items"][0]["token_id"] == "no-token-500m"
         assert market_holders["items"][0]["holders"][0]["amount"] == "25"
         assert runtime.data_client.holder_calls[0]["market_ids"] == ("0x" + "1" * 64,)
         assert runtime.data_client.holder_calls[0]["limit"] == 20
         assert runtime.data_client.holder_calls[0]["min_balance"] == 1
+        assert market_prices_history["token_id"] == "no-token-500m"
+        assert market_prices_history["interval"] == "1h"
+        assert market_prices_history["fidelity"] == 60
+        assert market_prices_history["history"][0]["timestamp"] == "2024-01-01T09:20:00+00:00"
+        assert market_prices_history["history"][1]["price"] == "0.54"
+        assert runtime.clob_client.history_calls[0]["token_id"] == "no-token-500m"
+        assert runtime.clob_client.history_calls[0]["start_ts"] == 1704100800.0
+        assert runtime.clob_client.history_calls[0]["end_ts"] == 1704104400.0
         assert profile_detail["name"] == "FDV Watcher"
         assert profile_detail["profile_image"] == "https://example.com/profile.png"
         assert profile_detail["x_username"] == "fdvwatcher"
         assert profile_detail["users"][0]["id"] == "user-1"
+        assert profile_value["address"] == "0x1111111111111111111111111111111111111111"
+        assert profile_value["condition_id"] == "0x" + "1" * 64
+        assert profile_value["value"] == "123.45"
+        assert runtime.data_client.value_calls[0]["market_ids"] == ("0x" + "1" * 64,)
         assert profile_search["limit"] == 10
         assert profile_search["page"] == 2
         assert profile_search["has_more"] is False
@@ -662,13 +978,43 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert runtime.data_client.calls[0]["sort_by"] == "TIMESTAMP"
         assert runtime.data_client.calls[0]["sort_direction"] == "DESC"
         assert runtime.data_client.calls[0]["side"] == "SELL"
+        assert profile_trades["limit"] == 25
+        assert profile_trades["offset"] == 5
+        assert profile_trades["items"][0]["trade_id"] == "0xtrade2"
+        assert profile_trades["items"][0]["token_id"] == "no-token-500m"
+        assert profile_trades["items"][0]["size"] == "5"
+        assert profile_trades["items"][0]["notional_usdc"] == "3.5"
+        assert profile_trades["items"][0]["profile_image_optimized"] == "https://example.com/profile-optimized.png"
+        assert runtime.data_client.trade_calls[0]["market_ids"] == ("0x" + "1" * 64,)
+        assert runtime.data_client.trade_calls[0]["side"] == "SELL"
+        assert runtime.data_client.trade_calls[0]["taker_only"] is False
+        assert runtime.data_client.trade_calls[0]["filter_type"] == "CASH"
+        assert runtime.data_client.trade_calls[0]["filter_amount"] == Decimal("10")
+        assert profile_positions["limit"] == 50
+        assert profile_positions["offset"] == 10
+        assert profile_positions["items"][0]["token_id"] == "no-token-500m"
+        assert profile_positions["items"][0]["shares"] == "5"
+        assert profile_positions["items"][0]["current_value"] == "3"
+        assert profile_positions["items"][0]["outcome"] == "No"
+        assert runtime.data_client.position_calls[0]["market_ids"] == ("0x" + "1" * 64,)
+        assert runtime.data_client.position_calls[0]["size_threshold"] == Decimal("2")
+        assert runtime.data_client.position_calls[0]["sort_by"] == "TOKENS"
+        assert runtime.data_client.position_calls[0]["title"] == "Crypto"
+        assert profile_closed_positions["limit"] == 10
+        assert profile_closed_positions["offset"] == 5
+        assert profile_closed_positions["items"][0]["token_id"] == "yes-token-1b"
+        assert profile_closed_positions["items"][0]["realized_pnl"] == "2.5"
+        assert profile_closed_positions["items"][0]["timestamp"] == "2024-01-01T09:20:00+00:00"
+        assert runtime.data_client.closed_position_calls[0]["market_ids"] == ("0x" + "2" * 64,)
+        assert runtime.data_client.closed_position_calls[0]["sort_by"] == "REALIZEDPNL"
+        assert runtime.data_client.closed_position_calls[0]["title"] == "Crypto"
 
         assert orders["total"] == 2
         assert orders["items"][0]["order_id"] == "buy-1"
         assert orders["items"][1]["side"] == "SELL"
 
-        assert positions["total"] == 1
-        assert positions["items"][0]["shares"] == "5"
+        assert hot_positions["total"] == 1
+        assert hot_positions["items"][0]["shares"] == "5"
 
         assert fills["total"] == 1
         assert fills["items"][0]["trade_id"] == "trade-1"
@@ -768,6 +1114,40 @@ def test_admin_api_supports_fee_filters_and_sorting() -> None:
             "condition-1b",
             "condition-500m",
         ]
+
+
+def test_markets_orderbook_falls_back_to_clob_when_hot_snapshot_missing() -> None:
+    runtime = _build_runtime(ready=True)
+    runtime.market_ws_worker._snapshots.clear()
+    app = create_app(runtime=runtime, admin_service=AdminService())
+
+    with TestClient(app) as client:
+        payload = client.get(
+            "/markets/orderbook",
+            params={"token_id": "no-token-500m"},
+        ).json()
+
+        assert payload["token_id"] == "no-token-500m"
+        assert payload["source"] == "rest"
+        assert payload["orderbook"]["last_trade_price"] == "0.54"
+        assert runtime.clob_client.orderbook_calls[0]["token_id"] == "no-token-500m"
+
+
+def test_markets_midpoint_falls_back_to_clob_when_hot_snapshot_missing() -> None:
+    runtime = _build_runtime(ready=True)
+    runtime.market_ws_worker._snapshots.clear()
+    app = create_app(runtime=runtime, admin_service=AdminService())
+
+    with TestClient(app) as client:
+        payload = client.get(
+            "/markets/midpoint",
+            params={"token_id": "no-token-500m"},
+        ).json()
+
+        assert payload["token_id"] == "no-token-500m"
+        assert payload["source"] == "rest"
+        assert payload["midpoint"] == "0.57"
+        assert runtime.clob_client.midpoint_calls[0]["token_id"] == "no-token-500m"
 
 
 def test_admin_ready_route_reports_blockers_when_runtime_is_not_ready() -> None:

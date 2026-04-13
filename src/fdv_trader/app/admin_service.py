@@ -36,8 +36,14 @@ from fdv_trader.infra.db import (
     RepositoryPage,
 )
 from fdv_trader.infra.polymarket import (
+    ClobPriceHistoryDTO,
     DataActivityDTO,
+    DataClosedPositionDTO,
     DataMarketHoldersDTO,
+    DataMarketPositionsDTO,
+    DataPositionDTO,
+    DataTradeDTO,
+    DataUserValueDTO,
     GammaProfileDTO,
     GammaProfileSearchResultDTO,
     GammaSearchProfileDTO,
@@ -473,6 +479,76 @@ class AdminService:
             return None
         return self._serialize_market_view(market)
 
+    async def get_market_orderbook(
+        self,
+        *,
+        market_slug: str | None = None,
+        condition_id: str | None = None,
+        token_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        market = self._resolve_market(
+            market_slug=market_slug,
+            condition_id=condition_id,
+            token_id=token_id,
+        )
+        resolved_market_slug = market.market_slug if market is not None else market_slug
+        resolved_condition_id = market.condition_id if market is not None else condition_id
+        resolved_token_id = token_id or (market.no_token_id if market is not None else None)
+        if resolved_token_id is None:
+            return None
+
+        snapshot = self._market_ws_snapshot(resolved_token_id)
+        source = "hot"
+        if snapshot is None:
+            orderbook = await self._clob_client().get_orderbook(
+                resolved_token_id,
+                market_slug=resolved_market_slug,
+                condition_id=resolved_condition_id,
+            )
+            snapshot = orderbook.to_snapshot()
+            source = "rest"
+        return self._serialize_market_orderbook(
+            token_id=resolved_token_id,
+            condition_id=resolved_condition_id,
+            market_slug=resolved_market_slug,
+            orderbook=snapshot,
+            source=source,
+        )
+
+    async def get_market_midpoint(
+        self,
+        *,
+        market_slug: str | None = None,
+        condition_id: str | None = None,
+        token_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        market = self._resolve_market(
+            market_slug=market_slug,
+            condition_id=condition_id,
+            token_id=token_id,
+        )
+        resolved_market_slug = market.market_slug if market is not None else market_slug
+        resolved_condition_id = market.condition_id if market is not None else condition_id
+        resolved_token_id = token_id or (market.no_token_id if market is not None else None)
+        if resolved_token_id is None:
+            return None
+
+        snapshot = self._market_ws_snapshot(resolved_token_id)
+        source = "hot"
+        if snapshot is not None and snapshot.best_bid is not None and snapshot.best_ask is not None:
+            midpoint = (snapshot.best_bid + snapshot.best_ask) / Decimal("2")
+        else:
+            midpoint = await self._clob_client().get_midpoint(resolved_token_id)
+            source = "rest"
+        return self._serialize_market_midpoint(
+            token_id=resolved_token_id,
+            condition_id=resolved_condition_id,
+            market_slug=resolved_market_slug,
+            midpoint=midpoint,
+            orderbook=snapshot,
+            source=source,
+        )
+
     async def get_profile(
         self,
         *,
@@ -515,6 +591,52 @@ class AdminService:
             "offset": offset,
         }
 
+    async def list_profile_trades(
+        self,
+        *,
+        address: str,
+        limit: int = 100,
+        offset: int = 0,
+        condition_id: str | None = None,
+        event_id: int | None = None,
+        side: str | None = None,
+        taker_only: bool = True,
+        filter_type: str | None = None,
+        filter_amount: Decimal | None = None,
+    ) -> dict[str, Any]:
+        trades = await self._data_client().list_trades(
+            user_address=address,
+            market_ids=None if condition_id is None else (condition_id,),
+            event_ids=None if event_id is None else (event_id,),
+            side=side,
+            taker_only=taker_only,
+            filter_type=filter_type,
+            filter_amount=filter_amount,
+            limit=limit,
+            offset=offset,
+        )
+        return {
+            "items": [self._serialize_profile_trade(item) for item in trades],
+            "limit": limit,
+            "offset": offset,
+        }
+
+    async def get_profile_value(
+        self,
+        *,
+        address: str,
+        condition_id: str | None = None,
+    ) -> dict[str, Any]:
+        value = await self._data_client().get_user_value(
+            user_address=address,
+            market_ids=None if condition_id is None else (condition_id,),
+        )
+        return self._serialize_profile_value(
+            address=address,
+            condition_id=condition_id,
+            value=value,
+        )
+
     async def list_market_holders(
         self,
         *,
@@ -534,6 +656,37 @@ class AdminService:
             "min_balance": min_balance,
         }
 
+    async def list_market_positions(
+        self,
+        *,
+        condition_id: str,
+        address: str | None = None,
+        status: str | None = None,
+        sort_by: str | None = None,
+        sort_direction: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        positions = await self._data_client().list_market_positions(
+            condition_id=condition_id,
+            user_address=address,
+            status=status,
+            sort_by=sort_by,
+            sort_direction=sort_direction,
+            limit=limit,
+            offset=offset,
+        )
+        return {
+            "condition_id": condition_id,
+            "address": address,
+            "status": status,
+            "sort_by": sort_by,
+            "sort_direction": sort_direction,
+            "limit": limit,
+            "offset": offset,
+            "items": [self._serialize_market_positions(item) for item in positions],
+        }
+
     async def search_profiles(
         self,
         *,
@@ -547,6 +700,91 @@ class AdminService:
             page=page,
         )
         return self._serialize_profile_search_result(result, limit=limit, page=page)
+
+    async def get_market_prices_history(
+        self,
+        *,
+        token_id: str,
+        start_ts: int | None = None,
+        end_ts: int | None = None,
+        interval: str | None = None,
+        fidelity: int | None = None,
+    ) -> dict[str, Any]:
+        history = await self._clob_client().get_prices_history(
+            token_id,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            interval=interval,
+            fidelity=fidelity,
+        )
+        return self._serialize_market_prices_history(
+            token_id=token_id,
+            history=history,
+            interval=interval,
+            fidelity=fidelity,
+        )
+
+    async def list_profile_positions(
+        self,
+        *,
+        address: str,
+        limit: int = 100,
+        offset: int = 0,
+        condition_id: str | None = None,
+        event_id: int | None = None,
+        size_threshold: Decimal | None = None,
+        redeemable: bool | None = None,
+        mergeable: bool | None = None,
+        sort_by: str | None = None,
+        sort_direction: str | None = None,
+        title: str | None = None,
+    ) -> dict[str, Any]:
+        positions = await self._data_client().list_positions(
+            user_address=address,
+            market_ids=None if condition_id is None else (condition_id,),
+            event_ids=None if event_id is None else (event_id,),
+            size_threshold=size_threshold,
+            redeemable=redeemable,
+            mergeable=mergeable,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_direction=sort_direction,
+            title=title,
+        )
+        return {
+            "items": [self._serialize_profile_position(item) for item in positions],
+            "limit": limit,
+            "offset": offset,
+        }
+
+    async def list_profile_closed_positions(
+        self,
+        *,
+        address: str,
+        limit: int = 10,
+        offset: int = 0,
+        condition_id: str | None = None,
+        event_id: int | None = None,
+        sort_by: str | None = None,
+        sort_direction: str | None = None,
+        title: str | None = None,
+    ) -> dict[str, Any]:
+        positions = await self._data_client().list_closed_positions(
+            user_address=address,
+            market_ids=None if condition_id is None else (condition_id,),
+            event_ids=None if event_id is None else (event_id,),
+            title=title,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_direction=sort_direction,
+        )
+        return {
+            "items": [self._serialize_closed_profile_position(item) for item in positions],
+            "limit": limit,
+            "offset": offset,
+        }
 
     async def list_audit_events(
         self,
@@ -1141,6 +1379,45 @@ class AdminService:
             "profile_image_optimized": activity.profile_image_optimized,
         }
 
+    def _serialize_profile_trade(self, trade: DataTradeDTO) -> dict[str, Any]:
+        return {
+            "trade_id": trade.trade_id,
+            "order_id": trade.order_id,
+            "proxy_wallet": trade.proxy_wallet,
+            "condition_id": trade.condition_id,
+            "token_id": trade.token_id,
+            "market_slug": trade.market_slug,
+            "side": trade.side,
+            "price": _decimal_text(trade.price),
+            "size": _decimal_text(trade.size_shares),
+            "notional_usdc": _decimal_text(trade.notional_usdc),
+            "timestamp": _jsonable(trade.confirmed_at),
+            "title": trade.title,
+            "icon": trade.icon,
+            "event_slug": trade.event_slug,
+            "outcome": trade.outcome,
+            "outcome_index": trade.outcome_index,
+            "name": trade.name,
+            "pseudonym": trade.pseudonym,
+            "bio": trade.bio,
+            "profile_image": trade.profile_image,
+            "profile_image_optimized": trade.profile_image_optimized,
+            "transaction_hash": trade.transaction_hash,
+        }
+
+    def _serialize_profile_value(
+        self,
+        *,
+        address: str,
+        condition_id: str | None,
+        value: DataUserValueDTO,
+    ) -> dict[str, Any]:
+        return {
+            "address": address,
+            "condition_id": condition_id,
+            "value": _decimal_text(value.value),
+        }
+
     def _serialize_market_holders(self, holders: DataMarketHoldersDTO) -> dict[str, Any]:
         return {
             "token_id": holders.token_id,
@@ -1159,6 +1436,148 @@ class AdminService:
                 }
                 for holder in holders.holders
             ],
+        }
+
+    def _serialize_market_positions(self, positions: DataMarketPositionsDTO) -> dict[str, Any]:
+        return {
+            "token_id": positions.token_id,
+            "positions": [
+                {
+                    "proxy_wallet": position.proxy_wallet,
+                    "name": position.name,
+                    "profile_image": position.profile_image,
+                    "verified": position.verified,
+                    "token_id": position.token_id,
+                    "condition_id": position.condition_id,
+                    "avg_price": _decimal_text(position.avg_price),
+                    "size": _decimal_text(position.size),
+                    "current_price": _decimal_text(position.current_price),
+                    "current_value": _decimal_text(position.current_value),
+                    "cash_pnl": _decimal_text(position.cash_pnl),
+                    "total_bought": _decimal_text(position.total_bought),
+                    "realized_pnl": _decimal_text(position.realized_pnl),
+                    "total_pnl": _decimal_text(position.total_pnl),
+                    "outcome": position.outcome,
+                    "outcome_index": position.outcome_index,
+                }
+                for position in positions.positions
+            ],
+        }
+
+    def _serialize_market_orderbook(
+        self,
+        *,
+        token_id: str,
+        condition_id: str | None,
+        market_slug: str | None,
+        orderbook: OrderbookSnapshot,
+        source: str,
+    ) -> dict[str, Any]:
+        payload = self._serialize_orderbook(orderbook) or {}
+        payload["token_id"] = token_id
+        payload["condition_id"] = condition_id if condition_id is not None else payload.get("condition_id")
+        payload["market_slug"] = market_slug if market_slug is not None else payload.get("market_slug")
+        return {
+            "token_id": token_id,
+            "condition_id": condition_id,
+            "market_slug": market_slug,
+            "source": source,
+            "orderbook": payload,
+        }
+
+    def _serialize_market_midpoint(
+        self,
+        *,
+        token_id: str,
+        condition_id: str | None,
+        market_slug: str | None,
+        midpoint: Decimal,
+        orderbook: OrderbookSnapshot | None,
+        source: str,
+    ) -> dict[str, Any]:
+        return {
+            "token_id": token_id,
+            "condition_id": condition_id,
+            "market_slug": market_slug,
+            "source": source,
+            "midpoint": _decimal_text(midpoint),
+            "best_bid": None if orderbook is None else _decimal_text(orderbook.best_bid),
+            "best_ask": None if orderbook is None else _decimal_text(orderbook.best_ask),
+            "last_trade_price": None if orderbook is None else _decimal_text(orderbook.last_trade_price),
+            "spread": None if orderbook is None else _decimal_text(orderbook.spread),
+            "received_at": None if orderbook is None else _jsonable(orderbook.received_at),
+        }
+
+    def _serialize_market_prices_history(
+        self,
+        *,
+        token_id: str,
+        history: ClobPriceHistoryDTO,
+        interval: str | None,
+        fidelity: int | None,
+    ) -> dict[str, Any]:
+        return {
+            "token_id": token_id,
+            "interval": interval,
+            "fidelity": fidelity,
+            "history": [
+                {
+                    "timestamp": _jsonable(point.timestamp),
+                    "price": _decimal_text(point.price),
+                }
+                for point in history.history
+            ],
+        }
+
+    def _serialize_profile_position(self, position: DataPositionDTO) -> dict[str, Any]:
+        return {
+            "proxy_wallet": position.proxy_wallet,
+            "condition_id": position.condition_id,
+            "token_id": position.token_id,
+            "market_slug": position.market_slug,
+            "shares": _decimal_text(position.shares),
+            "cost_usdc": _decimal_text(position.cost_usdc),
+            "avg_price": _decimal_text(position.avg_price),
+            "initial_value": _decimal_text(position.initial_value),
+            "current_value": _decimal_text(position.current_value),
+            "cash_pnl": _decimal_text(position.cash_pnl),
+            "percent_pnl": _decimal_text(position.percent_pnl),
+            "total_bought": _decimal_text(position.total_bought),
+            "realized_pnl": _decimal_text(position.realized_pnl),
+            "percent_realized_pnl": _decimal_text(position.percent_realized_pnl),
+            "cur_price": _decimal_text(position.cur_price),
+            "redeemable": position.redeemable,
+            "mergeable": position.mergeable,
+            "title": position.title,
+            "icon": position.icon,
+            "event_slug": position.event_slug,
+            "outcome": position.outcome,
+            "outcome_index": position.outcome_index,
+            "opposite_outcome": position.opposite_outcome,
+            "opposite_asset": position.opposite_asset,
+            "end_date": _jsonable(position.end_date),
+            "negative_risk": position.negative_risk,
+        }
+
+    def _serialize_closed_profile_position(self, position: DataClosedPositionDTO) -> dict[str, Any]:
+        return {
+            "proxy_wallet": position.proxy_wallet,
+            "condition_id": position.condition_id,
+            "token_id": position.token_id,
+            "avg_price": _decimal_text(position.avg_price),
+            "total_bought": _decimal_text(position.total_bought),
+            "realized_pnl": _decimal_text(position.realized_pnl),
+            "cur_price": _decimal_text(position.cur_price),
+            "timestamp": _jsonable(position.timestamp),
+            "title": position.title,
+            "market_slug": position.market_slug,
+            "icon": position.icon,
+            "event_slug": position.event_slug,
+            "outcome": position.outcome,
+            "outcome_index": position.outcome_index,
+            "opposite_outcome": position.opposite_outcome,
+            "opposite_asset": position.opposite_asset,
+            "end_date": _jsonable(position.end_date),
         }
 
     def _serialize_profile_search_result(
@@ -1462,6 +1881,12 @@ class AdminService:
         if gamma_client is None:
             raise RuntimeError("gamma_client unavailable")
         return gamma_client
+
+    def _clob_client(self) -> Any:
+        clob_client = getattr(self.runtime, "clob_client", None)
+        if clob_client is None:
+            raise RuntimeError("clob_client unavailable")
+        return clob_client
 
     def _data_client(self) -> Any:
         data_client = getattr(self.runtime, "data_client", None)

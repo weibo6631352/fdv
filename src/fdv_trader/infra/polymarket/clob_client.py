@@ -13,11 +13,13 @@ from fdv_trader.infra.polymarket.schemas import (
     ClobOrderDTO,
     ClobOrderRequest,
     ClobOrderbookDTO,
+    ClobPriceHistoryDTO,
     PolymarketRestClientBase,
     normalize_balance_allowance_payload,
     normalize_fill_payload,
     normalize_order_payload,
     normalize_orderbook_payload,
+    normalize_price_history_payload,
 )
 
 
@@ -48,6 +50,15 @@ def _coerce_int(value: Any | None) -> int | None:
     return int(Decimal(text))
 
 
+def _coerce_decimal(value: Any | None) -> Decimal | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return Decimal(text)
+
+
 def _coerce_cursor(value: Any | None) -> str | None:
     if value is None:
         return None
@@ -76,6 +87,8 @@ class ClobClient(PolymarketRestClientBase):
         orders_path: str = "/data/orders",
         trades_path: str = "/data/trades",
         fee_rate_path: str = "/fee-rate",
+        midpoint_path: str = "/midpoint",
+        prices_history_path: str = "/prices-history",
     ) -> None:
         super().__init__(base_url, client=client, timeout_s=timeout_s, headers=headers)
         self._auth_client = auth_client
@@ -85,6 +98,8 @@ class ClobClient(PolymarketRestClientBase):
         self._orders_path = orders_path
         self._trades_path = trades_path
         self._fee_rate_path = fee_rate_path
+        self._midpoint_path = midpoint_path
+        self._prices_history_path = prices_history_path
 
     @property
     def has_auth_client(self) -> bool:
@@ -146,6 +161,63 @@ class ClobClient(PolymarketRestClientBase):
         if fee_rate_bps is None:
             raise TypeError("clob fee rate response missing base_fee")
         return fee_rate_bps
+
+    async def get_midpoint(
+        self,
+        token_id: str,
+        *,
+        timeout_s: float | None = None,
+        path: str | None = None,
+    ) -> Decimal:
+        payload = await self.get_json(
+            path or self._midpoint_path,
+            params={"token_id": token_id},
+            timeout_s=timeout_s,
+            operation="clob.get_midpoint",
+        )
+        if not isinstance(payload, Mapping):
+            raise TypeError("clob midpoint response is not a mapping")
+        raw_midpoint = payload.get("mid")
+        if raw_midpoint is None:
+            raw_midpoint = payload.get("midpoint")
+        if raw_midpoint is None:
+            raw_midpoint = payload.get("mid_price")
+        if raw_midpoint is None:
+            raw_midpoint = payload.get("midPrice")
+        midpoint = _coerce_decimal(raw_midpoint)
+        if midpoint is None:
+            raise TypeError("clob midpoint response missing midpoint")
+        return midpoint
+
+    async def get_prices_history(
+        self,
+        token_id: str,
+        *,
+        start_ts: int | float | None = None,
+        end_ts: int | float | None = None,
+        interval: str | None = None,
+        fidelity: int | None = None,
+        timeout_s: float | None = None,
+        path: str | None = None,
+    ) -> ClobPriceHistoryDTO:
+        params: dict[str, Any] = {"market": token_id}
+        if start_ts is not None:
+            params["startTs"] = start_ts
+        if end_ts is not None:
+            params["endTs"] = end_ts
+        if interval is not None:
+            params["interval"] = interval
+        if fidelity is not None:
+            params["fidelity"] = fidelity
+        payload = await self.get_json(
+            path or self._prices_history_path,
+            params=params,
+            timeout_s=timeout_s,
+            operation="clob.get_prices_history",
+        )
+        if isinstance(payload, Mapping):
+            return normalize_price_history_payload(payload)
+        raise TypeError("clob prices history response is not a mapping")
 
     async def get_balance_allowance(
         self,

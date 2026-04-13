@@ -154,3 +154,71 @@ async def test_clob_client_list_fills_uses_trade_ledger_path_and_maps_trade_fiel
     assert fill.size_shares == Decimal("4")
     assert fill.status == "confirmed"
     assert fill.confirmed_at == datetime.fromtimestamp(1700000000, tz=timezone.utc)
+
+
+async def test_clob_client_get_prices_history_uses_official_query_params() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/prices-history"
+        return httpx.Response(
+            200,
+            json={
+                "history": [
+                    {"t": 1700000000, "p": 0.51},
+                    {"t": 1700003600, "p": 0.53},
+                ]
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(
+        base_url="https://clob.polymarket.com",
+        transport=transport,
+        trust_env=False,
+    ) as client:
+        clob = ClobClient(client=client)
+        history = await clob.get_prices_history(
+            "token-1",
+            start_ts=1700000000,
+            end_ts=1700003600,
+            interval="1h",
+            fidelity=60,
+        )
+
+    request = requests[0]
+    assert request.url.params.get("market") == "token-1"
+    assert request.url.params.get("startTs") == "1700000000"
+    assert request.url.params.get("endTs") == "1700003600"
+    assert request.url.params.get("interval") == "1h"
+    assert request.url.params.get("fidelity") == "60"
+    assert len(history.history) == 2
+    assert history.history[0].timestamp == datetime.fromtimestamp(1700000000, tz=timezone.utc)
+    assert history.history[0].price == Decimal("0.51")
+    assert history.history[1].price == Decimal("0.53")
+
+
+async def test_clob_client_get_midpoint_uses_official_query_params() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/midpoint"
+        return httpx.Response(
+            200,
+            json={"mid": "0.57"},
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(
+        base_url="https://clob.polymarket.com",
+        transport=transport,
+        trust_env=False,
+    ) as client:
+        clob = ClobClient(client=client)
+        midpoint = await clob.get_midpoint("token-1")
+
+    request = requests[0]
+    assert request.url.params.get("token_id") == "token-1"
+    assert midpoint == Decimal("0.57")

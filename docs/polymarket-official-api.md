@@ -17,8 +17,16 @@
 - `GET /fee-rate` 已由后台对账链路接入，用于按 `token_id` 刷新本地费率缓存。
 - 管理端 `/markets` 已支持基于本地 fee 缓存字段做筛选和排序，不在 HTTP handler 内直接请求 Polymarket。
 - 管理端已新增 `/profiles/detail`，通过 `GET /public-profile?address=...` 提供公开用户资料查询。
+- 管理端已新增 `/profiles/value`，通过 `GET /value?user=...` 提供用户总持仓价值查询。
 - 管理端已新增 `/profiles/activity`，通过 `GET /activity?user=...` 提供公开用户活动查询。
+- 管理端已新增 `/profiles/trades`，通过 `GET /trades?user=...` 提供用户成交列表查询。
+- 管理端已新增 `/profiles/positions`，通过 `GET /positions?user=...` 提供用户当前持仓分析查询。
+- 管理端已新增 `/profiles/closed-positions`，通过 `GET /closed-positions?user=...` 提供用户已平仓持仓查询。
+- 管理端已新增 `/markets/orderbook`，优先读本地热态快照，缺失时回退 `GET /book`。
+- 管理端已新增 `/markets/midpoint`，优先用本地热态盘口计算 midpoint，缺失时回退 `GET /midpoint`。
+- 管理端已新增 `/markets/positions`，通过 `GET /market-positions?market=...` 提供市场持仓分析查询。
 - 管理端已新增 `/markets/holders`，通过 `GET /holders?market=...` 提供市场持有人列表查询。
+- 管理端已新增 `/markets/prices-history`，通过 `GET /prices-history?market=...` 提供市场价格历史查询。
 - 管理端已新增 `/profiles/search`，通过 `GET /public-search?q=...` 提供公开用户搜索。
 
 ## 1. 官方基础地址
@@ -42,7 +50,7 @@
 | 市场发现 | `GammaClient.discover_events()` | `src/fdv_trader/infra/polymarket/gamma_client.py` | `GET /events` | 无 | `main.py` 的 market discovery 周期扫描使用 |
 | 市场元数据刷新 | `GammaClient.list_markets()` | `src/fdv_trader/infra/polymarket/gamma_client.py` | `GET /markets` | 无 | `reconcile_worker.py` 按 `slug` 拉权威 market |
 | orderbook 快照 | `ClobClient.get_orderbook()` | `src/fdv_trader/infra/polymarket/clob_client.py` | `GET /book` | 无 | `main.py` 的 REST snapshot loader 和 `reconcile_worker.py` 都在用 |
-| 用户 positions 刷新 | `DataClient.list_positions()` | `src/fdv_trader/infra/polymarket/data_client.py` | `GET /positions` | 官方文档当前标注为公开 | `reconcile_worker.py` 用官方当前 `user` / `market` / `eventId` 参数口径刷新 positions |
+| 用户 positions 刷新 | `DataClient.list_positions()` | `src/fdv_trader/infra/polymarket/data_client.py` | `GET /positions` | 官方文档当前标注为公开 | `reconcile_worker.py` 用官方当前 `user` / `market` / `eventId` 参数口径刷新 positions；管理端 `/profiles/positions` 复用同一接口输出分析字段 |
 | 用户 open orders 刷新 | `ClobClient.list_open_orders()` | `src/fdv_trader/infra/polymarket/clob_client.py` | `GET /data/orders` | L2 | `reconcile_worker.py` 刷新账户 open orders，按 SDK 分页拉全量 |
 | 用户 trades 刷新 | `ClobClient.list_fills()` | `src/fdv_trader/infra/polymarket/clob_client.py` | `GET /data/trades` | L2 | `reconcile_worker.py` 刷新 fills，按 SDK 分页拉全量 |
 | 账户余额/授权刷新 | `ClobClient.get_balance_allowance()` | `src/fdv_trader/infra/polymarket/clob_client.py` | `GET /balance-allowance` | L2 | `reconcile_worker.py` 刷新 `balance_usdc` 与 `allowance_usdc` |
@@ -83,8 +91,16 @@
 | 场景 | 仓库入口 | 当前代码路径 | 官方接口 | 鉴权 | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | 用户公开资料 | `GammaClient.get_public_profile()` | `src/fdv_trader/infra/polymarket/gamma_client.py` | `GET /public-profile?address=...` | 无 | 管理端 `/profiles/detail` 读取并序列化 `name`、`profileImage`、`xUsername`、`verifiedBadge` 等稳定字段 |
+| 用户总持仓价值 | `DataClient.get_user_value()` | `src/fdv_trader/infra/polymarket/data_client.py` | `GET /value?user=...` | 官方文档当前标注为公开 | 管理端 `/profiles/value` 读取并序列化总价值，支持按单个 condition id 过滤 |
 | 用户公开活动 | `DataClient.list_activity()` | `src/fdv_trader/infra/polymarket/data_client.py` | `GET /activity?user=...` | 官方文档当前标注为公开 | 管理端 `/profiles/activity` 读取并序列化 `type`、`size`、`usdcSize`、`transactionHash`、`profileImage` 等稳定字段 |
+| 用户成交列表 | `DataClient.list_trades()` | `src/fdv_trader/infra/polymarket/data_client.py` | `GET /trades?user=...` | 官方文档当前标注为公开 | 管理端 `/profiles/trades` 读取并序列化 `side`、`size`、`price`、`timestamp`、`transactionHash` 与用户公开资料字段 |
+| 用户当前持仓分析 | `DataClient.list_positions()` | `src/fdv_trader/infra/polymarket/data_client.py` | `GET /positions?user=...` | 官方文档当前标注为公开 | 管理端 `/profiles/positions` 读取并序列化官方当前 `currentValue`、`cashPnl`、`realizedPnl`、`negativeRisk` 等字段 |
+| 用户已平仓持仓 | `DataClient.list_closed_positions()` | `src/fdv_trader/infra/polymarket/data_client.py` | `GET /closed-positions?user=...` | 官方文档当前标注为公开 | 管理端 `/profiles/closed-positions` 读取并序列化 `realizedPnl`、`curPrice`、`timestamp`、`outcome` 等字段 |
+| 市场盘口快照 | `ClobClient.get_orderbook()` | `src/fdv_trader/infra/polymarket/clob_client.py` | `GET /book` | 无 | 管理端 `/markets/orderbook` 优先读本地 `market_ws_worker` 热态快照，缺失时回退 REST |
+| 市场中间价 | `ClobClient.get_midpoint()` | `src/fdv_trader/infra/polymarket/clob_client.py` | `GET /midpoint` | 无 | 管理端 `/markets/midpoint` 优先用本地 `best_bid` / `best_ask` 计算 midpoint，缺失时回退 REST |
+| 市场持仓分析 | `DataClient.list_market_positions()` | `src/fdv_trader/infra/polymarket/data_client.py` | `GET /market-positions?market=...` | 官方文档当前标注为公开 | 管理端 `/markets/positions` 读取并序列化按 outcome token 分组的持仓、当前价值和 pnl 字段 |
 | 市场持有人列表 | `DataClient.list_holders()` | `src/fdv_trader/infra/polymarket/data_client.py` | `GET /holders?market=...` | 官方文档当前标注为公开 | 管理端 `/markets/holders` 读取并序列化 `token`、`amount`、`name`、`profileImage` 等稳定字段 |
+| 市场价格历史 | `ClobClient.get_prices_history()` | `src/fdv_trader/infra/polymarket/clob_client.py` | `GET /prices-history?market=...` | 无 | 管理端 `/markets/prices-history` 读取并序列化 `history[].t` / `history[].p` |
 | 用户公开搜索 | `GammaClient.search_public_profiles()` | `src/fdv_trader/infra/polymarket/gamma_client.py` | `GET /public-search?q=...` | 无 | 管理端 `/profiles/search` 只提取 `profiles` 与 `pagination`，不透传 events / tags |
 
 补充说明：
@@ -223,7 +239,12 @@
 - List events：<https://docs.polymarket.com/api-reference/events/list-events>
 - List markets：<https://docs.polymarket.com/api-reference/markets/list-markets>
 - Get order book：<https://docs.polymarket.com/api-reference/market-data/get-order-book>
+- Get midpoint：<https://docs.polymarket.com/api-reference/market-data/get-midpoint>
+- Get prices history：<https://docs.polymarket.com/api-reference/markets/get-prices-history>
+- Get positions for a market：<https://docs.polymarket.com/api-reference/core/get-positions-for-a-market>
 - Get current positions for a user：<https://docs.polymarket.com/api-reference/core/get-current-positions-for-a-user>
+- Get closed positions for a user：<https://docs.polymarket.com/api-reference/core/get-closed-positions-for-a-user>
+- Get total value of a user's positions：<https://docs.polymarket.com/api-reference/core/get-total-value-of-a-users-positions>
 - Get top holders for markets：<https://docs.polymarket.com/api-reference/core/get-top-holders-for-markets>
 - Get user activity：<https://docs.polymarket.com/api-reference/core/get-user-activity>
 - Get trades for a user or markets：<https://docs.polymarket.com/api-reference/core/get-trades-for-a-user-or-markets>

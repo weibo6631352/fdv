@@ -8,12 +8,12 @@
 - `runtime.py`：暴露 `/runtime`、`/workers`、`/metrics`。
 - `audit_events.py`：暴露 `/audit-events`。
 - `allocations.py`：暴露 `/allocations`。
-- `markets.py`：market 相关查询和后续暂停 / 恢复入口。
+- `markets.py`：market 详情、orderbook、midpoint、positions、holders、价格历史查询和后续暂停 / 恢复入口。
 - `orders.py`：订单查询和 SELL cancel / replace 入口。
 - `fills.py`：成交查询。
 - `positions.py`：持仓查询。
 - `portfolio.py`：组合预算、exposure 和分配状态查询。
-- `profiles.py`：用户公开资料、活动与搜索查询。
+- `profiles.py`：用户公开资料、价值摘要、活动、成交、当前持仓、已平仓持仓与搜索查询。
 - `outbox.py`：暴露 `/outbox/pending`。
 - `operations.py`：受控 reconcile 操作。
 

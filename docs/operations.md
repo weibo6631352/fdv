@@ -5,7 +5,7 @@
 ## 管理面边界
 
 - M4 的 Admin API 默认只允许在本机或受控内网暴露，不提供应用层鉴权。
-- 只读接口包括 `/health`、`/ready`、`/runtime`、`/workers`、`/metrics`、`/audit-events`、`/allocations`、`/markets`、`/markets/detail`、`/markets/holders`、`/orders`、`/fills`、`/positions`、`/portfolio`、`/profiles/detail`、`/profiles/activity`、`/profiles/search`、`/outbox/pending`。
+- 只读接口包括 `/health`、`/ready`、`/runtime`、`/workers`、`/metrics`、`/audit-events`、`/allocations`、`/markets`、`/markets/detail`、`/markets/orderbook`、`/markets/midpoint`、`/markets/positions`、`/markets/holders`、`/markets/prices-history`、`/orders`、`/fills`、`/positions`、`/portfolio`、`/profiles/detail`、`/profiles/value`、`/profiles/activity`、`/profiles/trades`、`/profiles/positions`、`/profiles/closed-positions`、`/profiles/search`、`/outbox/pending`。
 - 受控操作接口包括 `POST /operations/reconcile` 和 `POST /orders/cancel-replace-sell`。
 - CLI 的 `status`、`config-summary`、`reconcile` 都通过 Admin API 调用运行中的服务，不在本地重建第二套 runtime。
 

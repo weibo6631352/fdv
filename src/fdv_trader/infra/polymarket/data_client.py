@@ -9,14 +9,20 @@ import httpx
 from fdv_trader.infra.polymarket.auth import PolymarketTradingClient
 from fdv_trader.infra.polymarket.schemas import (
     DataActivityDTO,
+    DataClosedPositionDTO,
     DataMarketHoldersDTO,
+    DataMarketPositionsDTO,
     DataPositionDTO,
     DataTradeDTO,
+    DataUserValueDTO,
     PolymarketRestClientBase,
     normalize_activity_payload,
+    normalize_closed_position_payload,
     normalize_market_holders_payload,
+    normalize_market_positions_payload,
     normalize_position_payload,
     normalize_trade_payload,
+    normalize_user_value_payload,
 )
 
 
@@ -51,6 +57,9 @@ class DataClient(PolymarketRestClientBase):
         trades_path: str = "/trades",
         activity_path: str = "/activity",
         holders_path: str = "/holders",
+        market_positions_path: str = "/market-positions",
+        closed_positions_path: str = "/closed-positions",
+        value_path: str = "/value",
     ) -> None:
         super().__init__(base_url, client=client, timeout_s=timeout_s, headers=headers)
         self._auth_client = auth_client
@@ -58,6 +67,9 @@ class DataClient(PolymarketRestClientBase):
         self._trades_path = trades_path
         self._activity_path = activity_path
         self._holders_path = holders_path
+        self._market_positions_path = market_positions_path
+        self._closed_positions_path = closed_positions_path
+        self._value_path = value_path
 
     @property
     def has_auth_client(self) -> bool:
@@ -251,6 +263,105 @@ class DataClient(PolymarketRestClientBase):
             operation="data.list_holders",
         )
         return tuple(normalize_market_holders_payload(item) for item in _iter_mappings(payload))
+
+    async def list_market_positions(
+        self,
+        *,
+        condition_id: str,
+        user_address: str | None = None,
+        status: str | None = None,
+        sort_by: str | None = None,
+        sort_direction: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        timeout_s: float | None = None,
+        path: str | None = None,
+    ) -> tuple[DataMarketPositionsDTO, ...]:
+        params: dict[str, Any] = {"market": condition_id}
+        if user_address is not None:
+            params["user"] = user_address
+        if status is not None:
+            params["status"] = status
+        if sort_by is not None:
+            params["sortBy"] = sort_by
+        if sort_direction is not None:
+            params["sortDirection"] = sort_direction
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
+        market_positions_path = path or self._market_positions_path
+        payload = await self.get_json(
+            market_positions_path,
+            params=params,
+            headers=self._auth_headers("GET", market_positions_path),
+            timeout_s=timeout_s,
+            operation="data.list_market_positions",
+        )
+        return tuple(normalize_market_positions_payload(item) for item in _iter_mappings(payload))
+
+    async def list_closed_positions(
+        self,
+        *,
+        user_address: str | None = None,
+        market_ids: tuple[str, ...] | None = None,
+        event_ids: tuple[int, ...] | None = None,
+        title: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        sort_by: str | None = None,
+        sort_direction: str | None = None,
+        timeout_s: float | None = None,
+        path: str | None = None,
+    ) -> tuple[DataClosedPositionDTO, ...]:
+        params = {
+            "user": self._resolve_user_address(user_address),
+            **self._build_market_params(market_ids=market_ids, event_ids=event_ids),
+        }
+        if title is not None:
+            params["title"] = title
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
+        if sort_by is not None:
+            params["sortBy"] = sort_by
+        if sort_direction is not None:
+            params["sortDirection"] = sort_direction
+        closed_positions_path = path or self._closed_positions_path
+        payload = await self.get_json(
+            closed_positions_path,
+            params=params,
+            headers=self._auth_headers("GET", closed_positions_path),
+            timeout_s=timeout_s,
+            operation="data.list_closed_positions",
+        )
+        return tuple(normalize_closed_position_payload(item) for item in _iter_mappings(payload))
+
+    async def get_user_value(
+        self,
+        *,
+        user_address: str | None = None,
+        market_ids: tuple[str, ...] | None = None,
+        timeout_s: float | None = None,
+        path: str | None = None,
+    ) -> DataUserValueDTO:
+        params = {
+            "user": self._resolve_user_address(user_address),
+            **self._build_market_params(market_ids=market_ids),
+        }
+        value_path = path or self._value_path
+        payload = await self.get_json(
+            value_path,
+            params=params,
+            headers=self._auth_headers("GET", value_path),
+            timeout_s=timeout_s,
+            operation="data.get_user_value",
+        )
+        items = _iter_mappings(payload)
+        if not items:
+            raise TypeError("data user value response missing items")
+        return normalize_user_value_payload(items[0])
 
     def _auth_headers(self, method: str, request_path: str) -> Mapping[str, str] | None:
         if self._auth_client is None:
