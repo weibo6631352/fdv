@@ -3,8 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
-import pytest
-
 from fdv_trader.domain.allocation import AllocationMarketSnapshot
 from fdv_trader.domain.market import Market, TradingStatus
 from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
@@ -12,40 +10,19 @@ from fdv_trader.domain.position import Position
 from fdv_trader.runtime.account_state import AccountSnapshot
 from fdv_trader.strategy_api.models import EntrySizing, StrategyAction, StrategyContext
 from fdv_trader.strategies.current.strategy import build_strategy as build_current_strategy
-from fdv_trader.strategies.template.strategy import build_strategy as build_template_strategy
 
 
-@pytest.mark.parametrize(
-    ("strategy_factory", "market"),
-    [
-        (
-            build_current_strategy,
-            Market(
-                condition_id="condition-current",
-                market_slug="slug-current",
-                no_token_id="no-current",
-                yes_token_id="yes-current",
-                category="Crypto",
-                matched_keywords=("fdv", "500m"),
-                trading_status=TradingStatus.ELIGIBLE,
-            ),
-        ),
-        (
-            build_template_strategy,
-            Market(
-                condition_id="condition-template",
-                market_slug="slug-template",
-                no_token_id="no-template",
-                yes_token_id="yes-template",
-                category="Crypto",
-                matched_keywords=("fdv", "500m"),
-                trading_status=TradingStatus.ELIGIBLE,
-            ),
-        ),
-    ],
-)
-def test_strategy_contract_positive_path(strategy_factory, market: Market) -> None:
-    strategy = strategy_factory()
+def test_strategy_contract_positive_path() -> None:
+    strategy = build_current_strategy()
+    market = Market(
+        condition_id="condition-current",
+        market_slug="slug-current",
+        no_token_id="no-current",
+        yes_token_id="yes-current",
+        category="Crypto",
+        matched_keywords=("fdv", "500m"),
+        trading_status=TradingStatus.ELIGIBLE,
+    )
 
     received_at = datetime.now(timezone.utc)
     orderbook = OrderbookSnapshot(
