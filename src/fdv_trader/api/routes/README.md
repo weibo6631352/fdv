@@ -8,7 +8,7 @@
 - `runtime.py`：暴露 `/runtime`、`/workers`、`/metrics`。
 - `audit_events.py`：暴露 `/audit-events`。
 - `allocations.py`：暴露 `/allocations`。
-- `markets.py`：market 详情、orderbook、midpoint、positions、holders、价格历史查询和后续暂停 / 恢复入口。
+- `markets.py`：market 详情、orderbook、midpoint、positions、holders、价格历史查询。
 - `orders.py`：订单查询和 SELL cancel / replace 入口。
 - `fills.py`：成交查询。
 - `positions.py`：持仓查询。
@@ -33,9 +33,7 @@
 - 持有交易状态锁。
 - 直接查询 Polymarket API。
 
-## 交接清单
+## 输入与输出
 
-新增路由文件时，需要同步：
-- 更新 [api README](../README.md)。
-- 更新 [docs/api.md](../../../../docs/api.md) 中的接口类别说明。
-- 增加 app service 或测试，不把逻辑写进 route。
+- 输入：已经过 FastAPI 校验的 path、query、body 参数，以及 dependency 注入的应用服务。
+- 输出：路由响应模型、分页结果或受控操作返回值。

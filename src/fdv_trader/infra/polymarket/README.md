@@ -35,7 +35,7 @@
 - 不在 client 中决定是否可以买入；这是 Strategy / Risk 的职责。
 - 不在 SDK 适配层吞掉订单失败。
 - 不把 SDK 原始对象传给 Domain。
-- 不在 P0 路径里执行无超时请求。
+- 不在交易主链路里执行无超时请求。
 - 不把私钥、签名 payload 或未脱敏响应写日志。
 
 ## 接口契约
@@ -44,4 +44,3 @@
 - 订单提交、取消、替换必须记录 trace id 和幂等键。
 - WebSocket 重连后必须支持 REST 快照校准。
 - 发现 open BUY 异常时，适配层返回足够信息让 Reconciler / Strategy 生成 cancel intent。
-

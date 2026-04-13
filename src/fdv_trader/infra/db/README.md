@@ -22,16 +22,9 @@
 - 不要求 Order Executor 同步等待 PostgreSQL 写入成功。
 - 不把数据库状态当作订单是否发生的唯一判断。
 
-## 接口契约
+## 输入与输出
 
 - 仓储方法应表达明确用例，例如 `save_audit_event`、`list_open_orders_snapshot`。
 - 写入操作需要幂等键或唯一约束支持。
 - 查询方法需要分页或明确限制条数。
 - 交易热路径不得临时执行慢查询。
-
-## 交接清单
-
-新增模型或仓储前确认：
-- 是否需要 raw JSON 摘要字段。
-- 是否需要 trace id、order id、trade id 索引。
-- 是否影响 Persistence Worker 幂等写入。

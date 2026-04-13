@@ -32,8 +32,8 @@
 
 ## 禁止行为
 
-- 不在 P0 链路同步写 PostgreSQL。
-- 不在 P0 链路同步刷磁盘日志。
+- 不在交易主链路同步写 PostgreSQL。
+- 不在交易主链路同步刷磁盘日志。
 - 不记录密钥、签名 payload、私钥或未脱敏 raw response。
 - 不让指标聚合反向阻塞 Strategy / Order Executor。
 

@@ -43,7 +43,7 @@
 ## 停止顺序
 
 - 优先停止新买入。
-- 等待正在处理的 P0 订单状态事件完成或进入可 reconcile 状态。
+- 等待正在处理的交易主链路订单状态事件完成或进入可 reconcile 状态。
 - 停止 scheduler、新的 reconcile 和 market discovery 扫描。
 - 停止 strategy worker 和 persistence worker。
 - 不要求所有低优先级快照立刻落库，但关键订单审计事件必须留在 outbox。
@@ -60,7 +60,7 @@
 ## 部署变更原则
 
 涉及以下内容的变更需要额外谨慎：
-- P0 交易队列、Order Executor、Risk Manager、Strategy Engine。
+- 交易主链路队列、Order Executor、Risk Manager、Strategy Engine。
 - 买入订单类型、卖出价格、预算分配算法。
 - WebSocket 重连和 reconcile 恢复策略。
 - 数据库 schema 初始化方式和 outbox 格式。
@@ -70,7 +70,7 @@
 
 每次部署至少记录：
 - commit id。
-- 是否影响 P0 交易链路。
+- 是否影响交易主链路。
 - 是否调整数据库 schema 初始化方式。
 - 是否新增配置。
 - 是否需要暂停新买入。

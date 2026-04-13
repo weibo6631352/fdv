@@ -11,7 +11,7 @@
 | 策略价格 | `ENTRY_NO_PRICE_MAX`、`EXIT_NO_PRICE` | 默认应保持 `0.60` 和 `0.70` |
 | 风控阈值 | `MIN_LIQUIDITY_USDC`、`MAX_SPREAD`、`MAX_OPEN_ORDERS` | 下单前硬门禁 |
 | 同步与重试 | `MARKET_SYNC_INTERVAL_SECONDS`、`ORDER_RETRY_LIMIT` | reconcile 与失败处理 |
-| 性能隔离 | `TRADING_EVENT_QUEUE_MAX_SIZE`、`TRADING_WORKER_THREADS` | P0 / P2 / P3 队列与执行器隔离 |
+| 性能隔离 | `TRADING_EVENT_QUEUE_MAX_SIZE`、`TRADING_WORKER_THREADS` | 交易主链路与后台维护 / 异步支撑队列及执行器隔离 |
 | 超时告警 | `ORDER_SUBMIT_TIMEOUT_MS`、`CRITICAL_LOCK_TIMEOUT_MS` | 防止交易链路无限等待 |
 | 数据库 | `DATABASE_URL` | PostgreSQL 连接地址 |
 | 密钥 | `POLYMARKET_API_KEY`、`WALLET_PRIVATE_KEY` | 只能通过安全环境注入 |
@@ -43,7 +43,7 @@
 ## 新增配置交接清单
 
 新增配置项时，需要说明：
-- 属于 P0、P1、P2 还是 P3 路径。
+- 属于交易主链路、关键修复链路、后台维护链路还是异步支撑链路。
 - 默认值是什么，默认值是否安全。
 - 单位是什么，取值范围是什么。
 - 是否可以运行时热更新。

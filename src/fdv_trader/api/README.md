@@ -23,7 +23,7 @@
 - 不直接写 Market Registry、Orderbook Cache、Position State。
 - 不在 HTTP handler 中执行慢数据库全表扫描或报表生成。
 - 不绕过 Risk Manager 暴露 FAK BUY 入口。
-- 不与 Order Executor 共用 P0 交易线程池。
+- 不与 Order Executor 共用交易主链路线程池。
 
 ## 接口调用链
 
@@ -38,6 +38,11 @@ route -> app service -> domain / runtime snapshot / repository
 ```text
 route -> AdminService -> TradingService -> RiskManager -> OrderExecutor
 ```
+
+## 输入与输出
+
+- 输入：HTTP path、query、body 参数，以及 FastAPI dependency 提供的应用服务和配置对象。
+- 输出：统一响应 schema、HTTP 状态码，以及受控操作对应的可审计结果对象。
 
 ## M4 路由
 
@@ -69,12 +74,3 @@ route -> AdminService -> TradingService -> RiskManager -> OrderExecutor
 - `GET /outbox/pending`
 - `POST /operations/reconcile`
 - `POST /orders/cancel-replace-sell`
-
-## 新增路由交接清单
-
-新增 route 前确认：
-- 是否分页、限流和设置超时。
-- 是否只读。如果不是，只能触发受控应用服务动作。
-- 是否需要审计事件。
-- 是否可能读取交易热状态。如果会，必须使用快照。
-- 是否会影响 P0 交易链路。

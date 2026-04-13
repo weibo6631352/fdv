@@ -106,7 +106,7 @@
 补充说明：
 
 - `DataClient.list_positions()` / `DataClient.list_trades()` 已收敛到官方当前 `user` / `market` / `eventId` 参数口径。
-- 后续新增 Polymarket 接口时，仍以官方文档和 `py-clob-client` 当前实现为准，不再引入旧参数别名。
+- 新增 Polymarket 接口时，仍以官方文档和 `py-clob-client` 当前实现为准，不再引入旧参数别名。
 
 ## 4. 费率信息能从哪里拿
 
@@ -187,52 +187,7 @@
 
 - 若订阅市场集合频繁变化，当前实现会重建 stream task 以更新订阅集。
 
-## 6. 建议的后续对齐顺序
-
-已完成：
-
-1. 账户余额查询收敛到 `GET /balance-allowance`
-   - 余额与 allowance 已由 `ClobClient.get_balance_allowance()` 刷新。
-
-2. open orders / fills 对账路径收敛
-   - open orders 已对齐到 `GET /data/orders`。
-   - fills 已对齐到官方 SDK 当前使用的 `GET /data/trades` 分页链路。
-
-3. Data API positions / trades 查询口径收敛
-   - `list_positions()` / `list_trades()` 已对齐到官方当前 `user` / `market` / `eventId` 参数口径。
-   - Data API 当前页面返回的 `size` / `asset` / `timestamp` 等字段已映射到内部 DTO。
-
-4. 市场费率扫描和展示
-   - Gamma 静态费率已进入市场模型、数据库和管理端市场视图。
-   - `GET /fee-rate` 已进入后台对账刷新链路。
-   - Market WS `new_market` / `last_trade_price.fee_rate_bps` 已回写运行态本地 fee 缓存。
-
-5. market / user WebSocket 订阅对齐并接入主运行链路
-   - market WS 已切到官方当前 `assets_ids` / `type=market` 订阅格式。
-   - user WS 已切到官方当前 `auth` / `markets` / `type=user` 订阅格式。
-   - 主运行链路会按当前跟踪市场集合重建订阅 stream。
-
-6. 管理端 fee 筛选和排序
-   - `/markets` 已支持基于本地 fee 缓存字段做筛选和排序。
-   - 查询只读本地快照，不在列表接口里现场请求外部 fee 接口。
-   - 运行中优先读取 registry 热态市场缓存，避免等数据库异步同步后才可见。
-
-7. market snapshot 异步持久化
-   - market 相关 `DomainEvent` 已从 `EventBus` 镜像进 `LocalOutbox`。
-   - `PersistenceWorker` 会异步把这些 market snapshot 事件写入数据库。
-   - 因此 Market WS / Gamma 更新后的市场快照会同时收敛到热态 registry 和数据库。
-
-8. user WS 账户状态异步持久化
-   - user WS 产生的订单、成交、持仓事件也会镜像进 `LocalOutbox`。
-   - 镜像时会裁剪 payload，只保留 `order` / `fill` / `position(s)` 等写库需要的字段。
-   - 因此 user WS 驱动的订单状态、fills、positions 也能异步收敛到数据库快照。
-   - `account_snapshots` 会落库当前余额与运行态账户摘要，但启动恢复只回填 `balance_usdc` / `allowance_usdc`；是否连上 user WS、是否允许新买单、当前会话是否已 reconcile，仍以当前进程状态为准。
-
-继续建议：
-
-1. 若后续跟踪市场数继续增大，可继续优化 WS 重订阅节流和队列背压参数。
-
-## 7. 官方参考链接
+## 6. 官方参考链接
 
 - API 总览：<https://docs.polymarket.com/api-reference>
 - Authentication：<https://docs.polymarket.com/api-reference/authentication>

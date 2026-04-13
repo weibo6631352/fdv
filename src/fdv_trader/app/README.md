@@ -29,11 +29,11 @@
 
 - 不在 App 层实现 Polymarket SDK 字段细节。
 - 不把 FastAPI request / response 对象传入 Domain。
-- 不在 P0 路径中临时发起慢 REST 查询或数据库查询。
+- 不在交易主链路中临时发起慢 REST 查询或数据库查询。
 - 不绕过 Risk Manager 调用 Order Executor。
 - 不把重 CPU 任务放在交易主事件循环。
 
-## 接口契约
+## 输入与输出
 
 App service 方法应优先接受内部 DTO 或基础类型，返回内部 DTO、结果对象或可序列化视图。外部 payload 转换应发生在 infra，HTTP 参数转换应发生在 api。
 
@@ -42,13 +42,3 @@ App service 方法应优先接受内部 DTO 或基础类型，返回内部 DTO�
 ```text
 event -> StrategyService -> PortfolioAllocator -> RiskManager -> TradingService -> OrderExecutor -> outbox/audit
 ```
-
-## 交接清单
-
-修改 App 服务前确认：
-- 是否处在 P0 链路。
-- 是否新增外部 I/O。
-- 是否新增锁或等待。
-- 是否有审计事件。
-- 是否有 domain / app 测试覆盖。
-

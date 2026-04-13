@@ -44,12 +44,3 @@ workers -> Polymarket SDK directly
 - 审计事件由 observability / outbox 统一承接，不在业务路径散落手写日志。
 - Polymarket SDK 对象不得泄漏到 domain。
 
-## 新增模块交接清单
-
-新增文件时，需要回答：
-- 所属层级是什么。
-- 是否会运行在 P0 交易链路。
-- 是否依赖网络、数据库、文件系统或锁。
-- 是否需要超时、重试、幂等键和审计事件。
-- 是否已有对应测试目录。
-
