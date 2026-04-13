@@ -411,6 +411,13 @@ async def _check_database_connection(
         return False
 
 
+def _restore_account_reference_state(runtime: RuntimeComponents, *, balance_usdc, allowance_usdc) -> None:
+    runtime.account_state_store.update_balances(
+        balance_usdc=balance_usdc,
+        allowance_usdc=allowance_usdc,
+    )
+
+
 async def _load_reference_state(runtime: RuntimeComponents) -> dict[str, int]:
     loaded = {"markets": 0, "positions": 0, "open_orders": 0, "fills": 0, "account_snapshots": 0}
     try:
@@ -421,7 +428,8 @@ async def _load_reference_state(runtime: RuntimeComponents) -> dict[str, int]:
             open_orders = await OrderRepository(session).list_open_orders_snapshot(limit=500, offset=0)
             fills = await FillRepository(session).list_fills_snapshot(limit=500, offset=0)
         if account_snapshot is not None:
-            runtime.account_state_store.update_balances(
+            _restore_account_reference_state(
+                runtime,
                 balance_usdc=account_snapshot.balance_usdc,
                 allowance_usdc=account_snapshot.allowance_usdc,
             )

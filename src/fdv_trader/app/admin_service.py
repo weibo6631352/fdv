@@ -11,7 +11,7 @@ from fdv_trader.app.reconcile_service import ReconcileAction, ReconcilePlan
 from fdv_trader.app.strategy_service import StrategyService
 from fdv_trader.app.trading_service import TradingReviewResult, TradingService
 from fdv_trader.domain.allocation import Allocation
-from fdv_trader.domain.events import AuditEvent, Fill
+from fdv_trader.domain.events import AuditEvent, Fill, OutboxEvent
 from fdv_trader.domain.market import Market, TradingStatus
 from fdv_trader.domain.order import (
     Order,
@@ -31,6 +31,7 @@ from fdv_trader.infra.db import (
     FillRepository,
     MarketRepository,
     OrderRepository,
+    OutboxEventRepository,
     PositionRepository,
     RepositoryPage,
 )
@@ -338,6 +339,8 @@ class AdminService:
         condition_id: str | None = None,
         token_id: str | None = None,
         trace_id: str | None = None,
+        order_id: str | None = None,
+        trade_id: str | None = None,
     ) -> dict[str, Any]:
         if open_only:
             snapshot = self._account_snapshot()
@@ -347,6 +350,8 @@ class AdminService:
                 if (condition_id is None or order.condition_id == condition_id)
                 and (token_id is None or order.token_id == token_id)
                 and (trace_id is None or order.trace_id == trace_id)
+                and (order_id is None or order.order_id == order_id)
+                and (trade_id is None or order.trade_id == trade_id)
             ]
             page = self._slice_sequence(orders, limit=limit, offset=offset)
             return _page_payload(page, serializer=self._serialize_order)
@@ -359,29 +364,25 @@ class AdminService:
                 if (condition_id is None or order.condition_id == condition_id)
                 and (token_id is None or order.token_id == token_id)
                 and (trace_id is None or order.trace_id == trace_id)
+                and (order_id is None or order.order_id == order_id)
+                and (trade_id is None or order.trade_id == trade_id)
             ]
             page = self._slice_sequence(orders, limit=limit, offset=offset)
             return _page_payload(page, serializer=self._serialize_order)
 
         async def _query(repos: _RepositoryGroup) -> RepositoryPage[Any]:
-            return await repos.order.list_orders_snapshot(limit=limit, offset=offset, trace_id=trace_id)
+            return await repos.order.list_orders_snapshot(
+                limit=limit,
+                offset=offset,
+                trace_id=trace_id,
+                order_id=order_id,
+                trade_id=trade_id,
+                condition_id=condition_id,
+                token_id=token_id,
+            )
 
         page = await self._with_repositories(_query)
-        filtered_items = [
-            order
-            for order in page.items
-            if (condition_id is None or order.condition_id == condition_id)
-            and (token_id is None or order.token_id == token_id)
-        ]
-        return _page_payload(
-            RepositoryPage(
-                items=tuple(filtered_items),
-                total=len(filtered_items),
-                limit=page.limit,
-                offset=page.offset,
-            ),
-            serializer=self._serialize_order,
-        )
+        return _page_payload(page, serializer=self._serialize_order)
 
     async def list_fills(
         self,
@@ -434,6 +435,37 @@ class AdminService:
         page = self._slice_sequence(positions, limit=limit, offset=offset)
         return _page_payload(page, serializer=self._serialize_position)
 
+    async def get_market(
+        self,
+        *,
+        market_slug: str | None = None,
+        condition_id: str | None = None,
+        token_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        market = self._resolve_market(
+            market_slug=market_slug,
+            condition_id=condition_id,
+            token_id=token_id,
+        )
+        if market is None and self._has_db_session_factory():
+            async def _query(repos: _RepositoryGroup) -> Market | None:
+                if condition_id is not None:
+                    market_by_condition = await repos.market.get_by_condition_id(condition_id)
+                    if market_by_condition is not None:
+                        return market_by_condition
+                if token_id is not None:
+                    market_by_token = await repos.market.get_by_no_token_id(token_id)
+                    if market_by_token is not None:
+                        return market_by_token
+                if market_slug is not None:
+                    return await repos.market.get_by_market_slug(market_slug)
+                return None
+
+            market = await self._with_repositories(_query)
+        if market is None:
+            return None
+        return self._serialize_market_view(market)
+
     async def list_audit_events(
         self,
         *,
@@ -456,6 +488,54 @@ class AdminService:
 
         page = await self._with_repositories(_query)
         return _page_payload(page, serializer=self._serialize_audit_event)
+
+    async def list_allocations(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        trace_id: str | None = None,
+        condition_id: str | None = None,
+        token_id: str | None = None,
+        market_slug: str | None = None,
+    ) -> dict[str, Any]:
+        if not self._has_db_session_factory():
+            page = RepositoryPage(items=tuple(), total=0, limit=limit, offset=offset)
+            return _page_payload(page, serializer=self._serialize_allocation)
+
+        async def _query(repos: _RepositoryGroup) -> RepositoryPage[Any]:
+            return await repos.allocation.list_allocations_snapshot(
+                limit=limit,
+                offset=offset,
+                trace_id=trace_id,
+                condition_id=condition_id,
+                token_id=token_id,
+                market_slug=market_slug,
+            )
+
+        page = await self._with_repositories(_query)
+        return _page_payload(page, serializer=self._serialize_allocation)
+
+    async def list_outbox_pending(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        if not self._has_db_session_factory():
+            page = RepositoryPage(items=tuple(), total=0, limit=limit, offset=offset)
+            return _page_payload(page, serializer=self._serialize_outbox_event)
+
+        async def _query(repos: _RepositoryGroup) -> RepositoryPage[Any]:
+            return await repos.outbox.list_pending_snapshot(
+                limit=limit,
+                offset=offset,
+                trace_id=trace_id,
+            )
+
+        page = await self._with_repositories(_query)
+        return _page_payload(page, serializer=self._serialize_outbox_event)
 
     async def portfolio_snapshot(self) -> dict[str, Any]:
         account = self._account_snapshot()
@@ -495,6 +575,57 @@ class AdminService:
             "recent_allocations": [
                 self._serialize_allocation(allocation) for allocation in allocations.items
             ],
+        }
+
+    def workers_snapshot(self) -> dict[str, Any]:
+        supervisor = getattr(self.runtime, "supervisor", None)
+        if supervisor is not None and hasattr(supervisor, "snapshot"):
+            snapshot = supervisor.snapshot()
+            payload = snapshot.as_dict() if hasattr(snapshot, "as_dict") else _jsonable(snapshot)
+            return {
+                "phase": payload.get("phase", "starting"),
+                "automatic_trading_enabled": bool(payload.get("automatic_trading_enabled")),
+                "status_reason": payload.get("status_reason"),
+                "queue_depths": payload.get("queue_depths"),
+                "scheduler": payload.get("scheduler"),
+                "workers": list(payload.get("worker_health", ())),
+            }
+
+        runtime_status = self._runtime_status_snapshot()
+        return {
+            "phase": runtime_status["phase"],
+            "automatic_trading_enabled": bool(runtime_status.get("automatic_trading_enabled")),
+            "status_reason": None,
+            "queue_depths": runtime_status.get("queue_depth"),
+            "scheduler": None,
+            "workers": [],
+        }
+
+    def metrics_snapshot(self) -> dict[str, Any]:
+        supervisor = getattr(self.runtime, "supervisor", None)
+        if supervisor is not None and hasattr(supervisor, "snapshot"):
+            snapshot = supervisor.snapshot()
+            payload = snapshot.as_dict() if hasattr(snapshot, "as_dict") else _jsonable(snapshot)
+            return {
+                "phase": payload.get("phase", "starting"),
+                "automatic_trading_enabled": bool(payload.get("automatic_trading_enabled")),
+                "status_reason": payload.get("status_reason"),
+                "queue_depths": payload.get("queue_depths"),
+                "metrics": payload.get("metrics"),
+            }
+
+        metrics = getattr(self.runtime, "metrics", None)
+        metrics_payload = None
+        if metrics is not None and hasattr(metrics, "snapshot"):
+            snapshot = metrics.snapshot()
+            metrics_payload = snapshot.as_dict() if hasattr(snapshot, "as_dict") else _jsonable(snapshot)
+        runtime_status = self._runtime_status_snapshot()
+        return {
+            "phase": runtime_status["phase"],
+            "automatic_trading_enabled": bool(runtime_status.get("automatic_trading_enabled")),
+            "status_reason": None,
+            "queue_depths": runtime_status.get("queue_depth"),
+            "metrics": metrics_payload,
         }
 
     async def reconcile(
@@ -986,6 +1117,24 @@ class AdminService:
             "updated_at": _jsonable(event.updated_at),
         }
 
+    def _serialize_outbox_event(self, event: OutboxEvent) -> dict[str, Any]:
+        return {
+            "trace_id": event.trace_id,
+            "event_type": event.event_type,
+            "idempotency_key": event.idempotency_key,
+            "event_id": event.event_id,
+            "market_slug": event.market_slug,
+            "condition_id": event.condition_id,
+            "token_id": event.token_id,
+            "reason": event.reason,
+            "created_at": _jsonable(event.created_at),
+            "priority": event.priority,
+            "retry_count": event.retry_count,
+            "last_error": event.last_error,
+            "raw_response_summary": event.raw_response_summary,
+            "payload": _jsonable(event.payload),
+        }
+
     def _serialize_allocation(self, allocation: Allocation) -> dict[str, Any]:
         return {
             "condition_id": allocation.condition_id,
@@ -1173,6 +1322,7 @@ class AdminService:
                 fill=FillRepository(session),
                 position=PositionRepository(session),
                 allocation=AllocationRepository(session),
+                outbox=OutboxEventRepository(session),
             )
             return await callback(repositories)
 
@@ -1266,6 +1416,7 @@ class _RepositoryGroup:
     fill: FillRepository
     position: PositionRepository
     allocation: AllocationRepository
+    outbox: OutboxEventRepository
 
 
 def _order_status_to_text(status: OrderResultStatus) -> str:

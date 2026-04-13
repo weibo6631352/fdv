@@ -11,6 +11,7 @@ from pydantic import SecretStr
 
 from fdv_trader.api.app import create_app
 from fdv_trader.app.admin_service import AdminService
+from fdv_trader.domain.allocation import Allocation
 from fdv_trader.app.reconcile_service import (
     ReconcileAction,
     ReconcileActionType,
@@ -18,7 +19,7 @@ from fdv_trader.app.reconcile_service import (
     ReconcilePlan,
 )
 from fdv_trader.config import Settings
-from fdv_trader.domain.events import Fill
+from fdv_trader.domain.events import AuditEvent, Fill, OutboxEvent
 from fdv_trader.domain.market import Market, TradingStatus
 from fdv_trader.domain.order import (
     CancelOrderIntent,
@@ -34,6 +35,7 @@ from fdv_trader.domain.order import (
 )
 from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from fdv_trader.domain.position import Position
+from fdv_trader.infra.db import RepositoryPage
 from fdv_trader.runtime.account_state import AccountStateStore
 from fdv_trader.runtime.event_bus import EventBus
 from fdv_trader.runtime.registry import MarketRegistry
@@ -417,7 +419,10 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         health = client.get("/health")
         ready = client.get("/ready")
         runtime_payload = client.get("/runtime").json()
+        workers = client.get("/workers").json()
+        metrics = client.get("/metrics").json()
         markets = client.get("/markets").json()
+        market_detail = client.get("/markets/detail", params={"market_slug": "token-500m-fdv"}).json()
         orders = client.get("/orders").json()
         positions = client.get("/positions").json()
         fills = client.get("/fills").json()
@@ -437,6 +442,9 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert runtime_payload["markets"][0]["market"]["market_slug"] == "token-500m-fdv"
         assert runtime_payload["markets"][0]["market"]["fees"]["taker_base_fee_bps"] == 100
         assert runtime_payload["markets"][0]["market"]["fees"]["fee_rate_bps"] == 125
+        assert workers["phase"] == "trading_enabled"
+        assert isinstance(workers["workers"], list)
+        assert metrics["metrics"]["gauges"]["entry_signal_to_submit_ms"] == 42
 
         assert markets["total"] == 1
         assert markets["items"][0]["market"]["condition_id"] == "condition-500m"
@@ -444,6 +452,8 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert markets["items"][0]["market"]["fees"]["maker_base_fee_bps"] == 0
         assert markets["items"][0]["market"]["fees"]["fee_rate_updated_at"] == "2026-01-01T12:02:00+00:00"
         assert markets["items"][0]["entry_price_touched"] is True
+        assert market_detail["market"]["condition_id"] == "condition-500m"
+        assert market_detail["market"]["market_slug"] == "token-500m-fdv"
 
         assert orders["total"] == 2
         assert orders["items"][0]["order_id"] == "buy-1"
@@ -566,3 +576,150 @@ def test_admin_ready_route_reports_blockers_when_runtime_is_not_ready() -> None:
         assert "user_ws_not_connected" in ready.json()["runtime"]["blocking_reasons"]
         assert runtime_payload["runtime"]["ready_to_trade"] is False
         assert runtime_payload["readiness"]["ready"] is False
+
+
+def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypatch) -> None:
+    runtime = _build_runtime(ready=True)
+    runtime.db_session_factory = object()
+
+    audit_events = (
+        AuditEvent(
+            event_type="order_cancelled",
+            trace_id="trace-audit",
+            event_id="audit-1",
+            market_slug="token-500m-fdv",
+            condition_id="condition-500m",
+            token_id="no-token-500m",
+            order_id="buy-1",
+            status="cancelled",
+            reason="manual_cancel",
+        ),
+    )
+    allocations = (
+        Allocation(
+            condition_id="condition-500m",
+            market_slug="token-500m-fdv",
+            token_id="no-token-500m",
+            target_budget_usdc=Decimal("50"),
+            buy_budget_usdc=Decimal("25"),
+            current_exposure_usdc=Decimal("10"),
+            released_budget_usdc=Decimal("5"),
+            reason="equal_weight",
+            release_reason="no_fill",
+            idempotency_key="alloc-1",
+        ),
+    )
+    outbox_events = (
+        OutboxEvent(
+            trace_id="trace-outbox",
+            event_type="order_submitted",
+            idempotency_key="outbox-1",
+            event_id="outbox-event-1",
+            market_slug="token-500m-fdv",
+            condition_id="condition-500m",
+            token_id="no-token-500m",
+            reason="submit",
+            priority="P1",
+            payload={"order_id": "buy-1"},
+        ),
+    )
+
+    async def _list_audit_events_snapshot(
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        trace_id: str | None = None,
+        event_type: str | None = None,
+    ) -> RepositoryPage[AuditEvent]:
+        items = [
+            event
+            for event in audit_events
+            if (trace_id is None or event.trace_id == trace_id)
+            and (event_type is None or event.event_title == event_type)
+        ]
+        return RepositoryPage(items=tuple(items[offset : offset + limit]), total=len(items), limit=limit, offset=offset)
+
+    async def _list_allocations_snapshot(
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        trace_id: str | None = None,
+        condition_id: str | None = None,
+        token_id: str | None = None,
+        market_slug: str | None = None,
+    ) -> RepositoryPage[Allocation]:
+        del trace_id
+        items = [
+            allocation
+            for allocation in allocations
+            if (condition_id is None or allocation.condition_id == condition_id)
+            and (token_id is None or allocation.token_id == token_id)
+            and (market_slug is None or allocation.market_slug == market_slug)
+        ]
+        return RepositoryPage(items=tuple(items[offset : offset + limit]), total=len(items), limit=limit, offset=offset)
+
+    async def _list_pending_snapshot(
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        trace_id: str | None = None,
+    ) -> RepositoryPage[OutboxEvent]:
+        items = [
+            event
+            for event in outbox_events
+            if trace_id is None or event.trace_id == trace_id
+        ]
+        return RepositoryPage(items=tuple(items[offset : offset + limit]), total=len(items), limit=limit, offset=offset)
+
+    async def _fake_with_repositories(self, callback):
+        repositories = SimpleNamespace(
+            audit=SimpleNamespace(list_audit_events_snapshot=_list_audit_events_snapshot),
+            allocation=SimpleNamespace(list_allocations_snapshot=_list_allocations_snapshot),
+            outbox=SimpleNamespace(list_pending_snapshot=_list_pending_snapshot),
+            market=SimpleNamespace(
+                get_by_condition_id=lambda condition_id: None,
+                get_by_market_slug=lambda market_slug: None,
+                get_by_no_token_id=lambda token_id: None,
+            ),
+            order=None,
+            fill=None,
+            position=None,
+        )
+        return await callback(repositories)
+
+    monkeypatch.setattr(AdminService, "_with_repositories", _fake_with_repositories)
+
+    app = create_app(runtime=runtime, admin_service=AdminService())
+
+    with TestClient(app) as client:
+        audit_payload = client.get(
+            "/audit-events",
+            params={"trace_id": "trace-audit", "event_type": "order_cancelled"},
+        ).json()
+        allocations_payload = client.get(
+            "/allocations",
+            params={"condition_id": "condition-500m"},
+        ).json()
+        outbox_payload = client.get(
+            "/outbox/pending",
+            params={"trace_id": "trace-outbox"},
+        ).json()
+        filtered_orders = client.get(
+            "/orders",
+            params={"order_id": "buy-1"},
+        ).json()
+
+        assert audit_payload["total"] == 1
+        assert audit_payload["items"][0]["event_id"] == "audit-1"
+        assert audit_payload["items"][0]["event_title"] == "order_cancelled"
+
+        assert allocations_payload["total"] == 1
+        assert allocations_payload["items"][0]["idempotency_key"] == "alloc-1"
+        assert allocations_payload["items"][0]["target_budget_usdc"] == "50"
+
+        assert outbox_payload["total"] == 1
+        assert outbox_payload["items"][0]["idempotency_key"] == "outbox-1"
+        assert outbox_payload["items"][0]["priority"] == 1
+
+        assert filtered_orders["total"] == 1
+        assert filtered_orders["items"][0]["order_id"] == "buy-1"

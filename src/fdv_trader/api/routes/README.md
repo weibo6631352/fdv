@@ -5,12 +5,15 @@
 ## 文件职责
 
 - `health.py`：暴露 `/health` 和 `/ready`。
-- `runtime.py`：暴露 `/runtime`。
+- `runtime.py`：暴露 `/runtime`、`/workers`、`/metrics`。
+- `audit_events.py`：暴露 `/audit-events`。
+- `allocations.py`：暴露 `/allocations`。
 - `markets.py`：market 相关查询和后续暂停 / 恢复入口。
 - `orders.py`：订单查询和 SELL cancel / replace 入口。
 - `fills.py`：成交查询。
 - `positions.py`：持仓查询。
 - `portfolio.py`：组合预算、exposure 和分配状态查询。
+- `outbox.py`：暴露 `/outbox/pending`。
 - `operations.py`：受控 reconcile 操作。
 
 ## 路由层只能做

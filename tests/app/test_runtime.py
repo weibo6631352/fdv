@@ -29,6 +29,9 @@ def test_build_runtime_wires_m2_components() -> None:
     assert runtime.trading_service is not None
     assert runtime.strategy_worker is not None
     assert runtime.account_state_store is not None
+    assert runtime.account_state_store.snapshot().user_ws_connected is False
+    assert runtime.account_state_store.snapshot().allow_new_buys is False
+    assert runtime.account_state_store.snapshot().last_reconcile_at is None
     assert runtime.order_executor is not None
     assert runtime.reconcile_service is not None
     assert runtime.reconcile_worker is not None

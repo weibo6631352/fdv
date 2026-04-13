@@ -35,6 +35,8 @@ async def list_orders(
     condition_id: str | None = Query(default=None),
     token_id: str | None = Query(default=None),
     trace_id: str | None = Query(default=None),
+    order_id: str | None = Query(default=None),
+    trade_id: str | None = Query(default=None),
     service: AdminService = Depends(get_admin_service),
 ) -> dict[str, object]:
     return await service.list_orders(
@@ -44,6 +46,8 @@ async def list_orders(
         condition_id=condition_id,
         token_id=token_id,
         trace_id=trace_id,
+        order_id=order_id,
+        trade_id=trade_id,
     )
 
 

@@ -73,6 +73,17 @@ def _entry_event(market: Market, *, trace_id: str) -> DomainEvent:
     )
 
 
+def _ready_account_state_store() -> AccountStateStore:
+    store = AccountStateStore()
+    store.update_balances(
+        balance_usdc=Decimal("100"),
+        allowance_usdc=Decimal("100"),
+    )
+    store.mark_user_ws_connected(True)
+    store.mark_reconciled()
+    return store
+
+
 def _buy_result(
     *,
     market: Market,
@@ -182,11 +193,7 @@ def test_strategy_worker_turns_entry_price_touch_into_risk_result() -> None:
     async def run() -> None:
         event_bus = EventBus()
         registry = MarketRegistry()
-        account_state_store = AccountStateStore()
-        account_state_store.update_balances(
-            balance_usdc=Decimal("100"),
-            allowance_usdc=Decimal("100"),
-        )
+        account_state_store = _ready_account_state_store()
         market_ws_worker = MarketWsWorker(event_bus=event_bus, registry=registry)
         market = _market(condition_id="condition", token_id="no-token", market_slug="token")
         market_ws_worker.track_market(market)
@@ -241,11 +248,7 @@ def test_strategy_worker_turns_entry_price_touch_into_risk_result() -> None:
 def test_strategy_worker_partial_fill_only_sells_filled_shares() -> None:
     async def run() -> None:
         registry = MarketRegistry()
-        account_state_store = AccountStateStore()
-        account_state_store.update_balances(
-            balance_usdc=Decimal("100"),
-            allowance_usdc=Decimal("100"),
-        )
+        account_state_store = _ready_account_state_store()
         market = _market(condition_id="condition", token_id="no-token", market_slug="token")
         registry.upsert(market)
         strategy_service = StrategyService(
@@ -310,11 +313,7 @@ def test_strategy_worker_partial_fill_only_sells_filled_shares() -> None:
 def test_strategy_worker_no_fill_releases_budget_for_next_market() -> None:
     async def run() -> None:
         registry = MarketRegistry()
-        account_state_store = AccountStateStore()
-        account_state_store.update_balances(
-            balance_usdc=Decimal("100"),
-            allowance_usdc=Decimal("100"),
-        )
+        account_state_store = _ready_account_state_store()
         first = _market(condition_id="condition-1", token_id="no-1", market_slug="token-1")
         second = _market(condition_id="condition-2", token_id="no-2", market_slug="token-2")
         registry.upsert(first)

@@ -1,12 +1,31 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Literal
 
 from fdv_trader.api.deps import get_admin_service
 from fdv_trader.app.admin_service import AdminService
 
 router = APIRouter(prefix="/markets", tags=["markets"])
+
+
+@router.get("/detail")
+async def get_market_detail(
+    market_slug: str | None = Query(default=None),
+    condition_id: str | None = Query(default=None),
+    token_id: str | None = Query(default=None),
+    service: AdminService = Depends(get_admin_service),
+) -> dict[str, object]:
+    if not any((market_slug, condition_id, token_id)):
+        raise HTTPException(status_code=422, detail="market_slug, condition_id, or token_id is required")
+    payload = await service.get_market(
+        market_slug=market_slug,
+        condition_id=condition_id,
+        token_id=token_id,
+    )
+    if payload is None:
+        raise HTTPException(status_code=404, detail="market not found")
+    return payload
 
 
 @router.get("")

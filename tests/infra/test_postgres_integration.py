@@ -152,8 +152,8 @@ async def test_persistence_repository_and_admin_service_round_trip(
             "allowance_usdc": "90",
             "user_ws_connected": True,
             "allow_new_buys": True,
-            "paused_markets": [],
-            "pause_reasons": [],
+            "paused_markets": ["condition-500m"],
+            "pause_reasons": [["condition-500m", "manual_pause"]],
             "last_reconcile_at": "2026-01-01T12:05:00+00:00",
         }
     )
@@ -213,3 +213,7 @@ async def test_persistence_repository_and_admin_service_round_trip(
     assert loaded_reference["account_snapshots"] == 1
     assert runtime.account_state_store.snapshot().balance_usdc == Decimal("120")
     assert runtime.account_state_store.snapshot().allowance_usdc == Decimal("90")
+    assert runtime.account_state_store.snapshot().user_ws_connected is False
+    assert runtime.account_state_store.snapshot().allow_new_buys is False
+    assert runtime.account_state_store.snapshot().paused_markets == ()
+    assert runtime.account_state_store.snapshot().last_reconcile_at is None

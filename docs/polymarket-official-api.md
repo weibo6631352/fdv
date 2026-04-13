@@ -125,6 +125,7 @@
 - 管理端 `/markets` 只返回本地快照，不在请求过程中实时调用外部费率接口；运行中优先读 registry 热态市场缓存，registry 为空时再回退数据库快照。
 - market 相关事件现在会从 `EventBus` 镜像到 `LocalOutbox`，再由 `PersistenceWorker` 异步写入数据库市场快照。
 - user WS 的 `order_state_updated` / `fill_recorded` / `position_updated` 也会镜像进 outbox，但会裁掉 `snapshot` / `open_orders` 这类大块上下文字段，只保留落库需要的数据。
+- `account_snapshots` 现已落库，但进程启动时只恢复 `balance_usdc` / `allowance_usdc` 这类可持久化事实；`user_ws_connected`、`allow_new_buys`、`paused_markets`、`last_reconcile_at` 仍按当前进程的 live WS / reconcile 状态重新建立。
 - 管理端 `/markets` 当前支持 `fees_enabled`、`fee_rate_bps_min/max`、`maker_base_fee_bps_min/max`、`taker_base_fee_bps_min/max` 筛选，以及 `fee_rate_bps` / `fee_rate_updated_at` / `maker_base_fee_bps` / `taker_base_fee_bps` / `market_slug` 排序。
 
 ### 4.4 静态规则说明页面
@@ -196,11 +197,11 @@
    - user WS 产生的订单、成交、持仓事件也会镜像进 `LocalOutbox`。
    - 镜像时会裁剪 payload，只保留 `order` / `fill` / `position(s)` 等写库需要的字段。
    - 因此 user WS 驱动的订单状态、fills、positions 也能异步收敛到数据库快照。
+   - `account_snapshots` 会落库当前余额与运行态账户摘要，但启动恢复只回填 `balance_usdc` / `allowance_usdc`；是否连上 user WS、是否允许新买单、当前会话是否已 reconcile，仍以当前进程状态为准。
 
 继续建议：
 
 1. 若后续跟踪市场数继续增大，可继续优化 WS 重订阅节流和队列背压参数。
-2. 若后续需要把 balance / allowance 也纳入同一套持久化口径，可再单独定义账户余额快照模型，而不是把它混进 order / position 事件里。
 
 ## 7. 官方参考链接
 

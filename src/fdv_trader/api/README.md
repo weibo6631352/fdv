@@ -44,11 +44,17 @@ route -> AdminService -> TradingService -> RiskManager -> OrderExecutor
 - `GET /health`
 - `GET /ready`
 - `GET /runtime`
+- `GET /workers`
+- `GET /metrics`
+- `GET /audit-events`
+- `GET /allocations`
 - `GET /markets`
+- `GET /markets/detail`
 - `GET /orders`
 - `GET /fills`
 - `GET /positions`
 - `GET /portfolio`
+- `GET /outbox/pending`
 - `POST /operations/reconcile`
 - `POST /orders/cancel-replace-sell`
 

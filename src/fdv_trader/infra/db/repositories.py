@@ -163,6 +163,10 @@ class MarketRepository(BaseRepository):
         row = await self._session.scalar(select(MarketModel).where(MarketModel.market_slug == market_slug))
         return None if row is None else row.to_domain()
 
+    async def get_by_no_token_id(self, token_id: str) -> Market | None:
+        row = await self._session.scalar(select(MarketModel).where(MarketModel.no_token_id == token_id))
+        return None if row is None else row.to_domain()
+
     async def list_markets_snapshot(
         self,
         *,
@@ -366,11 +370,20 @@ class AllocationRepository(BaseRepository):
         limit: int = 100,
         offset: int = 0,
         trace_id: str | None = None,
+        condition_id: str | None = None,
+        token_id: str | None = None,
+        market_slug: str | None = None,
     ) -> RepositoryPage[Allocation]:
         limit, offset = _limit_offset(limit, offset)
         stmt = select(AllocationModel).order_by(AllocationModel.updated_at.desc(), AllocationModel.id.desc())
         if trace_id is not None:
             stmt = stmt.where(AllocationModel.trace_id == trace_id)
+        if condition_id is not None:
+            stmt = stmt.where(AllocationModel.condition_id == condition_id)
+        if token_id is not None:
+            stmt = stmt.where(AllocationModel.token_id == token_id)
+        if market_slug is not None:
+            stmt = stmt.where(AllocationModel.market_slug == market_slug)
         rows, total = await self._paginate(stmt, limit=limit, offset=offset)
         return RepositoryPage(items=tuple(row.to_domain() for row in rows), total=total, limit=limit, offset=offset)
 
@@ -462,11 +475,23 @@ class OrderRepository(BaseRepository):
         limit: int = 100,
         offset: int = 0,
         trace_id: str | None = None,
+        order_id: str | None = None,
+        trade_id: str | None = None,
+        condition_id: str | None = None,
+        token_id: str | None = None,
     ) -> RepositoryPage[Order]:
         limit, offset = _limit_offset(limit, offset)
         stmt = select(OrderModel).order_by(OrderModel.updated_at.desc(), OrderModel.id.desc())
         if trace_id is not None:
             stmt = stmt.where(OrderModel.trace_id == trace_id)
+        if order_id is not None:
+            stmt = stmt.where(OrderModel.order_id == order_id)
+        if trade_id is not None:
+            stmt = stmt.where(OrderModel.trade_id == trade_id)
+        if condition_id is not None:
+            stmt = stmt.where(OrderModel.condition_id == condition_id)
+        if token_id is not None:
+            stmt = stmt.where(OrderModel.token_id == token_id)
         rows, total = await self._paginate(stmt, limit=limit, offset=offset)
         return RepositoryPage(items=tuple(row.to_domain() for row in rows), total=total, limit=limit, offset=offset)
 

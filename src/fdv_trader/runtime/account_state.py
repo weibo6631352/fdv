@@ -22,7 +22,7 @@ class AccountSnapshot:
     open_orders: tuple[Order, ...] = ()
     fills: tuple[Fill, ...] = ()
     user_ws_connected: bool = False
-    allow_new_buys: bool = True
+    allow_new_buys: bool = False
     paused_markets: tuple[str, ...] = ()
     pause_reasons: tuple[tuple[str, str], ...] = ()
     last_reconcile_at: datetime | None = None
@@ -78,7 +78,7 @@ class AccountStateStore:
         self._balance_usdc = Decimal("0")
         self._allowance_usdc = Decimal("0")
         self._user_ws_connected = False
-        self._allow_new_buys = True
+        self._allow_new_buys = False
         self._paused_markets: dict[str, str] = {}
         self._last_reconcile_at: datetime | None = None
         self._snapshot = AccountSnapshot()
@@ -149,12 +149,13 @@ class AccountStateStore:
         with self._lock:
             self._user_ws_connected = connected
             if not connected:
+                self._last_reconcile_at = None
                 self._allow_new_buys = False
             return self._publish_snapshot_locked()
 
     def set_allow_new_buys(self, allowed: bool) -> AccountSnapshot:
         with self._lock:
-            self._allow_new_buys = allowed
+            self._allow_new_buys = allowed and self._buy_gate_can_open_locked()
             return self._publish_snapshot_locked()
 
     def pause_market(self, condition_id: str, *, reason: str) -> AccountSnapshot:
@@ -170,8 +171,11 @@ class AccountStateStore:
     def mark_reconciled(self, reconciled_at: datetime | None = None) -> AccountSnapshot:
         with self._lock:
             self._last_reconcile_at = reconciled_at or _utc_now()
-            self._allow_new_buys = self._user_ws_connected
+            self._allow_new_buys = self._buy_gate_can_open_locked()
             return self._publish_snapshot_locked()
+
+    def _buy_gate_can_open_locked(self) -> bool:
+        return self._user_ws_connected and self._last_reconcile_at is not None
 
     def _publish_snapshot_locked(self) -> AccountSnapshot:
         snapshot = AccountSnapshot(
