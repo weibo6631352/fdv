@@ -102,6 +102,15 @@ def _coerce_decimal(value: Any | None) -> Decimal | None:
     return None
 
 
+def _coerce_int(value: Any | None) -> int | None:
+    number = _coerce_decimal(value)
+    if number is None:
+        return None
+    with contextlib.suppress(ArithmeticError, ValueError):
+        return int(number)
+    return None
+
+
 def _coerce_bool(value: Any | None) -> bool | None:
     if value is None:
         return None
@@ -581,6 +590,9 @@ class GammaMarketDTO:
     tick_size: Decimal | None = None
     min_order_size: Decimal | None = None
     neg_risk: bool = False
+    fees_enabled: bool | None = None
+    maker_base_fee_bps: int | None = None
+    taker_base_fee_bps: int | None = None
     category: str | None = None
     tags: tuple[str, ...] = field(default_factory=tuple)
     active: bool | None = None
@@ -590,6 +602,16 @@ class GammaMarketDTO:
     raw_summary: str = ""
 
     def __post_init__(self) -> None:
+        fee_schedule = _maybe_mapping(_first_value(self.raw, "fee_schedule", "feeSchedule"))
+        raw_fees_enabled = _first_value(self.raw, "fees_enabled", "feesEnabled")
+        raw_taker_base_fee = _first_value(
+            self.raw,
+            "taker_base_fee_bps",
+            "takerBaseFee",
+            "taker_base_fee",
+        )
+        if raw_taker_base_fee is None and fee_schedule is not None:
+            raw_taker_base_fee = _first_value(fee_schedule, "rate", "base_fee", "baseFee")
         object.__setattr__(self, "condition_id", self.condition_id or _first_text(self.raw, "condition_id", "conditionId", "condition"))
         object.__setattr__(self, "market_slug", self.market_slug or _first_text(self.raw, "market_slug", "marketSlug", "slug"))
         object.__setattr__(self, "question", self.question or _first_text(self.raw, "question", "prompt", "market_question"))
@@ -602,6 +624,35 @@ class GammaMarketDTO:
         object.__setattr__(self, "tick_size", self.tick_size if self.tick_size is not None else _coerce_decimal(_first_value(self.raw, "tick_size", "tickSize")))
         object.__setattr__(self, "min_order_size", self.min_order_size if self.min_order_size is not None else _coerce_decimal(_first_value(self.raw, "min_order_size", "minOrderSize")))
         object.__setattr__(self, "neg_risk", self.neg_risk or bool(_coerce_bool(_first_value(self.raw, "neg_risk", "negRisk"))))
+        object.__setattr__(
+            self,
+            "fees_enabled",
+            self.fees_enabled
+            if self.fees_enabled is not None
+            else (
+                _coerce_bool(raw_fees_enabled)
+                if raw_fees_enabled is not None
+                else (
+                    None
+                    if fee_schedule is None
+                    else _coerce_bool(_first_value(fee_schedule, "enabled", "feesEnabled"))
+                )
+            ),
+        )
+        object.__setattr__(
+            self,
+            "maker_base_fee_bps",
+            self.maker_base_fee_bps
+            if self.maker_base_fee_bps is not None
+            else _coerce_int(_first_value(self.raw, "maker_base_fee_bps", "makerBaseFee", "maker_base_fee")),
+        )
+        object.__setattr__(
+            self,
+            "taker_base_fee_bps",
+            self.taker_base_fee_bps
+            if self.taker_base_fee_bps is not None
+            else _coerce_int(raw_taker_base_fee),
+        )
         object.__setattr__(self, "category", self.category or _first_text(self.raw, "category", "cat"))
         object.__setattr__(self, "tags", self.tags or _string_tuple(_first_value(self.raw, "tags")))
         object.__setattr__(self, "active", self.active if self.active is not None else _coerce_bool(_first_value(self.raw, "active", "is_active")))
@@ -634,6 +685,9 @@ class GammaMarketDTO:
             tick_size=tick_size,
             min_order_size=min_order_size,
             neg_risk=self.neg_risk,
+            fees_enabled=self.fees_enabled,
+            maker_base_fee_bps=self.maker_base_fee_bps,
+            taker_base_fee_bps=self.taker_base_fee_bps,
             category=self.category,
             tags=self.tags,
             trading_status=status,

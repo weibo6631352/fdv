@@ -15,7 +15,7 @@ Admin API 是人工查询和受控操作入口，不是交易策略入口。它�
 | 健康检查 | `GET /health` | 只做进程存活和本地轻量状态检查，不访问慢外部依赖 |
 | 就绪检查 | `GET /ready` | 通过快照状态确认 DB、交易客户端、WS、outbox 和自动下单 readiness |
 | runtime 查询 | `GET /runtime` | 汇总 runtime phase、queue depth、Persistence backlog、最近 reconcile 和自动下单闸门 |
-| markets 查询 | target / eligible markets | 分页，读取快照，不阻塞 Market Registry 写入 |
+| markets 查询 | target / eligible markets | 分页，读取快照，不阻塞 Market Registry 写入；返回 `fees` 费率快照字段 |
 | orders 查询 | open SELL、历史 orders | 优先查询仓储或 position 快照 |
 | fills / positions 查询 | `GET /fills`、`GET /positions` | 分页，只读快照或 repository |
 | portfolio 查询 | 预算、exposure、剩余可买额度 | 不在 HTTP handler 内重新计算复杂分配 |
@@ -69,3 +69,19 @@ api route -> AdminService -> TradingService -> RiskManager -> OrderExecutor
 - 是否分页、限流和设置超时。
 - 是否依赖数据库、Polymarket API 或慢外部服务。
 - 失败时是否影响自动交易。
+
+## 市场费率视图
+
+当前 `GET /markets` 返回的市场结构中，费率统一放在 `fees` 对象下：
+
+- `enabled`
+- `maker_base_fee_bps`
+- `taker_base_fee_bps`
+- `fee_rate_bps`
+- `fee_rate_updated_at`
+
+口径说明：
+
+- `maker_base_fee_bps` / `taker_base_fee_bps` 来自 Polymarket Gamma 市场元数据。
+- `fee_rate_bps` 来自 Polymarket CLOB `GET /fee-rate`，由后台刷新后写入本地。
+- 查询接口只返回本地快照，不在 handler 内临时调用外部费率接口。

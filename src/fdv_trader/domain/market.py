@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
@@ -26,6 +27,11 @@ class Market:
     tick_size: Decimal = Decimal("0.01")
     min_order_size: Decimal = Decimal("1")
     neg_risk: bool = False
+    fees_enabled: bool | None = None
+    maker_base_fee_bps: int | None = None
+    taker_base_fee_bps: int | None = None
+    fee_rate_bps: int | None = None
+    fee_rate_updated_at: datetime | None = None
     category: str | None = None
     tags: tuple[str, ...] = field(default_factory=tuple)
     matched_keywords: tuple[str, ...] = field(default_factory=tuple)
@@ -45,6 +51,44 @@ class Market:
 
     def with_min_order_size(self, min_order_size: Decimal) -> "Market":
         return replace(self, min_order_size=min_order_size)
+
+    def with_fee_schedule(
+        self,
+        *,
+        fees_enabled: bool | None = None,
+        maker_base_fee_bps: int | None = None,
+        taker_base_fee_bps: int | None = None,
+    ) -> "Market":
+        return replace(
+            self,
+            fees_enabled=self.fees_enabled if fees_enabled is None else fees_enabled,
+            maker_base_fee_bps=(
+                self.maker_base_fee_bps
+                if maker_base_fee_bps is None
+                else maker_base_fee_bps
+            ),
+            taker_base_fee_bps=(
+                self.taker_base_fee_bps
+                if taker_base_fee_bps is None
+                else taker_base_fee_bps
+            ),
+        )
+
+    def with_fee_rate(
+        self,
+        fee_rate_bps: int | None,
+        *,
+        fee_rate_updated_at: datetime | None = None,
+    ) -> "Market":
+        return replace(
+            self,
+            fee_rate_bps=fee_rate_bps,
+            fee_rate_updated_at=(
+                self.fee_rate_updated_at
+                if fee_rate_updated_at is None
+                else fee_rate_updated_at
+            ),
+        )
 
     def with_metadata(
         self,

@@ -199,6 +199,11 @@ def _market() -> Market:
         event_slug="crypto-fdv-500m",
         tick_size=Decimal("0.01"),
         min_order_size=Decimal("1"),
+        fees_enabled=True,
+        maker_base_fee_bps=0,
+        taker_base_fee_bps=100,
+        fee_rate_bps=125,
+        fee_rate_updated_at=datetime(2026, 1, 1, 12, 2, 0, tzinfo=timezone.utc),
         category="Crypto",
         matched_keywords=("crypto", "fdv", "500m"),
         trading_status=TradingStatus.ELIGIBLE,
@@ -430,9 +435,14 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert runtime_payload["readiness"]["ready"] is True
         assert runtime_payload["markets"][0]["orderbook"]["best_ask"] == "0.59"
         assert runtime_payload["markets"][0]["market"]["market_slug"] == "token-500m-fdv"
+        assert runtime_payload["markets"][0]["market"]["fees"]["taker_base_fee_bps"] == 100
+        assert runtime_payload["markets"][0]["market"]["fees"]["fee_rate_bps"] == 125
 
         assert markets["total"] == 1
         assert markets["items"][0]["market"]["condition_id"] == "condition-500m"
+        assert markets["items"][0]["market"]["fees"]["enabled"] is True
+        assert markets["items"][0]["market"]["fees"]["maker_base_fee_bps"] == 0
+        assert markets["items"][0]["market"]["fees"]["fee_rate_updated_at"] == "2026-01-01T12:02:00+00:00"
         assert markets["items"][0]["entry_price_touched"] is True
 
         assert orders["total"] == 2
@@ -507,4 +517,3 @@ def test_admin_ready_route_reports_blockers_when_runtime_is_not_ready() -> None:
         assert "user_ws_not_connected" in ready.json()["runtime"]["blocking_reasons"]
         assert runtime_payload["runtime"]["ready_to_trade"] is False
         assert runtime_payload["readiness"]["ready"] is False
-

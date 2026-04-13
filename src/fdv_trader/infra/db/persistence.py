@@ -53,6 +53,21 @@ def _decimal(value: Any | None, default: Decimal | None = None) -> Decimal | Non
         return default
 
 
+def _int(value: Any | None, default: int | None = None) -> int | None:
+    if value is None:
+        return default
+    text = str(value).strip()
+    if not text:
+        return default
+    try:
+        return int(text)
+    except ValueError:
+        try:
+            return int(Decimal(text))
+        except (InvalidOperation, ValueError):
+            return default
+
+
 def _bool(value: Any | None, default: bool = False) -> bool:
     if value is None:
         return default
@@ -217,6 +232,11 @@ def _market_from_record(record: Mapping[str, Any]) -> Market | None:
         tick_size=_decimal(record.get("tick_size"), Decimal("0.01")) or Decimal("0.01"),
         min_order_size=_decimal(record.get("min_order_size"), Decimal("1")) or Decimal("1"),
         neg_risk=_bool(record.get("neg_risk")),
+        fees_enabled=None if record.get("fees_enabled") is None else _bool(record.get("fees_enabled")),
+        maker_base_fee_bps=_int(record.get("maker_base_fee_bps")),
+        taker_base_fee_bps=_int(record.get("taker_base_fee_bps")),
+        fee_rate_bps=_int(record.get("fee_rate_bps")),
+        fee_rate_updated_at=_datetime(record.get("fee_rate_updated_at")),
         category=_text(record.get("category")),
         tags=_string_tuple(record.get("tags")),
         matched_keywords=_string_tuple(record.get("matched_keywords")),

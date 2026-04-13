@@ -107,6 +107,11 @@ async def test_persistence_repository_and_admin_service_round_trip(
             "tick_size": "0.01",
             "min_order_size": "1",
             "neg_risk": False,
+            "fees_enabled": True,
+            "maker_base_fee_bps": 0,
+            "taker_base_fee_bps": 100,
+            "fee_rate_bps": 125,
+            "fee_rate_updated_at": "2026-01-01T12:02:00+00:00",
             "category": "Crypto",
             "tags": ["crypto", "fdv"],
             "matched_keywords": ["crypto", "fdv", "500m"],
@@ -144,6 +149,9 @@ async def test_persistence_repository_and_admin_service_round_trip(
     assert markets["total"] == 1
     assert markets["items"][0]["market"]["market_slug"] == "token-fdv-500m"
     assert markets["items"][0]["market"]["trading_status"] == "eligible"
+    assert markets["items"][0]["market"]["fees"]["enabled"] is True
+    assert markets["items"][0]["market"]["fees"]["taker_base_fee_bps"] == 100
+    assert markets["items"][0]["market"]["fees"]["fee_rate_bps"] == 125
 
     assert fills["total"] == 1
     assert fills["items"][0]["trace_id"] == "trace-fill"

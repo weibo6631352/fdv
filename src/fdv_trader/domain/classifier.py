@@ -41,6 +41,9 @@ class ClassificationResult:
     tick_size: Decimal | None
     min_order_size: Decimal | None
     neg_risk: bool
+    fees_enabled: bool | None
+    maker_base_fee_bps: int | None
+    taker_base_fee_bps: int | None
     category: str | None
     tags: tuple[str, ...]
     market_slug: str | None
@@ -81,6 +84,9 @@ class ClassificationResult:
             "tick_size": self.tick_size,
             "min_order_size": self.min_order_size,
             "neg_risk": self.neg_risk,
+            "fees_enabled": self.fees_enabled,
+            "maker_base_fee_bps": self.maker_base_fee_bps,
+            "taker_base_fee_bps": self.taker_base_fee_bps,
             "category": self.category,
             "tags": self.tags,
             "market_slug": self.market_slug,
@@ -131,6 +137,9 @@ class ClassificationResult:
             tick_size=self.tick_size,
             min_order_size=self.min_order_size,
             neg_risk=self.neg_risk,
+            fees_enabled=self.fees_enabled,
+            maker_base_fee_bps=self.maker_base_fee_bps,
+            taker_base_fee_bps=self.taker_base_fee_bps,
             category=self.category,
             tags=self.tags,
             matched_keywords=self.matched_keywords,
@@ -316,6 +325,9 @@ class MarketClassifier:
             tick_size=parsed["tick_size"],
             min_order_size=parsed["min_order_size"],
             neg_risk=parsed["neg_risk"],
+            fees_enabled=parsed["fees_enabled"],
+            maker_base_fee_bps=parsed["maker_base_fee_bps"],
+            taker_base_fee_bps=parsed["taker_base_fee_bps"],
             category=parsed["category"],
             tags=parsed["tags"],
             market_slug=parsed["market_slug"],
@@ -346,6 +358,9 @@ class MarketClassifier:
             tick_size=parsed["tick_size"],
             min_order_size=parsed["min_order_size"],
             neg_risk=parsed["neg_risk"],
+            fees_enabled=parsed["fees_enabled"],
+            maker_base_fee_bps=parsed["maker_base_fee_bps"],
+            taker_base_fee_bps=parsed["taker_base_fee_bps"],
             category=parsed["category"],
             tags=parsed["tags"],
             market_slug=parsed["market_slug"],
@@ -388,6 +403,39 @@ class MarketClassifier:
                 )
             )
             neg_risk = self._parse_bool(self._first_value(raw_market, "neg_risk", "negRisk"))
+            fee_schedule = self._as_mapping(self._first_value(raw_market, "fee_schedule", "feeSchedule"))
+            fees_enabled = self._parse_nullable_bool(
+                self._first_value(raw_market, "fees_enabled", "feesEnabled")
+            )
+            if fees_enabled is None and fee_schedule is not None:
+                fees_enabled = self._parse_nullable_bool(
+                    self._first_value(fee_schedule, "enabled", "feesEnabled")
+                )
+            maker_base_fee_bps = self._parse_int(
+                self._first_value(
+                    raw_market,
+                    "maker_base_fee_bps",
+                    "makerBaseFee",
+                    "maker_base_fee",
+                )
+            )
+            taker_base_fee_bps = self._parse_int(
+                self._first_value(
+                    raw_market,
+                    "taker_base_fee_bps",
+                    "takerBaseFee",
+                    "taker_base_fee",
+                )
+            )
+            if taker_base_fee_bps is None and fee_schedule is not None:
+                taker_base_fee_bps = self._parse_int(
+                    self._first_value(
+                        fee_schedule,
+                        "rate",
+                        "base_fee",
+                        "baseFee",
+                    )
+                )
             category = self._first_value(raw_market, "category")
             tags = self._parse_tags(self._first_value(raw_market, "tags"))
             market_slug = self._first_value(raw_market, "market_slug", "slug")
@@ -409,6 +457,9 @@ class MarketClassifier:
                 "tick_size": None,
                 "min_order_size": None,
                 "neg_risk": False,
+                "fees_enabled": None,
+                "maker_base_fee_bps": None,
+                "taker_base_fee_bps": None,
                 "category": None,
                 "tags": tuple(),
                 "market_slug": None,
@@ -425,6 +476,9 @@ class MarketClassifier:
             "tick_size": tick_size,
             "min_order_size": min_order_size,
             "neg_risk": neg_risk,
+            "fees_enabled": fees_enabled,
+            "maker_base_fee_bps": maker_base_fee_bps,
+            "taker_base_fee_bps": taker_base_fee_bps,
             "category": category,
             "tags": tags,
             "market_slug": market_slug,
@@ -473,6 +527,33 @@ class MarketClassifier:
             return False
         normalized = str(value).strip().lower()
         return normalized in {"1", "true", "yes", "y", "on"}
+
+    @staticmethod
+    def _parse_nullable_bool(value: Any | None) -> bool | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        normalized = str(value).strip().lower()
+        if not normalized:
+            return None
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off"}:
+            return False
+        return None
+
+    @staticmethod
+    def _parse_int(value: Any | None) -> int | None:
+        if value is None or value == "":
+            return None
+        return int(Decimal(str(value)))
+
+    @staticmethod
+    def _as_mapping(value: Any | None) -> Mapping[str, Any] | None:
+        if isinstance(value, Mapping):
+            return value
+        return None
 
     @staticmethod
     def _parse_tags(value: Any | None) -> tuple[str, ...]:

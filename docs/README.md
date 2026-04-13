@@ -13,6 +13,7 @@
 - [api.md](./api.md)：Admin API 的能力边界、禁止绕过项和后续接口设计约束。
 - [config.md](./config.md)：配置分组、密钥约束、默认值和新增配置规则。
 - [operations.md](./operations.md)：启动、停止、reconcile、人工操作和部署流程。
+- [polymarket-official-api.md](./polymarket-official-api.md)：本仓库已接入的 Polymarket 官方接口清单、官方当前路径对照，以及费率信息获取方式。
 - [plan](./plan/README.md)：按项目组与细分任务拆分的并行开发计划；里程碑状态见 [MILESTONES.md](./plan/MILESTONES.md)。
 - [runbook.md](./runbook.md)：常见故障的处置顺序和优先级。
 

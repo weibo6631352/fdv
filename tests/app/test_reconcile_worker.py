@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from fdv_trader.app.reconcile_service import ReconcileActionType, ReconcileService
@@ -16,6 +17,7 @@ from fdv_trader.domain.order import (
     OrderType,
     SellOrderIntent,
 )
+from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from fdv_trader.domain.position import Position
 from fdv_trader.runtime.account_state import AccountStateStore
 from fdv_trader.runtime.registry import MarketRegistry
@@ -49,6 +51,48 @@ class _StubExecutor:
             intent=intent,
             reason="cancelled",
         )
+
+
+class _StubGammaMarket:
+    def __init__(self, market: Market) -> None:
+        self.condition_id = market.condition_id
+        self.no_token_id = market.no_token_id
+        self.market_slug = market.market_slug
+        self.clob_enabled = True
+        self._market = market
+
+    def to_market(self) -> Market:
+        return self._market
+
+
+class _StubGammaClient:
+    def __init__(self, market: Market) -> None:
+        self._market = market
+
+    async def list_markets(self, **kwargs: object) -> tuple[_StubGammaMarket, ...]:
+        return (_StubGammaMarket(self._market),)
+
+
+class _StubOrderbookDTO:
+    def __init__(self, snapshot: OrderbookSnapshot) -> None:
+        self._snapshot = snapshot
+
+    def to_snapshot(self) -> OrderbookSnapshot:
+        return self._snapshot
+
+
+class _StubClobClient:
+    has_auth_client = False
+
+    def __init__(self, snapshot: OrderbookSnapshot, fee_rate_bps: int) -> None:
+        self._snapshot = snapshot
+        self._fee_rate_bps = fee_rate_bps
+
+    async def get_orderbook(self, *args: object, **kwargs: object) -> _StubOrderbookDTO:
+        return _StubOrderbookDTO(self._snapshot)
+
+    async def get_fee_rate(self, token_id: str) -> int:
+        return self._fee_rate_bps
 
 
 def test_reconcile_worker_cancels_open_buy_and_backfills_missing_sell() -> None:
@@ -110,5 +154,75 @@ def test_reconcile_worker_cancels_open_buy_and_backfills_missing_sell() -> None:
         action_types = {action.action_type for action in result.plan.market_plans[0].actions}
         assert ReconcileActionType.CANCEL_OPEN_BUY in action_types
         assert ReconcileActionType.SUBMIT_MISSING_SELL in action_types
+
+    asyncio.run(run())
+
+
+def test_reconcile_worker_refreshes_market_fee_fields() -> None:
+    async def run() -> None:
+        registry = MarketRegistry()
+        current_market = Market(
+            condition_id="condition",
+            market_slug="token-500m-fdv",
+            no_token_id="token",
+            yes_token_id="yes-token",
+            tick_size=Decimal("0.01"),
+            min_order_size=Decimal("1"),
+            category="Crypto",
+            matched_keywords=("crypto", "fdv", "500m"),
+            trading_status=TradingStatus.ELIGIBLE,
+        )
+        registry.upsert(current_market)
+
+        refreshed_market = Market(
+            condition_id="condition",
+            market_slug="token-500m-fdv",
+            no_token_id="token",
+            yes_token_id="yes-token",
+            tick_size=Decimal("0.01"),
+            min_order_size=Decimal("1"),
+            neg_risk=False,
+            fees_enabled=True,
+            maker_base_fee_bps=0,
+            taker_base_fee_bps=100,
+            category="Crypto",
+            matched_keywords=("crypto", "fdv", "500m"),
+            trading_status=TradingStatus.ELIGIBLE,
+        )
+        orderbook_snapshot = OrderbookSnapshot(
+            token_id="token",
+            best_bid=Decimal("0.55"),
+            best_ask=Decimal("0.59"),
+            bids=(PriceLevel(price=Decimal("0.55"), size=Decimal("100")),),
+            asks=(PriceLevel(price=Decimal("0.59"), size=Decimal("200")),),
+            received_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            market_slug="token-500m-fdv",
+            condition_id="condition",
+            best_bid_size=Decimal("100"),
+            best_ask_size=Decimal("200"),
+            tick_size=Decimal("0.01"),
+        )
+
+        worker = ReconcileWorker(
+            reconcile_service=ReconcileService(),
+            registry_snapshot_provider=registry.snapshot,
+            registry=registry,
+            gamma_client=_StubGammaClient(refreshed_market),
+            clob_client=_StubClobClient(orderbook_snapshot, fee_rate_bps=125),
+        )
+
+        await worker.reconcile_once(trace_id="trace-reconcile")
+
+        market = registry.get_by_condition_id("condition")
+        assert market is not None
+        assert market.fees_enabled is True
+        assert market.maker_base_fee_bps == 0
+        assert market.taker_base_fee_bps == 100
+        assert market.fee_rate_bps == 125
+        assert market.fee_rate_updated_at is not None
+
+        status = worker.status_snapshot()
+        assert status.last_refresh_summary is not None
+        assert status.last_refresh_summary.refreshed_fee_rates == 1
 
     asyncio.run(run())

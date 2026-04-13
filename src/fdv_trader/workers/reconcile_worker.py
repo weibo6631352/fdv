@@ -61,6 +61,7 @@ class AuthoritativeMarketRefresh:
     requested_market: Market
     refreshed_market: Market | None
     orderbook_snapshot: OrderbookSnapshot | None
+    fee_rate_refreshed: bool = False
     failures: tuple[str, ...] = ()
 
 
@@ -70,6 +71,7 @@ class AuthoritativeRefreshSummary:
     market_count: int
     refreshed_markets: int
     refreshed_orderbooks: int
+    refreshed_fee_rates: int
     refreshed_positions: int
     refreshed_open_orders: int
     refreshed_fills: int
@@ -83,6 +85,7 @@ class AuthoritativeRefreshSummary:
             "market_count": self.market_count,
             "refreshed_markets": self.refreshed_markets,
             "refreshed_orderbooks": self.refreshed_orderbooks,
+            "refreshed_fee_rates": self.refreshed_fee_rates,
             "refreshed_positions": self.refreshed_positions,
             "refreshed_open_orders": self.refreshed_open_orders,
             "refreshed_fills": self.refreshed_fills,
@@ -544,6 +547,7 @@ class ReconcileWorker:
                 market_count=0,
                 refreshed_markets=0,
                 refreshed_orderbooks=0,
+                refreshed_fee_rates=0,
                 refreshed_positions=0,
                 refreshed_open_orders=0,
                 refreshed_fills=0,
@@ -559,6 +563,7 @@ class ReconcileWorker:
         refresh_failures: list[str] = []
         refreshed_markets = 0
         refreshed_orderbooks = 0
+        refreshed_fee_rates = 0
 
         for item in market_refreshes:
             if isinstance(item, Exception):
@@ -573,6 +578,8 @@ class ReconcileWorker:
                     item.refreshed_market or item.requested_market,
                     item.orderbook_snapshot,
                 )
+            if item.fee_rate_refreshed:
+                refreshed_fee_rates += 1
             for failure in item.failures:
                 refresh_failures.append(failure)
 
@@ -584,6 +591,7 @@ class ReconcileWorker:
             market_count=len(markets),
             refreshed_markets=refreshed_markets,
             refreshed_orderbooks=refreshed_orderbooks,
+            refreshed_fee_rates=refreshed_fee_rates,
             refreshed_positions=account_summary.refreshed_positions,
             refreshed_open_orders=account_summary.refreshed_open_orders,
             refreshed_fills=account_summary.refreshed_fills,
@@ -608,14 +616,24 @@ class ReconcileWorker:
     async def _refresh_market_authority(self, market: Market) -> AuthoritativeMarketRefresh:
         failures: list[str] = []
         refreshed_market = await self._fetch_gamma_market(market, failures)
+        market_for_orderbook = refreshed_market or market
+        fee_rate_bps = await self._fetch_fee_rate(market_for_orderbook, failures)
+        fee_rate_refreshed = fee_rate_bps is not None
+        if fee_rate_bps is not None:
+            market_for_orderbook = market_for_orderbook.with_fee_rate(
+                fee_rate_bps,
+                fee_rate_updated_at=_utc_now(),
+            )
+            refreshed_market = market_for_orderbook
         orderbook_snapshot = await self._fetch_orderbook_snapshot(
-            refreshed_market or market,
+            market_for_orderbook,
             failures,
         )
         return AuthoritativeMarketRefresh(
             requested_market=market,
             refreshed_market=refreshed_market,
             orderbook_snapshot=orderbook_snapshot,
+            fee_rate_refreshed=fee_rate_refreshed,
             failures=tuple(failures),
         )
 
@@ -703,6 +721,11 @@ class ReconcileWorker:
         )
         merged = merged.with_tick_size(refreshed.tick_size)
         merged = merged.with_min_order_size(refreshed.min_order_size)
+        merged = merged.with_fee_schedule(
+            fees_enabled=refreshed.fees_enabled,
+            maker_base_fee_bps=refreshed.maker_base_fee_bps,
+            taker_base_fee_bps=refreshed.taker_base_fee_bps,
+        )
 
         desired_status = refreshed.trading_status
         reject_reason = refreshed.reject_reason
@@ -726,6 +749,19 @@ class ReconcileWorker:
 
         return merged.with_trading_status(desired_status, reject_reason=reject_reason)
 
+    async def _fetch_fee_rate(
+        self,
+        market: Market,
+        failures: list[str],
+    ) -> int | None:
+        if self._clob_client is None:
+            return None
+        try:
+            return await self._clob_client.get_fee_rate(market.no_token_id)
+        except Exception as exc:  # pragma: no cover - external SDK failure path
+            failures.append(f"clob:fee_rate:{market.condition_id}:{market.no_token_id}:{exc}")
+            return None
+
     async def _refresh_account_authority(
         self,
         *,
@@ -748,6 +784,7 @@ class ReconcileWorker:
                 market_count=len(markets),
                 refreshed_markets=0,
                 refreshed_orderbooks=0,
+                refreshed_fee_rates=0,
                 refreshed_positions=0,
                 refreshed_open_orders=0,
                 refreshed_fills=0,
@@ -787,6 +824,7 @@ class ReconcileWorker:
             market_count=len(markets),
             refreshed_markets=0,
             refreshed_orderbooks=0,
+            refreshed_fee_rates=0,
             refreshed_positions=0 if positions is None else len(positions),
             refreshed_open_orders=0 if open_orders is None else len(open_orders),
             refreshed_fills=0 if fills is None else len(fills),

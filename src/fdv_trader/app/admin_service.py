@@ -763,6 +763,13 @@ class AdminService:
             "tick_size": _decimal_text(market.tick_size),
             "min_order_size": _decimal_text(market.min_order_size),
             "neg_risk": market.neg_risk,
+            "fees": {
+                "enabled": market.fees_enabled,
+                "maker_base_fee_bps": market.maker_base_fee_bps,
+                "taker_base_fee_bps": market.taker_base_fee_bps,
+                "fee_rate_bps": market.fee_rate_bps,
+                "fee_rate_updated_at": _jsonable(market.fee_rate_updated_at),
+            },
             "category": market.category,
             "tags": list(market.tags),
             "matched_keywords": list(market.matched_keywords),

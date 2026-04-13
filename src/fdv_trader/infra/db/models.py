@@ -156,6 +156,11 @@ class MarketModel(Base, TimestampMixin):
     tick_size: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False, default=Decimal("0.01"))
     min_order_size: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False, default=Decimal("1"))
     neg_risk: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    fees_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    maker_base_fee_bps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    taker_base_fee_bps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fee_rate_bps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fee_rate_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     category: Mapped[str | None] = mapped_column(String(128), index=True)
     tags: Mapped[list[str]] = mapped_column(
         JSONB,
@@ -202,6 +207,11 @@ class MarketModel(Base, TimestampMixin):
             "tick_size": str(market.tick_size),
             "min_order_size": str(market.min_order_size),
             "neg_risk": market.neg_risk,
+            "fees_enabled": market.fees_enabled,
+            "maker_base_fee_bps": market.maker_base_fee_bps,
+            "taker_base_fee_bps": market.taker_base_fee_bps,
+            "fee_rate_bps": market.fee_rate_bps,
+            "fee_rate_updated_at": _json_safe(market.fee_rate_updated_at),
             "category": market.category,
             "tags": list(market.tags),
             "matched_keywords": list(market.matched_keywords),
@@ -221,6 +231,11 @@ class MarketModel(Base, TimestampMixin):
             tick_size=market.tick_size,
             min_order_size=market.min_order_size,
             neg_risk=market.neg_risk,
+            fees_enabled=market.fees_enabled,
+            maker_base_fee_bps=market.maker_base_fee_bps,
+            taker_base_fee_bps=market.taker_base_fee_bps,
+            fee_rate_bps=market.fee_rate_bps,
+            fee_rate_updated_at=market.fee_rate_updated_at,
             category=market.category,
             tags=list(market.tags),
             matched_keywords=list(market.matched_keywords),
@@ -241,6 +256,15 @@ class MarketModel(Base, TimestampMixin):
             tick_size=_decimal(self.tick_size) or Decimal("0.01"),
             min_order_size=_decimal(self.min_order_size) or Decimal("1"),
             neg_risk=bool(self.neg_risk),
+            fees_enabled=self.fees_enabled,
+            maker_base_fee_bps=self.maker_base_fee_bps,
+            taker_base_fee_bps=self.taker_base_fee_bps,
+            fee_rate_bps=self.fee_rate_bps,
+            fee_rate_updated_at=(
+                None
+                if self.fee_rate_updated_at is None
+                else _ensure_aware(self.fee_rate_updated_at)
+            ),
             category=self.category,
             tags=_tuple_from_sequence(self.tags),
             matched_keywords=_tuple_from_sequence(self.matched_keywords),

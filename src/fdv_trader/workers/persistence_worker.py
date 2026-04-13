@@ -684,7 +684,15 @@ class PersistenceWorker:
 
     def _build_market_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any]:
         market = _mapping(payload, "market", "market_snapshot")
+        fees = _mapping(market or {}, "fees") or {}
         if market is None:
+            fees = {
+                "enabled": _safe_first_payload_value(payload, "fees_enabled"),
+                "maker_base_fee_bps": _safe_first_payload_value(payload, "maker_base_fee_bps"),
+                "taker_base_fee_bps": _safe_first_payload_value(payload, "taker_base_fee_bps"),
+                "fee_rate_bps": _safe_first_payload_value(payload, "fee_rate_bps"),
+                "fee_rate_updated_at": _safe_first_payload_value(payload, "fee_rate_updated_at"),
+            }
             market = {
                 "condition_id": event.condition_id,
                 "market_slug": event.market_slug,
@@ -696,6 +704,7 @@ class PersistenceWorker:
                 "tick_size": _safe_first_payload_value(payload, "tick_size"),
                 "min_order_size": _safe_first_payload_value(payload, "min_order_size"),
                 "neg_risk": _safe_first_payload_value(payload, "neg_risk"),
+                "fees": fees,
                 "category": _safe_first_payload_value(payload, "category"),
                 "tags": _safe_first_payload_value(payload, "tags"),
                 "matched_keywords": _safe_first_payload_value(payload, "matched_keywords"),
@@ -725,6 +734,11 @@ class PersistenceWorker:
                 "matched_fields": _to_jsonable(_safe_first_payload_value(payload, "matched_fields")),
                 "matched_keywords": _to_jsonable(_safe_first_payload_value(payload, "matched_keywords")),
                 "accepted": _safe_first_payload_value(payload, "accepted"),
+                "fees_enabled": _safe_first_payload_value(fees, "enabled"),
+                "maker_base_fee_bps": _safe_first_payload_value(fees, "maker_base_fee_bps"),
+                "taker_base_fee_bps": _safe_first_payload_value(fees, "taker_base_fee_bps"),
+                "fee_rate_bps": _safe_first_payload_value(fees, "fee_rate_bps"),
+                "fee_rate_updated_at": _safe_first_payload_value(fees, "fee_rate_updated_at"),
                 "market_data": _to_jsonable(market),
             }
         )

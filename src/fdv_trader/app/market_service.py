@@ -43,6 +43,29 @@ class MarketService:
         subscription_request: dict[str, Any] | None = None
         if classification.accepted:
             market = classification.to_market()
+            if existing_market is not None:
+                market = market.with_fee_schedule(
+                    fees_enabled=(
+                        market.fees_enabled
+                        if market.fees_enabled is not None
+                        else existing_market.fees_enabled
+                    ),
+                    maker_base_fee_bps=(
+                        market.maker_base_fee_bps
+                        if market.maker_base_fee_bps is not None
+                        else existing_market.maker_base_fee_bps
+                    ),
+                    taker_base_fee_bps=(
+                        market.taker_base_fee_bps
+                        if market.taker_base_fee_bps is not None
+                        else existing_market.taker_base_fee_bps
+                    ),
+                )
+                if existing_market.fee_rate_bps is not None:
+                    market = market.with_fee_rate(
+                        existing_market.fee_rate_bps,
+                        fee_rate_updated_at=existing_market.fee_rate_updated_at,
+                    )
             if self._registry is not None:
                 self._registry.upsert(market)
             if self._market_tracker is not None:
@@ -164,6 +187,17 @@ def _serialize_market(market: Market | None) -> dict[str, Any] | None:
         "tick_size": str(market.tick_size),
         "min_order_size": str(market.min_order_size),
         "neg_risk": market.neg_risk,
+        "fees": {
+            "enabled": market.fees_enabled,
+            "maker_base_fee_bps": market.maker_base_fee_bps,
+            "taker_base_fee_bps": market.taker_base_fee_bps,
+            "fee_rate_bps": market.fee_rate_bps,
+            "fee_rate_updated_at": (
+                None
+                if market.fee_rate_updated_at is None
+                else market.fee_rate_updated_at.isoformat()
+            ),
+        },
         "category": market.category,
         "tags": market.tags,
         "matched_keywords": market.matched_keywords,

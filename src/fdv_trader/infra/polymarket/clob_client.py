@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -36,6 +37,15 @@ def _normalize_request(request: ClobOrderRequest | Mapping[str, Any]) -> dict[st
     return dict(request)
 
 
+def _coerce_int(value: Any | None) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return int(Decimal(text))
+
+
 class ClobClient(PolymarketRestClientBase):
     """Polymarket CLOB 读写适配器。
 
@@ -54,12 +64,14 @@ class ClobClient(PolymarketRestClientBase):
         book_path: str = "/book",
         orders_path: str = "/orders",
         fills_path: str = "/fills",
+        fee_rate_path: str = "/fee-rate",
     ) -> None:
         super().__init__(base_url, client=client, timeout_s=timeout_s, headers=headers)
         self._auth_client = auth_client
         self._book_path = book_path
         self._orders_path = orders_path
         self._fills_path = fills_path
+        self._fee_rate_path = fee_rate_path
 
     @property
     def has_auth_client(self) -> bool:
@@ -98,6 +110,29 @@ class ClobClient(PolymarketRestClientBase):
                 condition_id=condition_id,
             )
         raise TypeError("clob orderbook response is not a mapping")
+
+    async def get_fee_rate(
+        self,
+        token_id: str,
+        *,
+        timeout_s: float | None = None,
+        path: str | None = None,
+    ) -> int:
+        payload = await self.get_json(
+            path or self._fee_rate_path,
+            params={"token_id": token_id},
+            timeout_s=timeout_s,
+            operation="clob.get_fee_rate",
+        )
+        if not isinstance(payload, Mapping):
+            raise TypeError("clob fee rate response is not a mapping")
+        raw_fee_rate = payload.get("base_fee")
+        if raw_fee_rate is None:
+            raw_fee_rate = payload.get("baseFee")
+        fee_rate_bps = _coerce_int(raw_fee_rate)
+        if fee_rate_bps is None:
+            raise TypeError("clob fee rate response missing base_fee")
+        return fee_rate_bps
 
     async def list_open_orders(
         self,
