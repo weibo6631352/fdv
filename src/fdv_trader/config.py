@@ -112,8 +112,7 @@ class Settings(BaseSettings):
     trading_queue_warn_depth: int = Field(default=100, ge=0)
     entry_signal_to_submit_warn_ms: int = Field(default=500, ge=1)
 
-    # 单 runtime 只装配一个 active strategy；复杂策略参数优先从结构化配置读取。
-    active_strategy: str = Field(default="fdv_default", min_length=1)
+    # 单 runtime 固定装配一个策略入口；复杂策略参数优先从结构化配置读取。
     strategy_config_path: str | None = None
 
     # 密钥类配置绝不入仓；空值只作为示例，真值必须来自安全环境变量或 secret manager。
@@ -171,15 +170,6 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             value = value.strip()
             return value or None
-        return value
-
-    @field_validator("active_strategy", mode="before")
-    @classmethod
-    def _normalize_active_strategy(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            value = value.strip()
-        if not value:
-            raise ValueError("ACTIVE_STRATEGY 不能为空")
         return value
 
     @property

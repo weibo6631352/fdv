@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 class RuntimeComponents:
     settings: Settings
     readiness: StartupReadiness
-    active_strategy: LoadedStrategy
+    strategy: LoadedStrategy
     logging_runtime: LoggingRuntime
     gamma_client: GammaClient
     clob_client: ClobClient
@@ -99,10 +99,7 @@ class RuntimeComponents:
 def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     settings = settings or load_settings()
     readiness = settings.validate_startup_readiness()
-    active_strategy = load_strategy(
-        settings.active_strategy,
-        config_path=settings.strategy_config_path,
-    )
+    strategy = load_strategy(config_path=settings.strategy_config_path)
     logging_runtime = configure_logging()
     metrics = MetricsRegistry()
     trading_thread_pool = ThreadPoolExecutor(
@@ -174,12 +171,12 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         rest_snapshot_loader=load_market_rest_snapshot,
     )
     market_service = MarketService(
-        strategy_module=active_strategy.strategy,
+        strategy_module=strategy.strategy,
         registry=registry,
         market_tracker=market_ws_worker,
     )
     strategy_service = StrategyService(
-        strategy_module=active_strategy.strategy,
+        strategy_module=strategy.strategy,
         registry=registry,
         orderbook_reader=market_ws_worker.snapshot,
     )
@@ -204,7 +201,7 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         max_open_orders=settings.max_open_orders,
         order_retry_limit=settings.order_retry_limit,
     )
-    reconcile_service = ReconcileService(strategy_module=active_strategy.strategy)
+    reconcile_service = ReconcileService(strategy_module=strategy.strategy)
     reconcile_worker = ReconcileWorker(
         event_bus=event_bus,
         reconcile_service=reconcile_service,
@@ -245,7 +242,7 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     return RuntimeComponents(
         settings=settings,
         readiness=readiness,
-        active_strategy=active_strategy,
+        strategy=strategy,
         logging_runtime=logging_runtime,
         gamma_client=gamma_client,
         clob_client=clob_client,

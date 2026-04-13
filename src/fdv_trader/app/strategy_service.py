@@ -27,7 +27,7 @@ OrderbookReader = Callable[[str], OrderbookSnapshot | None]
 
 
 class StrategyService:
-    """Builds allocation plans and bridges active strategy decisions into order intents."""
+    """Builds allocation plans and bridges strategy decisions into order intents."""
 
     def __init__(
         self,

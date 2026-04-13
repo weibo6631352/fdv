@@ -9,6 +9,8 @@ from fdv_trader.strategy_api.errors import StrategyLoadError
 from fdv_trader.strategy_api.interfaces import StrategyModule
 from fdv_trader.strategy_api.models import StrategySpec
 
+DEFAULT_STRATEGY_MODULE_PATH = "fdv_trader.strategies.fdv_default.strategy"
+
 
 @dataclass(frozen=True, slots=True)
 class LoadedStrategy:
@@ -18,36 +20,38 @@ class LoadedStrategy:
     spec: StrategySpec
 
 
-def resolve_strategy_module_path(active_strategy: str) -> str:
-    normalized = active_strategy.strip()
+def resolve_strategy_module_path(module_path: str | None = None) -> str:
+    if module_path is None:
+        return DEFAULT_STRATEGY_MODULE_PATH
+    normalized = module_path.strip()
     if not normalized:
-        raise StrategyLoadError("active strategy name cannot be blank")
+        return DEFAULT_STRATEGY_MODULE_PATH
     if "." in normalized:
         return normalized
     return f"fdv_trader.strategies.{normalized}.strategy"
 
 
 def load_strategy(
-    active_strategy: str,
+    module_path: str | None = None,
     *,
     config_path: str | None = None,
 ) -> LoadedStrategy:
-    module_path = resolve_strategy_module_path(active_strategy)
+    resolved_module_path = resolve_strategy_module_path(module_path)
     try:
-        module = importlib.import_module(module_path)
+        module = importlib.import_module(resolved_module_path)
     except ModuleNotFoundError as exc:
         raise StrategyLoadError(
-            f"failed to import strategy module '{module_path}'"
+            f"failed to import strategy module '{resolved_module_path}'"
         ) from exc
 
     strategy = _load_strategy_from_module(module, config_path=config_path)
     if not isinstance(strategy, StrategyModule):
         raise StrategyLoadError(
-            f"module '{module_path}' did not provide a valid StrategyModule"
+            f"module '{resolved_module_path}' did not provide a valid StrategyModule"
         )
     return LoadedStrategy(
         name=strategy.spec.name,
-        module_path=module_path,
+        module_path=resolved_module_path,
         strategy=strategy,
         spec=strategy.spec,
     )

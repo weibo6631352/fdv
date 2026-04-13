@@ -5,12 +5,19 @@ import sys
 
 import pytest
 
-from fdv_trader.strategy_api import StrategyLoadError, load_strategy, resolve_strategy_module_path
+from fdv_trader.strategy_api import (
+    DEFAULT_STRATEGY_MODULE_PATH,
+    StrategyLoadError,
+    load_strategy,
+    resolve_strategy_module_path,
+)
 import fdv_trader.strategies as strategies_pkg
 
 
-def test_resolve_strategy_module_path_uses_builtin_package() -> None:
-    assert resolve_strategy_module_path("fdv_default") == "fdv_trader.strategies.fdv_default.strategy"
+def test_resolve_strategy_module_path_defaults_to_builtin_strategy() -> None:
+    assert resolve_strategy_module_path() == DEFAULT_STRATEGY_MODULE_PATH
+    assert resolve_strategy_module_path("   ") == DEFAULT_STRATEGY_MODULE_PATH
+    assert resolve_strategy_module_path("fdv_default") == DEFAULT_STRATEGY_MODULE_PATH
     assert resolve_strategy_module_path("custom.module") == "custom.module"
 
 
@@ -85,10 +92,10 @@ def test_load_strategy_raises_for_missing_exports(tmp_path: Path) -> None:
 
 
 def test_load_strategy_loads_builtin_fdv_default() -> None:
-    loaded = load_strategy("fdv_default")
+    loaded = load_strategy()
 
     assert loaded.name == "fdv_default"
-    assert loaded.module_path == "fdv_trader.strategies.fdv_default.strategy"
+    assert loaded.module_path == DEFAULT_STRATEGY_MODULE_PATH
 
 
 def _write_strategy_module(
