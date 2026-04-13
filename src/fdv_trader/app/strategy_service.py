@@ -135,20 +135,33 @@ class StrategyService:
                 ),
             )
 
-        plan = AllocationPlan.equal_weight(
-            trace_id=trace_id,
-            portfolio_budget_usdc=portfolio_budget_usdc,
-            markets=candidate_snapshots,
-            available_usdc=available_usdc if available_usdc is not None else portfolio_budget_usdc,
-            max_order_usdc=max_order_usdc,
-            max_market_usdc=max_market_usdc,
-            max_total_usdc=max_total_usdc,
-            entry_no_price_max=entry_no_price_max,
-            min_liquidity_usdc=min_liquidity_usdc,
-            max_spread=max_spread,
+        sizing = self._strategy_module.size_entry(
+            StrategyContext(
+                trace_id=trace_id,
+                market=resolved_market,
+                orderbook=resolved_orderbook,
+                account_snapshot=account_snapshot,
+                position=position_index.get((resolved_market.condition_id, resolved_market.no_token_id)),
+                open_orders=open_orders,
+                now=resolved_orderbook.received_at,
+                metadata={
+                    "candidate_snapshots": candidate_snapshots,
+                    "portfolio_budget_usdc": portfolio_budget_usdc,
+                    "available_usdc": (
+                        available_usdc if available_usdc is not None else portfolio_budget_usdc
+                    ),
+                    "max_order_usdc": max_order_usdc,
+                    "max_market_usdc": max_market_usdc,
+                    "max_total_usdc": max_total_usdc,
+                    "entry_no_price_max": entry_no_price_max,
+                    "min_liquidity_usdc": min_liquidity_usdc,
+                    "max_spread": max_spread,
+                },
+            )
         )
-        allocation = _pick_allocation(plan.allocations, resolved_market.condition_id)
-        reason = plan.reason
+        plan = sizing.allocation_plan
+        allocation = sizing.allocation or _pick_allocation(plan.allocations, resolved_market.condition_id)
+        reason = sizing.reason or plan.reason
         intent: BuyOrderIntent | None = None
         focus_position = position_index.get((resolved_market.condition_id, resolved_market.no_token_id))
         focus_open_orders = tuple(

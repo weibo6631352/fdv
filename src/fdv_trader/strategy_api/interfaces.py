@@ -4,6 +4,7 @@ from typing import Protocol, runtime_checkable
 
 from fdv_trader.domain.market import Market
 from fdv_trader.strategy_api.models import (
+    EntrySizing,
     RecoveryDecision,
     StrategyContext,
     StrategyDecision,
@@ -24,7 +25,7 @@ class EntryPolicy(Protocol):
 
 @runtime_checkable
 class SizingPolicy(Protocol):
-    def size_entry(self, context: StrategyContext) -> StrategyDecision: ...
+    def size_entry(self, context: StrategyContext) -> EntrySizing: ...
 
 
 @runtime_checkable
@@ -43,6 +44,8 @@ class StrategyModule(Protocol):
     def spec(self) -> StrategySpec: ...
 
     def select_market(self, market: Market) -> UniverseDecision: ...
+
+    def size_entry(self, context: StrategyContext) -> EntrySizing: ...
 
     def decide_entry(self, context: StrategyContext) -> StrategyDecision: ...
 

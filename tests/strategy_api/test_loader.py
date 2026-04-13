@@ -27,12 +27,14 @@ def test_load_strategy_uses_build_strategy_with_config_path(tmp_path: Path) -> N
         package_name="test_strategy",
         strategy_source="""
 from fdv_trader.strategy_api.models import (
+    EntrySizing,
     RecoveryDecision,
     StrategyContext,
     StrategyDecision,
     StrategySpec,
     UniverseDecision,
 )
+from fdv_trader.domain.allocation import AllocationPlan
 
 
 class TestStrategy:
@@ -49,6 +51,16 @@ class TestStrategy:
 
     def select_market(self, market):
         return UniverseDecision.include(reason="selected")
+
+    def size_entry(self, context: StrategyContext):
+        return EntrySizing(
+            allocation_plan=AllocationPlan(
+                trace_id=context.trace_id,
+                total_budget_usdc=0,
+                reason="sized",
+            ),
+            reason="sized",
+        )
 
     def decide_entry(self, context: StrategyContext):
         return StrategyDecision.skip(reason="entry")

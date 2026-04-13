@@ -6,6 +6,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Mapping
 
+from fdv_trader.domain.allocation import Allocation, AllocationPlan
 from fdv_trader.domain.market import Market
 from fdv_trader.domain.order import Order
 from fdv_trader.domain.orderbook import OrderbookSnapshot
@@ -166,6 +167,18 @@ class StrategyDecision:
             market_slug=market_slug,
             metadata=metadata or {},
         )
+
+
+@dataclass(frozen=True, slots=True)
+class EntrySizing:
+    allocation_plan: AllocationPlan
+    allocation: Allocation | None = None
+    reason: str = ""
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def eligible_market_count(self) -> int:
+        return self.allocation_plan.eligible_market_count
 
 
 @dataclass(frozen=True, slots=True)

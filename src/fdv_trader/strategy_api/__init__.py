@@ -14,6 +14,7 @@ from fdv_trader.strategy_api.loader import (
     resolve_strategy_module_path,
 )
 from fdv_trader.strategy_api.models import (
+    EntrySizing,
     RecoveryDecision,
     RecoveryReplaceRequest,
     StrategyAction,
@@ -26,6 +27,7 @@ from fdv_trader.strategy_api.models import (
 __all__ = [
     "EntryPolicy",
     "DEFAULT_STRATEGY_MODULE_PATH",
+    "EntrySizing",
     "ExitPolicy",
     "LoadedStrategy",
     "RecoveryDecision",

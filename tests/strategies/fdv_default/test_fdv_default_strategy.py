@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from fdv_trader.domain.allocation import AllocationMarketSnapshot
 from fdv_trader.domain.market import Market, TradingStatus
 from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from fdv_trader.domain.position import Position
@@ -46,6 +47,75 @@ def test_fdv_default_strategy_can_be_loaded_and_decide_entry() -> None:
     assert universe.selected is True
     assert decision.action == StrategyAction.BUY
     assert decision.amount_usdc == Decimal("25")
+
+
+def test_fdv_default_strategy_sizes_entry_from_candidate_snapshots() -> None:
+    strategy = build_strategy()
+    primary = Market(
+        condition_id="condition-1",
+        market_slug="slug-1",
+        no_token_id="no-1",
+        yes_token_id="yes-1",
+        category="Crypto",
+        matched_keywords=("fdv", "500m"),
+        trading_status=TradingStatus.ELIGIBLE,
+    )
+    secondary = Market(
+        condition_id="condition-2",
+        market_slug="slug-2",
+        no_token_id="no-2",
+        yes_token_id="yes-2",
+        category="Crypto",
+        matched_keywords=("fdv", "500m"),
+        trading_status=TradingStatus.ELIGIBLE,
+    )
+    received_at = datetime.now(timezone.utc)
+    primary_orderbook = OrderbookSnapshot(
+        token_id="no-1",
+        best_bid=Decimal("0.55"),
+        best_ask=Decimal("0.60"),
+        bids=(PriceLevel(price=Decimal("0.55"), size=Decimal("100")),),
+        asks=(PriceLevel(price=Decimal("0.60"), size=Decimal("100")),),
+        received_at=received_at,
+        market_slug="slug-1",
+        condition_id="condition-1",
+    )
+    secondary_orderbook = OrderbookSnapshot(
+        token_id="no-2",
+        best_bid=Decimal("0.55"),
+        best_ask=Decimal("0.60"),
+        bids=(PriceLevel(price=Decimal("0.55"), size=Decimal("100")),),
+        asks=(PriceLevel(price=Decimal("0.60"), size=Decimal("100")),),
+        received_at=received_at,
+        market_slug="slug-2",
+        condition_id="condition-2",
+    )
+
+    sizing = strategy.size_entry(
+        StrategyContext(
+            trace_id="trace-sizing",
+            market=primary,
+            orderbook=primary_orderbook,
+            metadata={
+                "candidate_snapshots": (
+                    AllocationMarketSnapshot(market=primary, orderbook=primary_orderbook),
+                    AllocationMarketSnapshot(market=secondary, orderbook=secondary_orderbook),
+                ),
+                "portfolio_budget_usdc": Decimal("100"),
+                "available_usdc": Decimal("100"),
+                "max_order_usdc": Decimal("100"),
+                "max_market_usdc": Decimal("100"),
+                "max_total_usdc": Decimal("100"),
+                "entry_no_price_max": Decimal("0.60"),
+                "min_liquidity_usdc": Decimal("5"),
+                "max_spread": Decimal("0.10"),
+            },
+        )
+    )
+
+    assert sizing.eligible_market_count == 2
+    assert sizing.allocation is not None
+    assert sizing.allocation.buy_budget_usdc == Decimal("50")
 
 
 def test_fdv_default_strategy_recovery_returns_target_sell_and_pause_state() -> None:
