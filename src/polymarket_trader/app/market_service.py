@@ -47,6 +47,7 @@ class MarketService:
         discovered_at = discovered_at or datetime.now(timezone.utc)
         classification = self._classifier.classify(raw_market)
         existing_market = self._lookup_existing_market(classification)
+        account_snapshot = self._current_account_snapshot()
 
         market: Market | None = None
         tracked_market: Market | None = None
@@ -92,7 +93,7 @@ class MarketService:
                             market.no_token_id
                         )
             elif existing_market is not None:
-                if self._should_retain_filtered_market(existing_market):
+                if self._should_retain_filtered_market(existing_market, account_snapshot):
                     tracked_market = self._build_retained_filtered_market(
                         candidate_market,
                         existing_market=existing_market,
@@ -219,10 +220,22 @@ class MarketService:
             return classification.reject_reason.value
         return ""
 
-    def _should_retain_filtered_market(self, market: Market) -> bool:
+    def _current_account_snapshot(self) -> AccountSnapshot | None:
         if self._account_snapshot_provider is None:
+            return None
+        return self._account_snapshot_provider()
+
+    def _should_retain_filtered_market(
+        self,
+        market: Market,
+        account_snapshot: AccountSnapshot | None,
+    ) -> bool:
+        strategy_hook = getattr(self._strategy_module, "should_keep_tracking", None)
+        if callable(strategy_hook):
+            return bool(strategy_hook(market, account_snapshot))
+        if account_snapshot is None:
             return True
-        snapshot = self._account_snapshot_provider()
+        snapshot = account_snapshot
         position = snapshot.get_position(market.condition_id, market.no_token_id)
         if position is not None and (
             position.shares > 0
@@ -240,6 +253,15 @@ class MarketService:
         existing_market: Market,
         reason: str,
     ) -> Market:
+        strategy_hook = getattr(self._strategy_module, "build_filtered_tracking_market", None)
+        if callable(strategy_hook):
+            market = strategy_hook(
+                candidate_market,
+                existing_market=existing_market,
+                reason=reason,
+            )
+            if isinstance(market, Market):
+                return market
         if existing_market.trading_status in {
             TradingStatus.CLOSED,
             TradingStatus.RESOLVED,

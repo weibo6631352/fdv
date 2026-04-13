@@ -17,11 +17,9 @@ from polymarket_trader.strategies.current.strategy import build_strategy as buil
 
 def run_entry_replay(
     fixture_path: str,
-    *,
-    strategy_config_path: str | None = None,
 ) -> dict[str, Any]:
     fixture = load_mapping_file(fixture_path)
-    strategy = build_current_strategy(config_path=strategy_config_path)
+    strategy = build_current_strategy()
     registry = MarketRegistry()
     markets = tuple(_load_market(item) for item in _list(fixture, "markets"))
     for market in markets:

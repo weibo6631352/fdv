@@ -40,7 +40,10 @@
 ## 策略与测试入口
 
 - 当前运行策略固定在 [src/polymarket_trader/strategies/current/strategy.py](./src/polymarket_trader/strategies/current/strategy.py)。
-- 策略参数定义位于 [src/polymarket_trader/strategies/current/config.py](./src/polymarket_trader/strategies/current/config.py)。
+- 策略业务参数定义位于 [src/polymarket_trader/strategies/current/config.py](./src/polymarket_trader/strategies/current/config.py)，不再通过 `.env` 注入。
+- 市场筛选位于 [src/polymarket_trader/strategies/current/market_filter.py](./src/polymarket_trader/strategies/current/market_filter.py)。
+- 交易决策位于 [src/polymarket_trader/strategies/current/trading_strategy.py](./src/polymarket_trader/strategies/current/trading_strategy.py)。
+- 订阅保留与移除规则位于 [src/polymarket_trader/strategies/current/subscription.py](./src/polymarket_trader/strategies/current/subscription.py)。
 - 远端市场发现由 `build_discovery_queries()` 提供官方 Gamma 查询参数，框架只透传查询；最终是否纳入 universe，仍由 `select_market()` 决定。
 - 日常本地回归直接运行 `pytest`。
 - PostgreSQL 集成测试默认允许跳过；需要验证真实建表和持久化链路时，先设置 `TRADER_TEST_POSTGRES_DSN` 再运行 `pytest tests/infra/test_postgres_integration.py -q`。

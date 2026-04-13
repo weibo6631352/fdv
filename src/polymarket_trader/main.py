@@ -101,7 +101,7 @@ class RuntimeComponents:
 def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     settings = settings or load_settings()
     readiness = settings.validate_startup_readiness()
-    strategy = build_current_strategy(config_path=settings.strategy_config_path)
+    strategy = build_current_strategy()
     logging_runtime = configure_logging()
     metrics = MetricsRegistry()
     trading_thread_pool = ThreadPoolExecutor(
@@ -169,7 +169,7 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     market_ws_worker = MarketWsWorker(
         event_bus=event_bus,
         registry=registry,
-        entry_price_max=settings.entry_no_price_max,
+        entry_price_max=strategy.entry_no_price_max,
         rest_snapshot_loader=load_market_rest_snapshot,
     )
     market_service = MarketService(
@@ -197,9 +197,9 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         max_order_usdc=settings.max_order_usdc,
         max_market_usdc=settings.max_market_usdc,
         max_total_usdc=settings.max_total_usdc,
-        entry_no_price_max=settings.entry_no_price_max,
-        min_liquidity_usdc=settings.min_liquidity_usdc,
-        max_spread=settings.max_spread,
+        entry_no_price_max=strategy.entry_no_price_max,
+        min_liquidity_usdc=strategy.min_liquidity_usdc,
+        max_spread=strategy.max_spread,
         max_open_orders=settings.max_open_orders,
         order_retry_limit=settings.order_retry_limit,
     )

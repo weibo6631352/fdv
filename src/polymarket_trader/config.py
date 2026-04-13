@@ -90,10 +90,6 @@ class Settings(BaseSettings):
     max_order_usdc: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     max_market_usdc: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     max_total_usdc: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
-    entry_no_price_max: Decimal = Field(default=Decimal("0.60"), ge=Decimal("0"), le=Decimal("1"))
-    exit_no_price: Decimal = Field(default=Decimal("0.70"), ge=Decimal("0"), le=Decimal("1"))
-    min_liquidity_usdc: Decimal = Field(default=Decimal("5"), ge=Decimal("0"))
-    max_spread: Decimal = Field(default=Decimal("0.10"), ge=Decimal("0"), le=Decimal("1"))
     market_sync_interval_seconds: int = Field(default=60, ge=1)
     order_retry_limit: int = Field(default=2, ge=0)
     max_open_orders: int = Field(default=0, ge=0)
@@ -111,9 +107,6 @@ class Settings(BaseSettings):
     critical_lock_timeout_ms: int = Field(default=20, ge=1)
     trading_queue_warn_depth: int = Field(default=100, ge=0)
     entry_signal_to_submit_warn_ms: int = Field(default=500, ge=1)
-
-    # 单 runtime 固定装配一个策略入口；复杂策略参数优先从结构化配置读取。
-    strategy_config_path: str | None = None
 
     # 密钥类配置绝不入仓；空值只作为示例，真值必须来自安全环境变量或 secret manager。
     polymarket_api_key: SecretStr | None = None
@@ -162,14 +155,6 @@ class Settings(BaseSettings):
     def _blank_string_to_none(cls, value: Any) -> Any:
         if isinstance(value, str) and value.strip() == "":
             return None
-        return value
-
-    @field_validator("strategy_config_path", mode="before")
-    @classmethod
-    def _normalize_strategy_config_path(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
         return value
 
     @property
@@ -293,46 +278,6 @@ class Settings(BaseSettings):
                         value=value,
                     )
                 )
-
-        if self.entry_no_price_max <= 0 or self.entry_no_price_max > 1:
-            blocking_issues.append(
-                ConfigIssue(
-                    field="entry_no_price_max",
-                    code="invalid_ratio",
-                    message="ENTRY_NO_PRICE_MAX 必须在 0 到 1 之间",
-                    value=self.entry_no_price_max,
-                )
-            )
-
-        if self.exit_no_price <= 0 or self.exit_no_price > 1:
-            blocking_issues.append(
-                ConfigIssue(
-                    field="exit_no_price",
-                    code="invalid_ratio",
-                    message="EXIT_NO_PRICE 必须在 0 到 1 之间",
-                    value=self.exit_no_price,
-                )
-            )
-
-        if self.max_spread < 0 or self.max_spread > 1:
-            blocking_issues.append(
-                ConfigIssue(
-                    field="max_spread",
-                    code="invalid_ratio",
-                    message="MAX_SPREAD 必须在 0 到 1 之间",
-                    value=self.max_spread,
-                )
-            )
-
-        if self.min_liquidity_usdc < 0:
-            blocking_issues.append(
-                ConfigIssue(
-                    field="min_liquidity_usdc",
-                    code="negative_limit",
-                    message="MIN_LIQUIDITY_USDC 不能为负数",
-                    value=self.min_liquidity_usdc,
-                )
-            )
 
         if self.order_retry_limit < 0:
             blocking_issues.append(
