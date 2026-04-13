@@ -450,9 +450,6 @@ class UserWsWorker:
         payload = _flatten_message(message)
         message_type = _message_type(payload)
         trace_id = _extract_trace_id(payload)
-        condition_id = _extract_condition_id(payload)
-        token_id = _extract_token_id(payload)
-        market_slug = _extract_market_slug(payload)
         event_id = _extract_event_id(payload)
 
         if message_type in {"connected", "reconnected", "connection_open", "ws_connected"}:

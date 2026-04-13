@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from itertools import count
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 from uuid import uuid4
 
 from polymarket_trader.app.market_service import MarketDiscoveryOutcome, MarketService

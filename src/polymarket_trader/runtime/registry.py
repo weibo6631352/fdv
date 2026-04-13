@@ -73,6 +73,13 @@ class MarketRegistry:
     def snapshot(self) -> MarketRegistrySnapshot:
         return self._snapshot
 
+    def remove_market(self, condition_id: str, *, timeout: float = 0.05) -> Market | None:
+        return self._with_condition_lock(
+            condition_id,
+            timeout,
+            lambda: self._remove_market_locked(condition_id),
+        )
+
     def set_trading_status(
         self,
         condition_id: str,
@@ -283,6 +290,25 @@ class MarketRegistry:
                 condition_id_by_slug,
             )
             return updated
+
+    def _remove_market_locked(self, condition_id: str) -> Market | None:
+        with self._commit_lock:
+            current = self._markets_by_condition_id.get(condition_id)
+            if current is None:
+                return None
+
+            markets_by_condition_id = dict(self._markets_by_condition_id)
+            condition_id_by_no_token_id = dict(self._condition_id_by_no_token_id)
+            condition_id_by_slug = dict(self._condition_id_by_slug)
+
+            self._detach_indexes(current, condition_id_by_no_token_id, condition_id_by_slug)
+            markets_by_condition_id.pop(condition_id, None)
+            self._publish_state(
+                markets_by_condition_id,
+                condition_id_by_no_token_id,
+                condition_id_by_slug,
+            )
+            return current
 
     def _detach_indexes(
         self,

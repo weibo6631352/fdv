@@ -8,7 +8,13 @@ from polymarket_trader.app.strategy_service import StrategyService
 from polymarket_trader.app.trading_service import TradingService
 from polymarket_trader.domain.events import DomainEvent, DomainEventType
 from polymarket_trader.domain.market import Market, TradingStatus
-from polymarket_trader.domain.order import OrderResult, OrderResultStatus, OrderSide, OrderType
+from polymarket_trader.domain.order import (
+    OrderResult,
+    OrderResultStatus,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+)
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.infra.polymarket.order_executor import (
     InMemoryPolymarketOrderClient,
@@ -122,7 +128,11 @@ def _sell_result(
     market: Market,
     size_shares: Decimal,
     status: OrderResultStatus = OrderResultStatus.FULL_FILL,
+    matched_shares: Decimal | None = None,
+    remaining_shares: Decimal | None = None,
 ) -> OrderResult:
+    matched_shares = size_shares if matched_shares is None else matched_shares
+    remaining_shares = Decimal("0") if remaining_shares is None else remaining_shares
     return OrderResult(
         trace_id="trace-sell",
         condition_id=market.condition_id,
@@ -133,8 +143,8 @@ def _sell_result(
         order_type=OrderType.GTC,
         price=Decimal("0.70"),
         requested_size_shares=size_shares,
-        matched_shares=size_shares,
-        remaining_shares=Decimal("0"),
+        matched_shares=matched_shares,
+        remaining_shares=remaining_shares,
         spent_usdc=size_shares * Decimal("0.70"),
         notional_usdc=size_shares * Decimal("0.70"),
         order_id="sell-order",
@@ -311,6 +321,77 @@ def test_strategy_worker_partial_fill_only_sells_filled_shares() -> None:
         assert position.shares == Decimal("4")
         assert position.open_sell_shares == Decimal("0")
         assert executor.intents[0].amount_usdc == requested_amount_usdc
+
+    asyncio.run(run())
+
+
+def test_strategy_worker_tracks_live_follow_up_sell_in_hot_state() -> None:
+    async def run() -> None:
+        registry = MarketRegistry()
+        account_state_store = _ready_account_state_store()
+        market = _market(condition_id="condition", token_id="no-token", market_slug="token")
+        registry.upsert(market)
+        strategy_service = StrategyService(
+            strategy_module=build_strategy(),
+            registry=registry,
+            orderbook_reader={market.no_token_id: _snapshot(market=market)}.get,
+        )
+        requested_amount_usdc = Decimal("6")
+        filled_shares = Decimal("10")
+        executor = _ScriptedExecutor(
+            _buy_result(
+                market=market,
+                requested_amount_usdc=requested_amount_usdc,
+                status=OrderResultStatus.FULL_FILL,
+                matched_shares=filled_shares,
+                remaining_shares=Decimal("0"),
+                spent_usdc=requested_amount_usdc,
+                reason="full_fill",
+            ),
+            _sell_result(
+                market=market,
+                size_shares=filled_shares,
+                status=OrderResultStatus.LIVE,
+                matched_shares=Decimal("0"),
+                remaining_shares=filled_shares,
+            ),
+        )
+        strategy_worker = StrategyWorker(
+            strategy_service=strategy_service,
+            trading_service=TradingService(executor=executor),
+            account_state_store=account_state_store,
+            portfolio_budget_usdc=Decimal("100"),
+            available_usdc=Decimal("100"),
+            max_order_usdc=Decimal("20"),
+            max_market_usdc=Decimal("20"),
+            max_total_usdc=Decimal("100"),
+            min_liquidity_usdc=Decimal("5"),
+            max_spread=Decimal("0.10"),
+            balance_usdc=Decimal("100"),
+            allowance_usdc=Decimal("100"),
+            max_open_orders=10,
+            order_retry_limit=2,
+        )
+
+        result = await strategy_worker.process_event(_entry_event(market, trace_id="trace-live-sell"))
+
+        assert result is not None
+        assert result.review is not None
+        assert result.review.order_result is not None
+        assert result.review.order_result.status == OrderResultStatus.FULL_FILL
+        assert len(result.follow_up_intents) == 1
+        assert len(result.follow_up_reviews) == 1
+        assert result.follow_up_reviews[0].order_result is not None
+        assert result.follow_up_reviews[0].order_result.status == OrderResultStatus.LIVE
+        snapshot = account_state_store.snapshot()
+        position = snapshot.get_position(market.condition_id, market.no_token_id)
+        assert position is not None
+        assert position.shares == filled_shares
+        assert position.open_sell_shares == filled_shares
+        open_sell_orders = snapshot.open_sell_orders_for_market(market.condition_id, market.no_token_id)
+        assert len(open_sell_orders) == 1
+        assert open_sell_orders[0].status == OrderStatus.LIVE
+        assert open_sell_orders[0].remaining_shares == filled_shares
 
     asyncio.run(run())
 

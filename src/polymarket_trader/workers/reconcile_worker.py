@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Callable
@@ -19,7 +19,6 @@ from polymarket_trader.app.trading_service import TradingService
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, Fill, OutboxPriority
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.order import (
-    BuyOrderIntent,
     CancelOrderIntent,
     Order,
     OrderRecord,
@@ -28,6 +27,7 @@ from polymarket_trader.domain.order import (
     OrderSide,
     OrderStatus,
     OrderType,
+    ReplaceOrderIntent,
     SellOrderIntent,
 )
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
@@ -348,6 +348,7 @@ class ReconcileWorker:
 
         if self._account_state_store is not None:
             self._account_state_store.mark_reconciled()
+            self._prune_strategy_filtered_markets(self._account_state_store.snapshot())
 
         completed_at = _utc_now()
         self._last_completed_at = completed_at
@@ -374,6 +375,9 @@ class ReconcileWorker:
             return
         if action.action_type == ReconcileActionType.CANCEL_EXCESS_SELL:
             await self._apply_cancel(action, account_snapshot)
+            return
+        if action.action_type == ReconcileActionType.REPLACE_OPEN_SELL:
+            await self._apply_replace(action, market, account_snapshot)
             return
         if action.action_type == ReconcileActionType.SUBMIT_MISSING_SELL:
             await self._apply_sell(action, market, account_snapshot)
@@ -492,6 +496,109 @@ class ReconcileWorker:
             )
             self._account_state_store.upsert_position(current_position)
 
+    async def _apply_replace(
+        self,
+        action: ReconcileAction,
+        market: Market,
+        account_snapshot: AccountSnapshot,
+    ) -> None:
+        replace_intent = action.intent
+        if not isinstance(replace_intent, ReplaceOrderIntent):
+            raise TypeError("replace action is missing replace intent")
+
+        result = None
+        submitted = False
+        if self._trading_service is not None:
+            review = await self._trading_service.replace(replace_intent)
+            result = review.order_result
+            submitted = review.submitted and _submission_succeeded(result)
+        if not submitted and self._executor is not None and hasattr(self._executor, "replace"):
+            result = self._executor.replace(replace_intent)
+            if hasattr(result, "__await__"):
+                result = await result
+            submitted = _submission_succeeded(result)
+
+        if self._account_state_store is None or not submitted:
+            return
+
+        current_snapshot = self._account_state_store.snapshot()
+        existing_order = _find_open_order(
+            current_snapshot,
+            action.condition_id,
+            action.token_id,
+            action.source_order_id,
+        ) or _find_open_order(
+            account_snapshot,
+            action.condition_id,
+            action.token_id,
+            action.source_order_id,
+        )
+        existing_size = Decimal("0") if existing_order is None else _order_open_size(existing_order)
+        if action.source_order_id is not None:
+            self._account_state_store.remove_order(action.source_order_id)
+
+        replacement_order_id = replace_intent.order_id
+        replacement_remaining = replace_intent.size_shares
+        replacement_price = replace_intent.new_price
+        replacement_status = OrderStatus.SUBMITTED
+        matched_shares = Decimal("0")
+        trade_id = None
+        if isinstance(result, OrderResult):
+            replacement_order_id = result.order_id or replacement_order_id
+            replacement_price = result.price or replacement_price
+            matched_shares = result.matched_shares
+            trade_id = result.trade_id
+            replacement_status = _order_result_to_order_status(result)
+            replacement_remaining = result.remaining_shares
+            if result.status in {OrderResultStatus.LIVE, OrderResultStatus.PARTIAL_FILL} and replacement_remaining <= Decimal(
+                "0"
+            ):
+                replacement_remaining = max(replace_intent.size_shares - result.matched_shares, Decimal("0"))
+        if replacement_remaining < Decimal("0"):
+            replacement_remaining = Decimal("0")
+
+        if replacement_status in {
+            OrderStatus.SUBMITTED,
+            OrderStatus.LIVE,
+            OrderStatus.PARTIALLY_FILLED,
+            OrderStatus.CREATED,
+            OrderStatus.SIGNED,
+        }:
+            self._account_state_store.upsert_order(
+                OrderRecord(
+                    trace_id=replace_intent.trace_id,
+                    condition_id=replace_intent.condition_id,
+                    token_id=replace_intent.token_id,
+                    side=OrderSide.SELL,
+                    order_type=OrderType.GTC,
+                    price=replacement_price,
+                    market_slug=replace_intent.market_slug,
+                    size_shares=replace_intent.size_shares,
+                    filled_shares=matched_shares,
+                    remaining_shares=replacement_remaining,
+                    notional_usdc=replacement_price * replace_intent.size_shares,
+                    order_id=replacement_order_id,
+                    trade_id=trade_id,
+                    status=replacement_status,
+                    idempotency_key=replace_intent.idempotency_key or replacement_order_id,
+                    reason=replace_intent.reason or "reconcile_replace_sell",
+                    created_at=_utc_now(),
+                    updated_at=_utc_now(),
+                )
+            )
+        else:
+            self._account_state_store.remove_order(replacement_order_id)
+
+        current_position = current_snapshot.get_position(action.condition_id, action.token_id)
+        if current_position is None:
+            current_position = account_snapshot.get_position(action.condition_id, action.token_id)
+        if current_position is None:
+            return
+        updated_open_sell = max(current_position.open_sell_shares - existing_size, Decimal("0")) + replacement_remaining
+        self._account_state_store.upsert_position(
+            current_position.with_open_sell_shares(updated_open_sell)
+        )
+
     async def _publish_diff(self, trace_id: str, market: Market, action: ReconcileAction) -> None:
         await self._publish(
             OutboxPriority.P2,
@@ -518,6 +625,21 @@ class ReconcileWorker:
     async def _publish(self, priority: OutboxPriority, event: DomainEvent) -> None:
         if self._event_bus is not None:
             await self._event_bus.publish(priority, event)
+
+    def _prune_strategy_filtered_markets(self, account_snapshot: AccountSnapshot) -> None:
+        if self._registry is None:
+            return
+        markets = self._registry.snapshot().markets
+        for market in markets:
+            if market.trading_status != TradingStatus.PAUSED:
+                continue
+            if market.reject_reason != "strategy_filtered_out":
+                continue
+            if _market_has_exposure(account_snapshot, market):
+                continue
+            self._registry.remove_market(market.condition_id)
+            if self._market_ws_worker is not None and hasattr(self._market_ws_worker, "untrack_market"):
+                self._market_ws_worker.untrack_market(market.no_token_id)
 
     def _resolve_snapshots(self) -> tuple[MarketRegistrySnapshot, AccountSnapshot]:
         if self._registry is not None:
@@ -911,6 +1033,56 @@ def _submission_succeeded(result: object | None) -> bool:
     if submitted is not None:
         return bool(submitted)
     return True
+
+
+def _market_has_exposure(account_snapshot: AccountSnapshot, market: Market) -> bool:
+    position = account_snapshot.get_position(market.condition_id, market.no_token_id)
+    if position is not None and (
+        position.shares > 0
+        or position.open_buy_shares > 0
+        or position.open_sell_shares > 0
+        or position.pending_buy_shares > 0
+    ):
+        return True
+    return bool(account_snapshot.open_orders_for_market(market.condition_id, market.no_token_id))
+
+
+def _order_open_size(order: Order) -> Decimal:
+    if order.remaining_shares is not None:
+        return max(order.remaining_shares, Decimal("0"))
+    if order.size_shares is not None:
+        return max(order.size_shares, Decimal("0"))
+    if order.amount_usdc is not None:
+        return max(order.amount_usdc, Decimal("0"))
+    return Decimal("0")
+
+
+def _order_result_to_order_status(result: OrderResult) -> OrderStatus:
+    return {
+        OrderResultStatus.FULL_FILL: OrderStatus.MATCHED,
+        OrderResultStatus.PARTIAL_FILL: OrderStatus.PARTIALLY_FILLED,
+        OrderResultStatus.NO_FILL: OrderStatus.NO_FILL,
+        OrderResultStatus.LIVE: OrderStatus.LIVE,
+        OrderResultStatus.REJECTED: OrderStatus.REJECTED,
+        OrderResultStatus.FAILED: OrderStatus.FAILED,
+        OrderResultStatus.CANCELLED: OrderStatus.CANCELLED,
+        OrderResultStatus.UNKNOWN_TIMEOUT: OrderStatus.FAILED,
+    }[result.status]
+
+
+def _find_open_order(
+    snapshot: AccountSnapshot | None,
+    condition_id: str,
+    token_id: str,
+    order_id: str | None,
+) -> Order | None:
+    if snapshot is None or order_id is None:
+        return None
+    for order in snapshot.open_orders_for_market(condition_id, token_id):
+        candidate_id = order.order_id or order.idempotency_key
+        if candidate_id == order_id:
+            return order
+    return None
 
 
 def _pick_gamma_market(

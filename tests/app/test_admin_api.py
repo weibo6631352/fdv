@@ -1,7 +1,5 @@
 from __future__ import annotations
-
-import asyncio
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -24,7 +22,6 @@ from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.order import (
     CancelOrderIntent,
     ExecutionTimestamps,
-    Order,
     OrderRecord,
     OrderResult,
     OrderResultStatus,

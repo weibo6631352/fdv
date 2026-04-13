@@ -176,6 +176,7 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         strategy_module=strategy,
         registry=registry,
         market_tracker=market_ws_worker,
+        account_snapshot_provider=account_state_store.snapshot,
     )
     strategy_service = StrategyService(
         strategy_module=strategy,
@@ -193,7 +194,6 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         trading_service=trading_service,
         account_state_store=account_state_store,
         portfolio_budget_usdc=settings.portfolio_budget_usdc,
-        available_usdc=settings.portfolio_budget_usdc,
         max_order_usdc=settings.max_order_usdc,
         max_market_usdc=settings.max_market_usdc,
         max_total_usdc=settings.max_total_usdc,

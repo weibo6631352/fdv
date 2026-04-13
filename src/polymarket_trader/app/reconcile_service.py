@@ -26,6 +26,7 @@ from polymarket_trader.strategy_api.models import StrategyAction, StrategyContex
 class ReconcileActionType(StrEnum):
     CANCEL_OPEN_BUY = "cancel_open_buy"
     SUBMIT_MISSING_SELL = "submit_missing_sell"
+    REPLACE_OPEN_SELL = "replace_open_sell"
     CANCEL_EXCESS_SELL = "cancel_excess_sell"
     PAUSE_TRADING = "pause_trading"
 
@@ -201,6 +202,11 @@ class ReconcileService:
 
         actions: list[ReconcileAction] = []
         cancel_order_ids = set(recovery.cancel_order_ids)
+        replace_requests = {
+            request.order_id: request
+            for request in recovery.replace_requests
+            if request.order_id
+        }
 
         for order in open_buy_orders:
             order_id = _normalize_order_id(order)
@@ -227,8 +233,54 @@ class ReconcileService:
                 )
             )
 
+        planned_open_sell_shares = sum((_order_open_size(order) for order in open_sell_orders), Decimal("0"))
+        replaced_open_sell_shares = Decimal("0")
+        replacement_sell_shares = Decimal("0")
+        replace_candidates: list[tuple[Order, object]] = []
+        for order in open_sell_orders:
+            order_id = _normalize_order_id(order)
+            replace_request = replace_requests.get(order_id)
+            if replace_request is None:
+                continue
+            replace_candidates.append((order, replace_request))
+            replaced_open_sell_shares += _order_open_size(order)
+            replacement_sell_shares += max(replace_request.size_shares, Decimal("0"))
+        if replace_candidates:
+            planned_open_sell_shares = max(
+                planned_open_sell_shares - replaced_open_sell_shares + replacement_sell_shares,
+                Decimal("0"),
+            )
+
+        for order, replace_request in replace_candidates:
+            order_id = _normalize_order_id(order)
+            replace_reason = replace_request.reason or "sell_replace_requested"
+            actions.append(
+                ReconcileAction(
+                    action_type=ReconcileActionType.REPLACE_OPEN_SELL,
+                    trace_id=trace_id,
+                    condition_id=market.condition_id,
+                    token_id=market.no_token_id,
+                    market_slug=market.market_slug,
+                    reason=replace_reason,
+                    source_order_id=order_id,
+                    source_order_side=order.side,
+                    target_size_shares=replace_request.size_shares,
+                    target_notional_usdc=replace_request.size_shares * replace_request.new_price,
+                    intent=self._strategy_engine.build_replace_intent(
+                        trace_id=trace_id,
+                        condition_id=market.condition_id,
+                        no_token_id=market.no_token_id,
+                        order_id=order_id,
+                        new_price=replace_request.new_price,
+                        size_shares=replace_request.size_shares,
+                        market_slug=market.market_slug,
+                        reason=replace_reason,
+                    ),
+                )
+            )
+
         target_sell_shares = max(recovery.target_sell_size_shares, Decimal("0"))
-        open_sell_shares = sum((_order_open_size(order) for order in open_sell_orders), Decimal("0"))
+        open_sell_shares = planned_open_sell_shares
 
         shortage = max(target_sell_shares - open_sell_shares, Decimal("0"))
         if shortage > Decimal("0"):
@@ -263,7 +315,12 @@ class ReconcileService:
 
         excess = max(open_sell_shares - target_sell_shares, Decimal("0"))
         if excess > Decimal("0"):
-            for order in self._select_sell_cancellations(open_sell_orders, excess):
+            sell_orders_for_cancellation = tuple(
+                order
+                for order in open_sell_orders
+                if _normalize_order_id(order) not in replace_requests
+            )
+            for order in self._select_sell_cancellations(sell_orders_for_cancellation, excess):
                 order_id = _normalize_order_id(order)
                 actions.append(
                     ReconcileAction(

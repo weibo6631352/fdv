@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from polymarket_trader.app.market_service import MarketService
 from polymarket_trader.domain.events import DomainEventType
+from polymarket_trader.domain.market import TradingStatus
+from polymarket_trader.domain.position import Position
+from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.registry import MarketRegistry
 from polymarket_trader.strategy_api.models import StrategySpec
 from polymarket_trader.strategy_api.models import UniverseDecision
@@ -10,9 +15,13 @@ from polymarket_trader.strategy_api.models import UniverseDecision
 class _Tracker:
     def __init__(self) -> None:
         self.markets = []
+        self.untracked_token_ids = []
 
     def track_market(self, market) -> None:
         self.markets.append(market)
+
+    def untrack_market(self, token_id: str) -> None:
+        self.untracked_token_ids.append(token_id)
 
     def build_subscription_request(self, token_id: str) -> dict[str, object]:
         return {
@@ -43,6 +52,29 @@ class _AcceptingStrategy:
 
     def select_market(self, market):
         return UniverseDecision.include(reason="accepted")
+
+    def decide_entry(self, context):
+        raise AssertionError("not used")
+
+    def decide_exit(self, context):
+        raise AssertionError("not used")
+
+    def decide_recovery(self, context):
+        raise AssertionError("not used")
+
+
+class _SwitchingStrategy:
+    def __init__(self, *, selected: bool) -> None:
+        self.selected = selected
+
+    @property
+    def spec(self):
+        return StrategySpec(name="switching")
+
+    def select_market(self, market):
+        if self.selected:
+            return UniverseDecision.include(reason="accepted")
+        return UniverseDecision.exclude(reason="strategy_filtered_out")
 
     def decide_entry(self, context):
         raise AssertionError("not used")
@@ -123,3 +155,68 @@ def test_market_service_respects_strategy_universe_filter() -> None:
     assert outcome.event.event_type == DomainEventType.MARKET_FILTERED_OUT
     assert outcome.event.reason == "strategy_filtered_out"
     assert tracker.markets == []
+
+
+def test_market_service_keeps_filtered_existing_market_paused_while_exposure_remains() -> None:
+    registry = MarketRegistry()
+    tracker = _Tracker()
+    strategy = _SwitchingStrategy(selected=True)
+    account_state_store = AccountStateStore()
+    account_state_store.upsert_position(
+        Position(
+            condition_id="condition",
+            token_id="no-condition",
+            market_slug="sample-market-a",
+            shares=Decimal("5"),
+            cost_usdc=Decimal("3"),
+        )
+    )
+    service = MarketService(
+        strategy_module=strategy,
+        registry=registry,
+        market_tracker=tracker,
+        account_snapshot_provider=account_state_store.snapshot,
+    )
+
+    first = service.ingest_raw_market(_raw_market(), source="gamma", trace_id="trace-1")
+    strategy.selected = False
+    outcome = service.ingest_raw_market(_raw_market(), source="gamma", trace_id="trace-2")
+
+    assert first.accepted
+    assert outcome.accepted is False
+    assert outcome.event.event_type == DomainEventType.MARKET_FILTERED_OUT
+    assert outcome.tracking_retained is True
+    retained = registry.get_by_condition_id("condition")
+    assert retained is not None
+    assert retained.trading_status == TradingStatus.PAUSED
+    assert retained.reject_reason == "strategy_filtered_out"
+    assert outcome.event.payload["tracking_retained"] is True
+    assert outcome.event.payload["tracked_market"]["trading_status"] == TradingStatus.PAUSED.value
+    assert tracker.untracked_token_ids == []
+
+
+def test_market_service_removes_filtered_existing_market_when_flat_and_orderless() -> None:
+    registry = MarketRegistry()
+    tracker = _Tracker()
+    strategy = _SwitchingStrategy(selected=True)
+    account_state_store = AccountStateStore()
+    service = MarketService(
+        strategy_module=strategy,
+        registry=registry,
+        market_tracker=tracker,
+        account_snapshot_provider=account_state_store.snapshot,
+    )
+
+    first = service.ingest_raw_market(_raw_market(), source="gamma", trace_id="trace-1")
+    assert first.accepted
+
+    strategy.selected = False
+    outcome = service.ingest_raw_market(_raw_market(), source="gamma", trace_id="trace-2")
+
+    assert outcome.accepted is False
+    assert outcome.tracking_retained is False
+    assert outcome.event.event_type == DomainEventType.MARKET_FILTERED_OUT
+    assert registry.get_by_condition_id("condition") is None
+    assert tracker.untracked_token_ids == ["no-condition"]
+    assert outcome.event.payload["tracking_retained"] is False
+    assert outcome.event.payload["tracked_market"] is None

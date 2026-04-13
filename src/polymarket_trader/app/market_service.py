@@ -2,16 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from polymarket_trader.domain.classifier import ClassificationResult, MarketClassifier
 from polymarket_trader.domain.events import DomainEvent, DomainEventType
-from polymarket_trader.domain.market import Market
+from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.observability.trace import ensure_trace_id
+from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistry
 from polymarket_trader.strategy_api.interfaces import StrategyModule
 from polymarket_trader.strategy_api.models import UniverseDecision
+
+AccountSnapshotProvider = Callable[[], AccountSnapshot]
 
 
 class MarketService:
@@ -24,11 +27,13 @@ class MarketService:
         classifier: MarketClassifier | None = None,
         registry: MarketRegistry | None = None,
         market_tracker: Any | None = None,
+        account_snapshot_provider: AccountSnapshotProvider | None = None,
     ) -> None:
         self._classifier = classifier or MarketClassifier()
         self._strategy_module = strategy_module
         self._registry = registry
         self._market_tracker = market_tracker
+        self._account_snapshot_provider = account_snapshot_provider
 
     def ingest_raw_market(
         self,
@@ -44,6 +49,8 @@ class MarketService:
         existing_market = self._lookup_existing_market(classification)
 
         market: Market | None = None
+        tracked_market: Market | None = None
+        tracking_retained = False
         subscription_request: dict[str, Any] | None = None
         universe_decision: UniverseDecision | None = None
         if classification.accepted:
@@ -75,6 +82,7 @@ class MarketService:
             universe_decision = self._strategy_module.select_market(candidate_market)
             if universe_decision.selected:
                 market = candidate_market
+                tracked_market = market
                 if self._registry is not None:
                     self._registry.upsert(market)
                 if self._market_tracker is not None:
@@ -83,6 +91,20 @@ class MarketService:
                         subscription_request = self._market_tracker.build_subscription_request(
                             market.no_token_id
                         )
+            elif existing_market is not None:
+                if self._should_retain_filtered_market(existing_market):
+                    tracked_market = self._build_retained_filtered_market(
+                        candidate_market,
+                        existing_market=existing_market,
+                        reason=universe_decision.reason,
+                    )
+                    tracking_retained = True
+                    if self._registry is not None:
+                        self._registry.upsert(tracked_market)
+                    if self._market_tracker is not None:
+                        self._market_tracker.track_market(tracked_market)
+                else:
+                    self._remove_market_tracking(existing_market)
 
         discovery_kind = (
             DomainEventType.MARKET_UPDATED.value
@@ -101,6 +123,8 @@ class MarketService:
             discovery_kind=discovery_kind,
             raw_market=raw_market,
             market=market,
+            tracked_market=tracked_market,
+            tracking_retained=tracking_retained,
             universe_decision=universe_decision,
         )
         return MarketDiscoveryOutcome(
@@ -112,6 +136,8 @@ class MarketService:
             discovery_kind=discovery_kind,
             subscription_request=subscription_request,
             raw_market=raw_market,
+            tracked_market=tracked_market,
+            tracking_retained=tracking_retained,
             universe_decision=universe_decision,
         )
 
@@ -139,6 +165,8 @@ class MarketService:
         discovery_kind: str,
         raw_market: Mapping[str, Any],
         market: Market | None,
+        tracked_market: Market | None,
+        tracking_retained: bool,
         universe_decision: UniverseDecision | None,
     ) -> DomainEvent:
         event_type = (
@@ -164,6 +192,8 @@ class MarketService:
             "strategy_selected": universe_decision.selected if universe_decision is not None else None,
             "strategy_reason": universe_decision.reason if universe_decision is not None else None,
             "market": _serialize_market(market),
+            "tracked_market": _serialize_market(tracked_market),
+            "tracking_retained": tracking_retained,
             "raw_market": raw_market,
             "discovered_at": discovered_at.isoformat(),
         }
@@ -189,6 +219,47 @@ class MarketService:
             return classification.reject_reason.value
         return ""
 
+    def _should_retain_filtered_market(self, market: Market) -> bool:
+        if self._account_snapshot_provider is None:
+            return True
+        snapshot = self._account_snapshot_provider()
+        position = snapshot.get_position(market.condition_id, market.no_token_id)
+        if position is not None and (
+            position.shares > 0
+            or position.open_buy_shares > 0
+            or position.open_sell_shares > 0
+            or position.pending_buy_shares > 0
+        ):
+            return True
+        return bool(snapshot.open_orders_for_market(market.condition_id, market.no_token_id))
+
+    def _build_retained_filtered_market(
+        self,
+        candidate_market: Market,
+        *,
+        existing_market: Market,
+        reason: str,
+    ) -> Market:
+        if existing_market.trading_status in {
+            TradingStatus.CLOSED,
+            TradingStatus.RESOLVED,
+            TradingStatus.REJECTED,
+        }:
+            return candidate_market.with_trading_status(
+                existing_market.trading_status,
+                reject_reason=existing_market.reject_reason,
+            )
+        return candidate_market.with_trading_status(
+            TradingStatus.PAUSED,
+            reject_reason=reason or "strategy_filtered_out",
+        )
+
+    def _remove_market_tracking(self, market: Market) -> None:
+        if self._registry is not None:
+            self._registry.remove_market(market.condition_id)
+        if self._market_tracker is not None and hasattr(self._market_tracker, "untrack_market"):
+            self._market_tracker.untrack_market(market.no_token_id)
+
 
 @dataclass(frozen=True, slots=True)
 class MarketDiscoveryOutcome:
@@ -200,6 +271,8 @@ class MarketDiscoveryOutcome:
     discovery_kind: str
     subscription_request: dict[str, Any] | None
     raw_market: Mapping[str, Any]
+    tracked_market: Market | None = None
+    tracking_retained: bool = False
     universe_decision: UniverseDecision | None = None
 
     @property

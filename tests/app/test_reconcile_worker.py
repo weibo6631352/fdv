@@ -16,18 +16,34 @@ from polymarket_trader.domain.order import (
     OrderSide,
     OrderStatus,
     OrderType,
+    ReplaceOrderIntent,
     SellOrderIntent,
 )
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.registry import MarketRegistry
+from polymarket_trader.strategy_api.models import (
+    RecoveryDecision,
+    RecoveryReplaceRequest,
+    StrategyContext,
+    StrategyDecision,
+    StrategySpec,
+    UniverseDecision,
+)
 from polymarket_trader.strategies.current.strategy import build_strategy
+from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 from polymarket_trader.workers.reconcile_worker import ReconcileWorker
 
 
 class _StubExecutor:
+    def __init__(self) -> None:
+        self.submitted_intents: list[SellOrderIntent] = []
+        self.cancelled_intents: list[CancelOrderIntent] = []
+        self.replaced_intents: list[ReplaceOrderIntent] = []
+
     async def submit(self, intent: SellOrderIntent) -> OrderResult:
+        self.submitted_intents.append(intent)
         return OrderResult(
             trace_id=intent.trace_id,
             condition_id=intent.condition_id,
@@ -44,6 +60,7 @@ class _StubExecutor:
         )
 
     async def cancel(self, intent: CancelOrderIntent) -> OrderResult:
+        self.cancelled_intents.append(intent)
         return OrderResult(
             trace_id=intent.trace_id,
             condition_id=intent.condition_id,
@@ -52,6 +69,61 @@ class _StubExecutor:
             status=OrderResultStatus.CANCELLED,
             intent=intent,
             reason="cancelled",
+        )
+
+    async def replace(self, intent: ReplaceOrderIntent) -> OrderResult:
+        self.replaced_intents.append(intent)
+        return OrderResult(
+            trace_id=intent.trace_id,
+            condition_id=intent.condition_id,
+            token_id=intent.token_id,
+            market_slug=intent.market_slug,
+            status=OrderResultStatus.LIVE,
+            intent=intent,
+            price=intent.new_price,
+            requested_size_shares=intent.size_shares,
+            remaining_shares=intent.size_shares,
+            notional_usdc=intent.new_price * intent.size_shares,
+            order_id="sell-2",
+            reason="sell_replaced",
+        )
+
+
+class _ReplaceRecoveryStrategy:
+    @property
+    def spec(self) -> StrategySpec:
+        return StrategySpec(
+            name="replace-recovery",
+            capabilities=("universe", "entry", "exit", "recovery"),
+        )
+
+    def build_discovery_queries(self) -> tuple[object, ...]:
+        return ()
+
+    def select_market(self, market: Market) -> UniverseDecision:
+        return UniverseDecision.include(reason="selected")
+
+    def size_entry(self, context: StrategyContext):  # pragma: no cover - not used in this test
+        raise AssertionError("size_entry should not be called in reconcile replace test")
+
+    def decide_entry(self, context: StrategyContext) -> StrategyDecision:  # pragma: no cover - not used
+        raise AssertionError("decide_entry should not be called in reconcile replace test")
+
+    def decide_exit(self, context: StrategyContext) -> StrategyDecision:
+        return StrategyDecision.skip(reason="no_missing_sell")
+
+    def decide_recovery(self, context: StrategyContext) -> RecoveryDecision:
+        return RecoveryDecision(
+            reason="replace_existing_sell",
+            target_sell_size_shares=Decimal("5"),
+            replace_requests=(
+                RecoveryReplaceRequest(
+                    order_id="sell-1",
+                    new_price=Decimal("0.72"),
+                    size_shares=Decimal("5"),
+                    reason="repriced",
+                ),
+            ),
         )
 
 
@@ -256,6 +328,86 @@ def test_reconcile_worker_refreshes_market_fee_fields() -> None:
     asyncio.run(run())
 
 
+def test_reconcile_worker_executes_replace_requests_and_keeps_sell_coverage() -> None:
+    async def run() -> None:
+        registry = MarketRegistry()
+        market = Market(
+            condition_id="condition",
+            market_slug="token-500m-fdv",
+            no_token_id="token",
+            yes_token_id="yes-token",
+            tick_size=Decimal("0.01"),
+            min_order_size=Decimal("1"),
+            event_title="Will token FDV reach a threshold?",
+            market_question="Will this project hit $500M FDV?",
+            category="Crypto",
+            trading_status=TradingStatus.ELIGIBLE,
+        )
+        registry.upsert(market)
+
+        account_state_store = AccountStateStore()
+        account_state_store.upsert_position(
+            Position(
+                condition_id="condition",
+                token_id="token",
+                market_slug=market.market_slug,
+                shares=Decimal("5"),
+                cost_usdc=Decimal("3"),
+                open_sell_shares=Decimal("5"),
+            )
+        )
+        account_state_store.upsert_order(
+            OrderRecord(
+                trace_id="trace-sell",
+                condition_id="condition",
+                token_id="token",
+                market_slug=market.market_slug,
+                side=OrderSide.SELL,
+                order_type=OrderType.GTC,
+                price=Decimal("0.70"),
+                size_shares=Decimal("5"),
+                remaining_shares=Decimal("5"),
+                notional_usdc=Decimal("3.5"),
+                order_id="sell-1",
+                status=OrderStatus.LIVE,
+                idempotency_key="sell-1",
+                reason="open_sell_detected",
+            )
+        )
+
+        executor = _StubExecutor()
+        worker = ReconcileWorker(
+            reconcile_service=ReconcileService(strategy_module=_ReplaceRecoveryStrategy()),
+            registry_snapshot_provider=registry.snapshot,
+            account_state_store=account_state_store,
+            trading_service=TradingService(executor=executor),
+            executor=executor,
+        )
+
+        result = await worker.reconcile_once(trace_id="trace-reconcile-replace")
+
+        assert result.plan.has_changes
+        action_types = {action.action_type for action in result.plan.market_plans[0].actions}
+        assert action_types == {ReconcileActionType.REPLACE_OPEN_SELL}
+        assert len(executor.replaced_intents) == 1
+        replace_intent = executor.replaced_intents[0]
+        assert replace_intent.order_id == "sell-1"
+        assert replace_intent.new_price == Decimal("0.72")
+        assert replace_intent.size_shares == Decimal("5")
+
+        snapshot = account_state_store.snapshot()
+        position = snapshot.get_position(market.condition_id, market.no_token_id)
+        assert position is not None
+        assert position.open_sell_shares == Decimal("5")
+        open_sell_orders = snapshot.open_sell_orders_for_market(market.condition_id, market.no_token_id)
+        assert len(open_sell_orders) == 1
+        assert open_sell_orders[0].order_id == "sell-2"
+        assert open_sell_orders[0].price == Decimal("0.72")
+        assert open_sell_orders[0].remaining_shares == Decimal("5")
+
+    asyncio.run(run())
+
+
 def test_reconcile_worker_refreshes_account_balance_from_clob_balance_allowance() -> None:
     async def run() -> None:
         account_state_store = AccountStateStore()
@@ -280,5 +432,42 @@ def test_reconcile_worker_refreshes_account_balance_from_clob_balance_allowance(
         assert snapshot.allowance_usdc == Decimal("90")
         assert summary.refreshed_balance is True
         assert summary.refreshed_allowance is True
+
+    asyncio.run(run())
+
+
+def test_reconcile_worker_prunes_strategy_filtered_market_after_flattening() -> None:
+    async def run() -> None:
+        registry = MarketRegistry()
+        market = Market(
+            condition_id="condition",
+            market_slug="token-500m-fdv",
+            no_token_id="token",
+            yes_token_id="yes-token",
+            tick_size=Decimal("0.01"),
+            min_order_size=Decimal("1"),
+            event_title="Will token FDV reach a threshold?",
+            market_question="Will this project hit $500M FDV?",
+            category="Crypto",
+            trading_status=TradingStatus.PAUSED,
+            reject_reason="strategy_filtered_out",
+        )
+        registry.upsert(market)
+        account_state_store = AccountStateStore()
+        market_ws_worker = MarketWsWorker(registry=registry)
+        market_ws_worker.track_market(market)
+
+        worker = ReconcileWorker(
+            reconcile_service=ReconcileService(strategy_module=build_strategy()),
+            registry_snapshot_provider=registry.snapshot,
+            account_state_store=account_state_store,
+            registry=registry,
+            market_ws_worker=market_ws_worker,
+        )
+
+        await worker.reconcile_once(trace_id="trace-prune-filtered")
+
+        assert registry.get_by_condition_id("condition") is None
+        assert market_ws_worker.status_snapshot().tracked_token_ids == ()
 
     asyncio.run(run())

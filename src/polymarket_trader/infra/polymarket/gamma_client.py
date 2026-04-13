@@ -10,7 +10,6 @@ from polymarket_trader.infra.polymarket.schemas import (
     GammaMarketDTO,
     PolymarketRestClientBase,
     RawMarketEvent,
-    gamma_event_to_raw_market_events,
     normalize_gamma_event,
     normalize_gamma_market,
 )

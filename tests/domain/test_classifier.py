@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from decimal import Decimal
-
 from polymarket_trader.domain.classifier import ClassificationRejectReason, MarketClassifier
 
 

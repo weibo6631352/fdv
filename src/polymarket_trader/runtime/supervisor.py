@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import is_dataclass
 from datetime import datetime, timedelta, timezone

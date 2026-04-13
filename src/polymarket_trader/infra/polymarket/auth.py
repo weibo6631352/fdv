@@ -161,7 +161,7 @@ class PolymarketTradingClient:
 
     def get_api_credentials(self) -> DerivedApiCredentials:
         with self._lock:
-            client = self._ensure_client(require_l2=True)
+            self._ensure_client(require_l2=True)
             if self._api_creds is None:
                 raise RuntimeError("failed to load Polymarket API credentials")
             return self._api_creds

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from datetime import datetime
 from itertools import count
 
 from polymarket_trader.domain.events import (

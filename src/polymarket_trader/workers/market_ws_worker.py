@@ -299,6 +299,13 @@ class MarketWsWorker:
                 ),
             )
 
+    def untrack_market(self, no_token_id: str) -> None:
+        token_id = str(no_token_id).strip()
+        if not token_id:
+            return
+        self._tracked_markets.pop(token_id, None)
+        self._states.pop(token_id, None)
+
     def build_subscription_request(
         self,
         no_token_id: str | tuple[str, ...] | list[str],
