@@ -1,8 +1,23 @@
 # Polymarket 单策略交易底座
 
-本仓库提供一个面向 Polymarket 的单策略后端运行时。底座负责交易链路优先级、风控编排、恢复、审计、管理面和外部适配；具体 universe 选择、入场和退出语义收口在当前策略实现中。
+这是一个 Polymarket 单策略后端运行时。
+策略语义收口在 `src/polymarket_trader/strategies/current/`；执行、风控、恢复、审计和管理面由底座统一处理。
 
-框架约束以通用分层和运行时边界为准；当前策略约束以 [当前策略需求文档](./docs/需求文档.md) 和 [当前策略设计文档](./docs/设计文档.md) 为准。
+## 快速上手
+
+先看这几个文件：
+
+- 改市场筛选：[src/polymarket_trader/strategies/current/market_filter.py](./src/polymarket_trader/strategies/current/market_filter.py)
+- 改交易阈值：[src/polymarket_trader/strategies/current/config.py](./src/polymarket_trader/strategies/current/config.py)
+- 改分配、入场、退出、恢复：[src/polymarket_trader/strategies/current/trading_strategy.py](./src/polymarket_trader/strategies/current/trading_strategy.py)
+- 改订阅保留与移除：[src/polymarket_trader/strategies/current/subscription.py](./src/polymarket_trader/strategies/current/subscription.py)
+- 看运行入口：[src/polymarket_trader/strategies/current/strategy.py](./src/polymarket_trader/strategies/current/strategy.py)
+
+常用命令：
+
+- 跑回归：`pytest -q`
+- 跑静态检查：`ruff check .`
+- 验证 PostgreSQL 链路：`pytest tests/infra/test_postgres_integration.py -q`
 
 ## 核心规则
 
@@ -30,23 +45,20 @@
 
 ## 文档入口
 
-- [当前策略需求文档](./docs/需求文档.md)：当前内置策略的业务规则、风控边界和策略约束。
-- [当前策略设计文档](./docs/设计文档.md)：当前内置策略及运行时装配设计。
-- [API 文档](./docs/api.md)：对外 HTTP 接口、请求参数和响应结构。
-- [配置文档](./docs/config.md)：环境变量和配置项说明。
-- [运行说明](./docs/operations.md)：启动方式、运行状态和常用运维查看项。
-- [故障处理](./docs/runbook.md)：异常定位和处理步骤。
+- [当前策略需求文档](./docs/需求文档.md)：业务规则和风控边界。
+- [当前策略设计文档](./docs/设计文档.md)：运行时装配和关键流程。
+- [配置文档](./docs/config.md)：`.env` 和策略侧 Python 常量。
+- [API 文档](./docs/api.md)：Admin API。
+- [运行说明](./docs/operations.md)：启动、停止、人工操作。
+- [故障处理](./docs/runbook.md)：异常排查顺序。
 
 ## 策略与测试入口
 
-- 当前运行策略固定在 [src/polymarket_trader/strategies/current/strategy.py](./src/polymarket_trader/strategies/current/strategy.py)。
-- 策略交易阈值常量位于 [src/polymarket_trader/strategies/current/config.py](./src/polymarket_trader/strategies/current/config.py)，不再通过 `.env` 注入。
-- 市场筛选位于 [src/polymarket_trader/strategies/current/market_filter.py](./src/polymarket_trader/strategies/current/market_filter.py)，筛选词直接写在文件内。
-- 交易决策位于 [src/polymarket_trader/strategies/current/trading_strategy.py](./src/polymarket_trader/strategies/current/trading_strategy.py)。
-- 订阅保留与移除规则位于 [src/polymarket_trader/strategies/current/subscription.py](./src/polymarket_trader/strategies/current/subscription.py)。
-- 远端市场发现由 `build_discovery_queries()` 提供官方 Gamma 查询参数，框架只透传查询；最终是否纳入 universe，仍由 `select_market()` 决定。
-- 日常本地回归直接运行 `pytest`。
-- PostgreSQL 集成测试默认允许跳过；需要验证真实建表和持久化链路时，先设置 `TRADER_TEST_POSTGRES_DSN` 再运行 `pytest tests/infra/test_postgres_integration.py -q`。
+- 运行入口：[src/polymarket_trader/strategies/current/strategy.py](./src/polymarket_trader/strategies/current/strategy.py)
+- 阈值常量：[src/polymarket_trader/strategies/current/config.py](./src/polymarket_trader/strategies/current/config.py)
+- 市场筛选：[src/polymarket_trader/strategies/current/market_filter.py](./src/polymarket_trader/strategies/current/market_filter.py)
+- 交易决策：[src/polymarket_trader/strategies/current/trading_strategy.py](./src/polymarket_trader/strategies/current/trading_strategy.py)
+- 订阅规则：[src/polymarket_trader/strategies/current/subscription.py](./src/polymarket_trader/strategies/current/subscription.py)
 
 ## 模块接口原则
 

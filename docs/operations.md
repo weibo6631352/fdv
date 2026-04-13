@@ -1,11 +1,15 @@
 # 运维说明
 
-该文档用于记录部署、启动、停止、升级和人工操作约定。运维动作的首要目标是保持交易状态可确认、可恢复，而不是强行让服务继续下单。
+先看三件事：
+
+- 服务活着没有：`GET /health`
+- 现在能不能自动交易：`GET /ready`
+- 运行卡在哪：`GET /runtime`
 
 ## 管理面边界
 
 - 当前 Admin API 默认只允许在本机或受控内网暴露，不提供应用层鉴权。
-- 对外 HTTP 接口清单、请求参数和返回结构以 [api.md](./api.md) 为准。
+- 接口清单和参数看 [api.md](./api.md)。
 - 当前受控写接口只有 `POST /operations/reconcile` 和 `POST /orders/cancel-replace-sell`。
 - 后端进程直接通过 ASGI 启动，不再维护单独 CLI 壳子。
 
@@ -44,7 +48,7 @@
 ## 开发环境数据库说明
 
 - `initialize_database` 只负责按当前源码模型建表，不做历史 schema 迁移。
-- 当前仓库没有 Alembic；开发阶段如果 schema 改动不兼容，优先重建开发库后重新执行 `initialize_database`。
+- 当前仓库没有 Alembic；schema 不兼容时，直接重建开发库后重新执行 `initialize_database`。
 - PostgreSQL 仍然只是审计、复盘、调试和恢复参考，不是交易状态唯一真相来源。
 
 ## 停止顺序
@@ -64,18 +68,18 @@
 - User WS 断线后，需要完成 reconcile 才能恢复新买入。
 - 如果账户状态不确定，先全局暂停新买入，再 reconcile。
 
-## 部署变更原则
+## 部署变更
 
-涉及以下内容的变更需要额外谨慎：
+改下面这些时，多看一眼：
 - 交易主链路队列、Order Executor、Risk Manager、Strategy Engine。
 - 买入订单类型、卖出价格、预算分配算法。
 - WebSocket 重连和 reconcile 恢复策略。
 - 数据库 schema 初始化方式和 outbox 格式。
 - 新增线程池、进程池、锁、阻塞外部调用。
 
-## 交接记录建议
+## 部署记录
 
-每次部署至少记录：
+每次部署至少记：
 - commit id。
 - 是否影响交易主链路。
 - 是否调整数据库 schema 初始化方式。

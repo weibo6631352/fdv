@@ -1,8 +1,11 @@
 # 配置说明
 
-框架配置通过环境变量或等价的 typed settings 加载。配置项用于描述运行环境、预算边界、性能隔离和外部依赖；当前内置策略的业务参数不再走 `.env`，而是直接写在 `src/polymarket_trader/strategies/current/` 目录里的 Python 文件中。
+先分清两类配置：
 
-## 配置分组
+- 框架配置：写 `.env`
+- 策略规则：写 `src/polymarket_trader/strategies/current/`
+
+## 先看哪里
 
 | 分组 | 示例 | 说明 |
 | --- | --- | --- |
@@ -14,28 +17,31 @@
 | 超时告警 | `ORDER_SUBMIT_TIMEOUT_MS`、`CRITICAL_LOCK_TIMEOUT_MS` | 防止交易链路无限等待 |
 | 数据库 | `DATABASE_URL`、`DATABASE_HOST` | PostgreSQL 连接地址；支持完整 URL 或拆分字段 |
 | 密钥 | `POLYMARKET_API_KEY`、`WALLET_PRIVATE_KEY` | 只能通过安全环境注入 |
-| 策略业务参数 | `strategies/current/` | 当前内置策略直接在 Python 里定义交易阈值、筛选语义和订阅保留规则 |
+| 策略规则 | `strategies/current/` | 交易阈值、筛选语义、订阅规则 |
 
-## 默认值原则
+## 规则
 
-- 与单一策略语义强相关的值，不继续新增为环境变量，优先收敛到 `strategies/current/` 目录内的 Python 文件。
+- 单一策略语义，不新增环境变量，直接写 `strategies/current/`。
 - 会影响资金风险的配置应默认保守，不能默认放大仓位。
-- 队列容量和线程池大小必须有上限，禁止无限队列。
-- 超时配置必须有明确单位，变量名统一使用 `_MS` 或 `_SECONDS`。
+- 队列和线程池必须有上限。
+- 超时字段统一用 `_MS` 或 `_SECONDS`。
 
-数据库初始化约定：
+## 数据库
+
 - 开发环境先准备 PostgreSQL，再调用 `polymarket_trader.infra.db.initialize_database` 按当前 metadata 建表。
-- 当前阶段不维护历史 schema 兼容层；模型调整后可以直接重建开发库再初始化。
+- schema 改动不兼容时，直接重建开发库再初始化。
 
-数据库连接加载约定：
+连接顺序：
 - `DATABASE_URL` 优先级最高；一旦填写，`DATABASE_DRIVER`、`DATABASE_HOST`、`DATABASE_PORT`、`DATABASE_NAME`、`DATABASE_USER`、`DATABASE_PASSWORD` 会被忽略。
 - 当 `DATABASE_URL` 为空时，运行时会用上述拆分字段拼接 PostgreSQL 连接串。
 
-策略配置约定：
-- 当前固定策略入口在 `src/polymarket_trader/strategies/current/strategy.py`。
-- 当前内置策略的交易阈值常量写在 `src/polymarket_trader/strategies/current/config.py`，不再依赖 `STRATEGY_CONFIG_PATH`。
-- 市场筛选、交易决策和订阅保留分别收敛在 `market_filter.py`、`trading_strategy.py`、`subscription.py`。
-- 远端发现查询参数不放环境变量里堆砌；这类官方 Gamma 查询参数由策略代码里的 `build_discovery_queries()` 直接声明并透传。
+## 策略文件
+
+- 入口：`src/polymarket_trader/strategies/current/strategy.py`
+- 阈值常量：`src/polymarket_trader/strategies/current/config.py`
+- 市场筛选：`market_filter.py`
+- 交易决策：`trading_strategy.py`
+- 订阅规则：`subscription.py`
 
 ## 密钥规则
 
@@ -50,13 +56,12 @@
 - 私钥、API secret、passphrase。
 - 未脱敏 raw response 中的敏感账户字段。
 
-## 新增配置交接清单
+## 新增配置时确认
 
-新增配置项时，需要说明：
 - 属于交易主链路、关键修复链路、后台维护链路还是异步支撑链路。
 - 默认值是什么，默认值是否安全。
 - 单位是什么，取值范围是什么。
 - 是否可以运行时热更新。
 - 是否需要写入 [`.env.example`](../.env.example)。
-- 如果只是当前内置策略的业务语义，是否应直接落在 `strategies/current/` 的 Python 文件里，而不是新增环境变量。
+- 如果只是策略规则，直接写 `strategies/current/`，不要新增环境变量。
 - 是否会改变资金暴露、订单行为或 reconcile 行为。
