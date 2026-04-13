@@ -12,11 +12,11 @@ from fdv_trader.infra.polymarket.clob_client import ClobClient
 from fdv_trader.infra.polymarket.data_client import DataClient
 from fdv_trader.infra.polymarket.gamma_client import GammaClient
 from fdv_trader.infra.polymarket.schemas import (
+    BalanceAllowanceDTO,
     ClobFillDTO,
     ClobOrderDTO,
     ClobOrderRequest,
     ClobOrderbookDTO,
-    DataBalanceDTO,
     DataPositionDTO,
     DataTradeDTO,
     GammaEventDTO,
@@ -39,7 +39,7 @@ from fdv_trader.infra.polymarket.schemas import (
     data_position_to_domain_position,
     data_trade_to_domain_fill,
     gamma_event_to_raw_market_events,
-    normalize_balance_payload,
+    normalize_balance_allowance_payload,
     normalize_fill_payload,
     normalize_gamma_event,
     normalize_gamma_market,
@@ -55,11 +55,11 @@ from fdv_trader.infra.polymarket.ws_client import PolymarketWebSocketClient
 
 __all__ = [
     "ClobClient",
+    "BalanceAllowanceDTO",
     "ClobFillDTO",
     "ClobOrderDTO",
     "ClobOrderRequest",
     "ClobOrderbookDTO",
-    "DataBalanceDTO",
     "DataClient",
     "DataPositionDTO",
     "DataTradeDTO",
@@ -91,7 +91,7 @@ __all__ = [
     "data_position_to_domain_position",
     "data_trade_to_domain_fill",
     "gamma_event_to_raw_market_events",
-    "normalize_balance_payload",
+    "normalize_balance_allowance_payload",
     "normalize_fill_payload",
     "normalize_gamma_event",
     "normalize_gamma_market",

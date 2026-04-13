@@ -9,6 +9,9 @@
 
 当前实现状态补充：
 
+- 账户余额与 allowance 已切到 `GET /balance-allowance`。
+- open orders / 用户 trades 已对齐到官方 SDK 当前 ledger 路径。
+- Data API positions / trades 查询参数已对齐到官方当前 `user` / `market` / `eventId` 口径。
 - 市场静态费率字段已经接入 `Market`、数据库落表和管理端 `/markets` 输出。
 - `GET /fee-rate` 已由后台对账链路接入，用于按 `token_id` 刷新本地费率缓存。
 - 管理端查询接口只读本地快照，不在 HTTP handler 内直接请求 Polymarket。
@@ -34,7 +37,18 @@
 | 市场发现 | `GammaClient.discover_events()` | `src/fdv_trader/infra/polymarket/gamma_client.py` | `GET /events` | 无 | `main.py` 的 market discovery 周期扫描使用 |
 | 市场元数据刷新 | `GammaClient.list_markets()` | `src/fdv_trader/infra/polymarket/gamma_client.py` | `GET /markets` | 无 | `reconcile_worker.py` 按 `slug` 拉权威 market |
 | orderbook 快照 | `ClobClient.get_orderbook()` | `src/fdv_trader/infra/polymarket/clob_client.py` | `GET /book` | 无 | `main.py` 的 REST snapshot loader 和 `reconcile_worker.py` 都在用 |
+| 用户 positions 刷新 | `DataClient.list_positions()` | `src/fdv_trader/infra/polymarket/data_client.py` | `GET /positions` | 官方文档当前标注为公开 | `reconcile_worker.py` 用官方当前 `user` / `market` / `eventId` 参数口径刷新 positions |
+| 用户 open orders 刷新 | `ClobClient.list_open_orders()` | `src/fdv_trader/infra/polymarket/clob_client.py` | `GET /data/orders` | L2 | `reconcile_worker.py` 刷新账户 open orders，按 SDK 分页拉全量 |
+| 用户 trades 刷新 | `ClobClient.list_fills()` | `src/fdv_trader/infra/polymarket/clob_client.py` | `GET /data/trades` | L2 | `reconcile_worker.py` 刷新 fills，按 SDK 分页拉全量 |
+| 账户余额/授权刷新 | `ClobClient.get_balance_allowance()` | `src/fdv_trader/infra/polymarket/clob_client.py` | `GET /balance-allowance` | L2 | `reconcile_worker.py` 刷新 `balance_usdc` 与 `allowance_usdc` |
 | 市场费率刷新 | `ClobClient.get_fee_rate()` | `src/fdv_trader/infra/polymarket/clob_client.py` | `GET /fee-rate?token_id=...` | 无 | `reconcile_worker.py` 按 `market.no_token_id` 刷新本地费率缓存 |
+
+补充说明：
+
+- 官方 Get trades 页面当前展示的是 `GET /trades`。
+- 官方 Python SDK `py-clob-client 0.34.6` 当前实际使用的是 `GET /data/trades`。
+- 官方 rate limits 页面同时列出 `/trades` 和 `/data/trades`。
+- 当前仓库按 SDK 路径接入。
 
 ### 2.2 通过官方 SDK 间接调用
 
@@ -57,17 +71,12 @@
 | --- | --- | --- | --- |
 | `GET /fee-rate?token_id={token_id}` 或 `GET /fee-rate/{token_id}` | `base_fee` | 是，直接和间接都在用 | 官方 SDK 在签名前自动拉取；本仓库后台也会显式拉取后写入本地市场记录 |
 
-## 3. 已封装，但和官方当前文档 / 官方 SDK 不完全一致的接口
+## 3. 已封装但当前不在主运行链路的接口
 
-这一节记录仓库里已经有封装，但按 2026-04-13 核对的官方文档和 `py-clob-client 0.34.6`，新开发不应再直接照抄的路径。
+当前没有继续记录的“已封装但和官方当前文档 / 官方 SDK 不一致”的 REST 接口。
 
-| 仓库封装 | 仓库当前路径 | 官方当前文档 / SDK 更推荐的接口 | 差异说明 |
-| --- | --- | --- | --- |
-| `DataClient.list_positions()` | `GET https://data-api.polymarket.com/positions`，参数名用 `address` / `condition_id` / `token_id` | 官方当前文档是 `GET /positions?user={address}`，按市场过滤用 `market={condition_id}` | 路径一致，但查询参数名和官方当前页面不一致 |
-| `DataClient.list_trades()` | `GET https://data-api.polymarket.com/trades`，参数名用 `address` / `condition_id` / `token_id` | 官方当前文档是 `GET /trades?user={address}`，按市场过滤用 `market={condition_id}` | 路径一致，但查询参数名和官方当前页面不一致 |
-| `DataClient.get_balance()` | `GET https://data-api.polymarket.com/balances` | 官方当前公开文档和官方 SDK 指向 `GET https://clob.polymarket.com/balance-allowance` | `balances` 没在当前公开文档里找到，建议视为待替换旧路径 |
-| `ClobClient.list_open_orders()` | `GET https://clob.polymarket.com/orders` | 官方 Python SDK `0.34.6` 实际调用 `GET https://clob.polymarket.com/data/orders`；官方速率限制页同时列出 `/orders` 和 `/data/orders` | 当前公开资料存在双路径并存；新增代码优先跟官方 SDK |
-| `ClobClient.list_fills()` | `GET https://clob.polymarket.com/fills` | 官方当前公开接口是 `GET https://clob.polymarket.com/trades` 或 Data API 的 `GET /trades` | `fills` 没在当前公开文档里找到，建议不要继续扩展这个路径 |
+- `DataClient.list_positions()` / `DataClient.list_trades()` 已收敛到官方当前 `user` / `market` / `eventId` 参数口径。
+- 后续新增 Polymarket 接口时，仍以官方文档和 `py-clob-client` 当前实现为准，不再引入旧参数别名。
 
 ## 4. 费率信息能从哪里拿
 
@@ -145,16 +154,25 @@
 
 已完成：
 
-1. 市场费率扫描和展示
+1. 账户余额查询收敛到 `GET /balance-allowance`
+   - 余额与 allowance 已由 `ClobClient.get_balance_allowance()` 刷新。
+
+2. open orders / fills 对账路径收敛
+   - open orders 已对齐到 `GET /data/orders`。
+   - fills 已对齐到官方 SDK 当前使用的 `GET /data/trades` 分页链路。
+
+3. Data API positions / trades 查询口径收敛
+   - `list_positions()` / `list_trades()` 已对齐到官方当前 `user` / `market` / `eventId` 参数口径。
+   - Data API 当前页面返回的 `size` / `asset` / `timestamp` 等字段已映射到内部 DTO。
+
+4. 市场费率扫描和展示
    - Gamma 静态费率已进入市场模型、数据库和管理端市场视图。
    - `GET /fee-rate` 已进入后台对账刷新链路。
 
 继续建议：
 
-1. 新增或改造账户余额查询时，优先改到 `GET /balance-allowance`。
-2. 新增 open orders / fills 对账逻辑时，优先跟官方 SDK 0.34.6 的 `/data/orders`、`/trades` 对齐。
-3. 真正接入 WebSocket 前，先按官方当前订阅格式重写 market / user subscription payload。
-4. 若后续要做费率筛选或排序，直接基于本地缓存字段扩展查询，不在列表接口里现场请求外部 fee 接口。
+1. 真正接入 WebSocket 前，先按官方当前订阅格式重写 market / user subscription payload。
+2. 若后续要做费率筛选或排序，直接基于本地缓存字段扩展查询，不在列表接口里现场请求外部 fee 接口。
 
 ## 7. 官方参考链接
 

@@ -166,6 +166,10 @@ class PolymarketTradingClient:
                 raise RuntimeError("failed to load Polymarket API credentials")
             return self._api_creds
 
+    @property
+    def signature_type(self) -> int:
+        return self._credentials.signature_type
+
     def build_l2_headers(
         self,
         *,

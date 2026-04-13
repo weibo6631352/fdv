@@ -8,11 +8,13 @@ import httpx
 
 from fdv_trader.infra.polymarket.auth import PolymarketTradingClient
 from fdv_trader.infra.polymarket.schemas import (
+    BalanceAllowanceDTO,
     ClobFillDTO,
     ClobOrderDTO,
     ClobOrderRequest,
     ClobOrderbookDTO,
     PolymarketRestClientBase,
+    normalize_balance_allowance_payload,
     normalize_fill_payload,
     normalize_order_payload,
     normalize_orderbook_payload,
@@ -23,7 +25,7 @@ def _iter_mappings(payload: Any) -> tuple[Mapping[str, Any], ...]:
     if isinstance(payload, list):
         return tuple(item for item in payload if isinstance(item, Mapping))
     if isinstance(payload, Mapping):
-        for key in ("data", "items", "results", "rows", "orders", "fills"):
+        for key in ("data", "items", "results", "rows", "orders", "fills", "trades"):
             value = payload.get(key)
             if isinstance(value, list):
                 return tuple(item for item in value if isinstance(item, Mapping))
@@ -46,6 +48,13 @@ def _coerce_int(value: Any | None) -> int | None:
     return int(Decimal(text))
 
 
+def _coerce_cursor(value: Any | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 class ClobClient(PolymarketRestClientBase):
     """Polymarket CLOB 读写适配器。
 
@@ -62,15 +71,19 @@ class ClobClient(PolymarketRestClientBase):
         headers: Mapping[str, str] | None = None,
         auth_client: PolymarketTradingClient | None = None,
         book_path: str = "/book",
-        orders_path: str = "/orders",
-        fills_path: str = "/fills",
+        balance_allowance_path: str = "/balance-allowance",
+        order_write_path: str = "/orders",
+        orders_path: str = "/data/orders",
+        trades_path: str = "/data/trades",
         fee_rate_path: str = "/fee-rate",
     ) -> None:
         super().__init__(base_url, client=client, timeout_s=timeout_s, headers=headers)
         self._auth_client = auth_client
         self._book_path = book_path
+        self._balance_allowance_path = balance_allowance_path
+        self._order_write_path = order_write_path
         self._orders_path = orders_path
-        self._fills_path = fills_path
+        self._trades_path = trades_path
         self._fee_rate_path = fee_rate_path
 
     @property
@@ -134,57 +147,97 @@ class ClobClient(PolymarketRestClientBase):
             raise TypeError("clob fee rate response missing base_fee")
         return fee_rate_bps
 
+    async def get_balance_allowance(
+        self,
+        *,
+        asset_type: str = "COLLATERAL",
+        token_id: str | None = None,
+        signature_type: int | None = None,
+        timeout_s: float | None = None,
+        path: str | None = None,
+    ) -> BalanceAllowanceDTO:
+        request_path = path or self._balance_allowance_path
+        params: dict[str, Any] = {}
+        if asset_type:
+            params["asset_type"] = asset_type
+        if token_id is not None:
+            params["token_id"] = token_id
+        resolved_signature_type = signature_type
+        if resolved_signature_type is None and self._auth_client is not None:
+            resolved_signature_type = self._auth_client.signature_type
+        if resolved_signature_type is not None:
+            params["signature_type"] = resolved_signature_type
+        payload = await self.get_json(
+            request_path,
+            params=params,
+            headers=self._auth_headers("GET", request_path),
+            timeout_s=timeout_s,
+            operation="clob.get_balance_allowance",
+        )
+        if isinstance(payload, Mapping):
+            return normalize_balance_allowance_payload(payload)
+        raise TypeError("clob balance allowance response is not a mapping")
+
     async def list_open_orders(
         self,
         *,
-        wallet_address: str | None = None,
+        order_id: str | None = None,
         condition_id: str | None = None,
         token_id: str | None = None,
         timeout_s: float | None = None,
         path: str | None = None,
     ) -> tuple[ClobOrderDTO, ...]:
-        wallet_address = wallet_address or self.default_wallet_address
         params: dict[str, Any] = {}
-        if wallet_address is not None:
-            params["address"] = wallet_address
+        if order_id is not None:
+            params["id"] = order_id
         if condition_id is not None:
-            params["condition_id"] = condition_id
+            params["market"] = condition_id
         if token_id is not None:
-            params["token_id"] = token_id
-        payload = await self.get_json(
-            path or self._orders_path,
+            params["asset_id"] = token_id
+        request_path = path or self._orders_path
+        payload = await self._get_paginated_payload(
+            request_path,
             params=params,
-            headers=self._auth_headers("GET", path or self._orders_path),
+            headers=self._auth_headers("GET", request_path),
             timeout_s=timeout_s,
             operation="clob.list_open_orders",
         )
-        return tuple(normalize_order_payload(item) for item in _iter_mappings(payload))
+        return tuple(normalize_order_payload(item) for item in payload)
 
     async def list_fills(
         self,
         *,
-        wallet_address: str | None = None,
+        trade_id: str | None = None,
+        maker_address: str | None = None,
         condition_id: str | None = None,
         token_id: str | None = None,
+        before: int | None = None,
+        after: int | None = None,
         timeout_s: float | None = None,
         path: str | None = None,
     ) -> tuple[ClobFillDTO, ...]:
-        wallet_address = wallet_address or self.default_wallet_address
         params: dict[str, Any] = {}
-        if wallet_address is not None:
-            params["address"] = wallet_address
+        if trade_id is not None:
+            params["id"] = trade_id
+        if maker_address is not None:
+            params["maker_address"] = maker_address
         if condition_id is not None:
-            params["condition_id"] = condition_id
+            params["market"] = condition_id
         if token_id is not None:
-            params["token_id"] = token_id
-        payload = await self.get_json(
-            path or self._fills_path,
+            params["asset_id"] = token_id
+        if before is not None:
+            params["before"] = before
+        if after is not None:
+            params["after"] = after
+        request_path = path or self._trades_path
+        payload = await self._get_paginated_payload(
+            request_path,
             params=params,
-            headers=self._auth_headers("GET", path or self._fills_path),
+            headers=self._auth_headers("GET", request_path),
             timeout_s=timeout_s,
             operation="clob.list_fills",
         )
-        return tuple(normalize_fill_payload(item) for item in _iter_mappings(payload))
+        return tuple(normalize_fill_payload(item) for item in payload)
 
     async def create_order(
         self,
@@ -194,7 +247,7 @@ class ClobClient(PolymarketRestClientBase):
         path: str | None = None,
     ) -> ClobOrderDTO:
         payload = await self.post_json(
-            path or self._orders_path,
+            path or self._order_write_path,
             json_body=_normalize_request(request),
             timeout_s=timeout_s,
             operation="clob.create_order",
@@ -210,7 +263,7 @@ class ClobClient(PolymarketRestClientBase):
         timeout_s: float | None = None,
         path: str | None = None,
     ) -> ClobOrderDTO:
-        cancel_path = path or f"{self._orders_path.rstrip('/')}/{order_id}/cancel"
+        cancel_path = path or f"{self._order_write_path.rstrip('/')}/{order_id}/cancel"
         payload = await self.post_json(
             cancel_path,
             json_body={"order_id": order_id},
@@ -229,7 +282,7 @@ class ClobClient(PolymarketRestClientBase):
         timeout_s: float | None = None,
         path: str | None = None,
     ) -> ClobOrderDTO:
-        replace_path = path or f"{self._orders_path.rstrip('/')}/{order_id}"
+        replace_path = path or f"{self._order_write_path.rstrip('/')}/{order_id}"
         payload = await self.post_json(
             replace_path,
             json_body={"order_id": order_id, **_normalize_request(request)},
@@ -247,6 +300,36 @@ class ClobClient(PolymarketRestClientBase):
         timeout_s: float | None = None,
     ) -> tuple[ClobFillDTO, ...]:
         return await self.list_fills(token_id=token_id, timeout_s=timeout_s)
+
+    async def _get_paginated_payload(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+        timeout_s: float | None = None,
+        operation: str,
+    ) -> tuple[Mapping[str, Any], ...]:
+        next_cursor = "MA=="
+        items: list[Mapping[str, Any]] = []
+        while True:
+            page_params = dict(params or {})
+            page_params["next_cursor"] = next_cursor
+            payload = await self.get_json(
+                path,
+                params=page_params,
+                headers=headers,
+                timeout_s=timeout_s,
+                operation=operation,
+                unwrap=False,
+            )
+            if not isinstance(payload, Mapping):
+                raise TypeError(f"{operation} response is not a mapping")
+            items.extend(_iter_mappings(payload))
+            next_cursor = _coerce_cursor(payload.get("next_cursor"))
+            if next_cursor in {None, "", "LTE="}:
+                break
+        return tuple(items)
 
     def _auth_headers(self, method: str, request_path: str) -> Mapping[str, str] | None:
         if self._auth_client is None:

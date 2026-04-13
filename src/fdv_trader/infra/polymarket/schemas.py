@@ -135,9 +135,15 @@ def _coerce_datetime(value: Any | None) -> datetime | None:
         if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
+    if isinstance(value, (int, float)):
+        with contextlib.suppress(ValueError, OSError, OverflowError):
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
     text = str(value).strip()
     if not text:
         return None
+    if text.isdigit():
+        with contextlib.suppress(ValueError, OSError, OverflowError):
+            return datetime.fromtimestamp(float(text), tz=timezone.utc)
     with contextlib.suppress(ValueError):
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
@@ -414,6 +420,7 @@ class PolymarketRestClientBase:
         headers: Mapping[str, str] | None = None,
         timeout_s: float | None = None,
         operation: str = "",
+        unwrap: bool = True,
     ) -> Any:
         url = path if path.startswith("http") else f"{self._base_url}{path}"
         try:
@@ -442,7 +449,7 @@ class PolymarketRestClientBase:
                 raw_response_summary=_summary(response.text),
                 raw_response=response.text,
             ) from exc
-        return _normalize_response_payload(payload)
+        return _normalize_response_payload(payload) if unwrap else payload
 
     async def get_json(
         self,
@@ -452,6 +459,7 @@ class PolymarketRestClientBase:
         headers: Mapping[str, str] | None = None,
         timeout_s: float | None = None,
         operation: str = "",
+        unwrap: bool = True,
     ) -> Any:
         return await self.request_json(
             "GET",
@@ -460,6 +468,7 @@ class PolymarketRestClientBase:
             headers=headers,
             timeout_s=timeout_s,
             operation=operation or f"GET {path}",
+            unwrap=unwrap,
         )
 
     async def post_json(
@@ -471,6 +480,7 @@ class PolymarketRestClientBase:
         headers: Mapping[str, str] | None = None,
         timeout_s: float | None = None,
         operation: str = "",
+        unwrap: bool = True,
     ) -> Any:
         return await self.request_json(
             "POST",
@@ -480,6 +490,7 @@ class PolymarketRestClientBase:
             headers=headers,
             timeout_s=timeout_s,
             operation=operation or f"POST {path}",
+            unwrap=unwrap,
         )
 
 
@@ -848,18 +859,43 @@ class ClobOrderDTO:
         object.__setattr__(self, "token_id", str(self.token_id).strip())
         object.__setattr__(self, "order_id", self.order_id or _first_text(self.raw, "order_id", "orderId", "id"))
         object.__setattr__(self, "market_slug", self.market_slug or _first_text(self.raw, "market_slug", "marketSlug", "slug"))
-        object.__setattr__(self, "condition_id", self.condition_id or _first_text(self.raw, "condition_id", "conditionId", "condition"))
+        object.__setattr__(
+            self,
+            "condition_id",
+            self.condition_id or _first_text(self.raw, "condition_id", "conditionId", "condition", "market"),
+        )
         object.__setattr__(self, "amount_usdc", self.amount_usdc if self.amount_usdc is not None else _coerce_decimal(_first_value(self.raw, "amount_usdc", "amount")))
-        object.__setattr__(self, "size_shares", self.size_shares if self.size_shares is not None else _coerce_decimal(_first_value(self.raw, "size_shares", "size", "quantity")))
-        object.__setattr__(self, "filled_shares", self.filled_shares if self.filled_shares is not None else _coerce_decimal(_first_value(self.raw, "filled_shares", "filledSize")) or Decimal("0"))
-        object.__setattr__(self, "remaining_shares", self.remaining_shares if self.remaining_shares is not None else _coerce_decimal(_first_value(self.raw, "remaining_shares", "remainingSize")))
+        object.__setattr__(
+            self,
+            "size_shares",
+            self.size_shares
+            if self.size_shares is not None
+            else _coerce_decimal(_first_value(self.raw, "size_shares", "size", "quantity", "original_size")),
+        )
+        object.__setattr__(
+            self,
+            "filled_shares",
+            self.filled_shares
+            if self.filled_shares is not None
+            else _coerce_decimal(_first_value(self.raw, "filled_shares", "filledSize", "size_matched")) or Decimal("0"),
+        )
+        remaining_shares = self.remaining_shares
+        if remaining_shares is None:
+            remaining_shares = _coerce_decimal(_first_value(self.raw, "remaining_shares", "remainingSize"))
+        if remaining_shares is None and self.size_shares is not None:
+            remaining_shares = max(self.size_shares - self.filled_shares, Decimal("0"))
+        object.__setattr__(self, "remaining_shares", remaining_shares)
         object.__setattr__(self, "trade_id", self.trade_id or _first_text(self.raw, "trade_id", "tradeId"))
-        object.__setattr__(self, "status", self.status or _first_text(self.raw, "status") or "created")
+        object.__setattr__(
+            self,
+            "status",
+            self.status or _normalize_order_status_text(_first_text(self.raw, "status")) or "created",
+        )
         object.__setattr__(self, "reason", self.reason or _first_text(self.raw, "reason", "message") or "")
         created_at = _coerce_datetime(_first_value(self.raw, "created_at", "createdAt", "timestamp"))
         if created_at is not None:
             object.__setattr__(self, "created_at", created_at)
-        updated_at = _coerce_datetime(_first_value(self.raw, "updated_at", "updatedAt"))
+        updated_at = _coerce_datetime(_first_value(self.raw, "updated_at", "updatedAt", "last_update", "lastUpdate"))
         if updated_at is not None:
             object.__setattr__(self, "updated_at", updated_at)
         summary = self.raw_summary.strip() if self.raw_summary else ""
@@ -908,12 +944,33 @@ class ClobFillDTO:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "token_id", str(self.token_id).strip())
-        object.__setattr__(self, "order_id", self.order_id or _first_text(self.raw, "order_id", "orderId"))
+        order_id = self.order_id or _first_text(self.raw, "order_id", "orderId", "taker_order_id", "takerOrderId")
+        if order_id is None:
+            maker_orders = _first_value(self.raw, "maker_orders", "makerOrders")
+            if isinstance(maker_orders, list) and maker_orders:
+                first_order = maker_orders[0]
+                if isinstance(first_order, Mapping):
+                    order_id = _first_text(first_order, "order_id", "orderId", "id")
+                else:
+                    text = str(first_order).strip()
+                    order_id = text or None
+        object.__setattr__(self, "order_id", order_id)
         object.__setattr__(self, "trade_id", self.trade_id or _first_text(self.raw, "trade_id", "tradeId", "id"))
-        object.__setattr__(self, "condition_id", self.condition_id or _first_text(self.raw, "condition_id", "conditionId", "condition"))
+        object.__setattr__(
+            self,
+            "condition_id",
+            self.condition_id or _first_text(self.raw, "condition_id", "conditionId", "condition", "market"),
+        )
         object.__setattr__(self, "market_slug", self.market_slug or _first_text(self.raw, "market_slug", "marketSlug", "slug"))
         object.__setattr__(self, "notional_usdc", self.notional_usdc if self.notional_usdc is not None else _coerce_decimal(_first_value(self.raw, "notional_usdc", "notional", "spent_usdc", "spentUsdC")))
-        confirmed_at = _coerce_datetime(_first_value(self.raw, "confirmed_at", "confirmedAt", "timestamp"))
+        object.__setattr__(
+            self,
+            "status",
+            self.status or _normalize_trade_status_text(_first_text(self.raw, "status")) or "confirmed",
+        )
+        confirmed_at = _coerce_datetime(
+            _first_value(self.raw, "confirmed_at", "confirmedAt", "timestamp", "match_time", "matchTime", "last_update", "lastUpdate")
+        )
         if confirmed_at is not None:
             object.__setattr__(self, "confirmed_at", confirmed_at)
         summary = self.raw_summary.strip() if self.raw_summary else ""
@@ -939,7 +996,7 @@ class ClobFillDTO:
 
 
 @dataclass(frozen=True, slots=True)
-class DataBalanceDTO:
+class BalanceAllowanceDTO:
     raw: Mapping[str, Any]
     balance_usdc: Decimal = Decimal("0")
     allowance_usdc: Decimal = Decimal("0")
@@ -947,8 +1004,20 @@ class DataBalanceDTO:
     raw_summary: str = ""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "balance_usdc", self.balance_usdc if self.balance_usdc is not None else _coerce_decimal(_first_value(self.raw, "balance", "balance_usdc", "available")) or Decimal("0"))
-        object.__setattr__(self, "allowance_usdc", self.allowance_usdc if self.allowance_usdc is not None else _coerce_decimal(_first_value(self.raw, "allowance", "allowance_usdc")) or Decimal("0"))
+        object.__setattr__(
+            self,
+            "balance_usdc",
+            self.balance_usdc
+            if self.balance_usdc is not None
+            else _coerce_decimal(_first_value(self.raw, "balance")) or Decimal("0"),
+        )
+        object.__setattr__(
+            self,
+            "allowance_usdc",
+            self.allowance_usdc
+            if self.allowance_usdc is not None
+            else _coerce_decimal(_first_value(self.raw, "allowance")) or Decimal("0"),
+        )
         updated_at = _coerce_datetime(_first_value(self.raw, "updated_at", "updatedAt", "timestamp"))
         if updated_at is not None:
             object.__setattr__(self, "updated_at", updated_at)
@@ -981,7 +1050,14 @@ class DataPositionDTO:
         object.__setattr__(self, "token_id", str(self.token_id).strip())
         object.__setattr__(self, "market_slug", self.market_slug or _first_text(self.raw, "market_slug", "marketSlug", "slug"))
         object.__setattr__(self, "shares", self.shares if self.shares is not None else _coerce_decimal(_first_value(self.raw, "shares", "size", "quantity")) or Decimal("0"))
-        object.__setattr__(self, "cost_usdc", self.cost_usdc if self.cost_usdc is not None else _coerce_decimal(_first_value(self.raw, "cost_usdc", "cost", "value")) or Decimal("0"))
+        cost_usdc = self.cost_usdc
+        if cost_usdc is None:
+            cost_usdc = _coerce_decimal(_first_value(self.raw, "cost_usdc", "cost", "value", "initialValue"))
+        if cost_usdc is None:
+            avg_price = _coerce_decimal(_first_value(self.raw, "avg_price", "avgPrice"))
+            if avg_price is not None:
+                cost_usdc = avg_price * self.shares
+        object.__setattr__(self, "cost_usdc", cost_usdc or Decimal("0"))
         object.__setattr__(self, "open_buy_shares", self.open_buy_shares if self.open_buy_shares is not None else _coerce_decimal(_first_value(self.raw, "open_buy_shares", "openBuyShares")) or Decimal("0"))
         object.__setattr__(self, "open_sell_shares", self.open_sell_shares if self.open_sell_shares is not None else _coerce_decimal(_first_value(self.raw, "open_sell_shares", "openSellShares")) or Decimal("0"))
         object.__setattr__(self, "pending_buy_shares", self.pending_buy_shares if self.pending_buy_shares is not None else _coerce_decimal(_first_value(self.raw, "pending_buy_shares", "pendingBuyShares")) or Decimal("0"))
@@ -1040,7 +1116,12 @@ class DataTradeDTO:
         object.__setattr__(self, "side", self.side or _first_text(self.raw, "side"))
         object.__setattr__(self, "price", self.price if self.price is not None else _coerce_decimal(_first_value(self.raw, "price", "trade_price", "tradePrice")))
         object.__setattr__(self, "size_shares", self.size_shares if self.size_shares is not None else _coerce_decimal(_first_value(self.raw, "size_shares", "size", "quantity")))
-        object.__setattr__(self, "notional_usdc", self.notional_usdc if self.notional_usdc is not None else _coerce_decimal(_first_value(self.raw, "notional_usdc", "notional", "value")))
+        notional_usdc = self.notional_usdc
+        if notional_usdc is None:
+            notional_usdc = _coerce_decimal(_first_value(self.raw, "notional_usdc", "notional", "value"))
+        if notional_usdc is None and self.price is not None and self.size_shares is not None:
+            notional_usdc = self.price * self.size_shares
+        object.__setattr__(self, "notional_usdc", notional_usdc)
         confirmed_at = _coerce_datetime(_first_value(self.raw, "confirmed_at", "confirmedAt", "timestamp"))
         if confirmed_at is not None:
             object.__setattr__(self, "confirmed_at", confirmed_at)
@@ -1209,16 +1290,16 @@ def normalize_order_payload(payload: Mapping[str, Any]) -> ClobOrderDTO:
         price=_coerce_decimal(_first_value(normalized, "price")) or Decimal("0"),
         order_id=_first_text(normalized, "order_id", "orderId", "id"),
         market_slug=_first_text(normalized, "market_slug", "marketSlug", "slug"),
-        condition_id=_first_text(normalized, "condition_id", "conditionId", "condition"),
+        condition_id=_first_text(normalized, "condition_id", "conditionId", "condition", "market"),
         amount_usdc=_coerce_decimal(_first_value(normalized, "amount_usdc", "amount")),
-        size_shares=_coerce_decimal(_first_value(normalized, "size_shares", "size", "quantity")),
-        filled_shares=_coerce_decimal(_first_value(normalized, "filled_shares", "filledSize")) or Decimal("0"),
+        size_shares=_coerce_decimal(_first_value(normalized, "size_shares", "size", "quantity", "original_size")),
+        filled_shares=_coerce_decimal(_first_value(normalized, "filled_shares", "filledSize", "size_matched")) or Decimal("0"),
         remaining_shares=_coerce_decimal(_first_value(normalized, "remaining_shares", "remainingSize")),
         trade_id=_first_text(normalized, "trade_id", "tradeId"),
-        status=_first_text(normalized, "status") or "created",
+        status=_normalize_order_status_text(_first_text(normalized, "status")) or "created",
         reason=_first_text(normalized, "reason", "message") or "",
         created_at=_coerce_datetime(_first_value(normalized, "created_at", "createdAt")) or _utc_now(),
-        updated_at=_coerce_datetime(_first_value(normalized, "updated_at", "updatedAt")) or _utc_now(),
+        updated_at=_coerce_datetime(_first_value(normalized, "updated_at", "updatedAt", "last_update", "lastUpdate")) or _utc_now(),
     )
 
 
@@ -1231,24 +1312,30 @@ def normalize_fill_payload(payload: Mapping[str, Any]) -> ClobFillDTO:
         side=OrderSide(side_text.upper()),
         price=_coerce_decimal(_first_value(normalized, "price", "trade_price", "tradePrice")) or Decimal("0"),
         size_shares=_coerce_decimal(_first_value(normalized, "size_shares", "size", "quantity")) or Decimal("0"),
-        order_id=_first_text(normalized, "order_id", "orderId"),
+        order_id=_first_text(normalized, "order_id", "orderId", "taker_order_id", "takerOrderId"),
         trade_id=_first_text(normalized, "trade_id", "tradeId", "id"),
-        condition_id=_first_text(normalized, "condition_id", "conditionId", "condition"),
+        condition_id=_first_text(normalized, "condition_id", "conditionId", "condition", "market"),
         market_slug=_first_text(normalized, "market_slug", "marketSlug", "slug"),
         notional_usdc=_coerce_decimal(_first_value(normalized, "notional_usdc", "notional", "value")),
-        status=_first_text(normalized, "status") or "confirmed",
-        confirmed_at=_coerce_datetime(_first_value(normalized, "confirmed_at", "confirmedAt")) or _utc_now(),
+        status=_normalize_trade_status_text(_first_text(normalized, "status")) or "confirmed",
+        confirmed_at=_coerce_datetime(_first_value(normalized, "confirmed_at", "confirmedAt", "match_time", "matchTime", "last_update", "lastUpdate")) or _utc_now(),
     )
 
 
 def normalize_position_payload(payload: Mapping[str, Any]) -> DataPositionDTO:
     normalized = _unwrap_mapping(payload)
+    shares = _coerce_decimal(_first_value(normalized, "shares", "size", "quantity")) or Decimal("0")
+    cost_usdc = _coerce_decimal(_first_value(normalized, "cost_usdc", "cost", "value", "initialValue"))
+    if cost_usdc is None:
+        avg_price = _coerce_decimal(_first_value(normalized, "avg_price", "avgPrice"))
+        if avg_price is not None:
+            cost_usdc = avg_price * shares
     return DataPositionDTO(
         raw=normalized,
         condition_id=_first_text(normalized, "condition_id", "conditionId", "condition") or "",
-        token_id=_first_text(normalized, "token_id", "tokenId", "asset_id", "assetId") or "",
-        shares=_coerce_decimal(_first_value(normalized, "shares", "size", "quantity")) or Decimal("0"),
-        cost_usdc=_coerce_decimal(_first_value(normalized, "cost_usdc", "cost", "value")) or Decimal("0"),
+        token_id=_first_text(normalized, "token_id", "tokenId", "asset_id", "assetId", "asset") or "",
+        shares=shares,
+        cost_usdc=cost_usdc or Decimal("0"),
         market_slug=_first_text(normalized, "market_slug", "marketSlug", "slug"),
         open_buy_shares=_coerce_decimal(_first_value(normalized, "open_buy_shares", "openBuyShares")) or Decimal("0"),
         open_sell_shares=_coerce_decimal(_first_value(normalized, "open_sell_shares", "openSellShares")) or Decimal("0"),
@@ -1271,25 +1358,25 @@ def normalize_trade_payload(payload: Mapping[str, Any]) -> DataTradeDTO:
         notional = price * size
     return DataTradeDTO(
         raw=normalized,
-        trade_id=_first_text(normalized, "trade_id", "tradeId", "id") or uuid4().hex,
+        trade_id=_first_text(normalized, "trade_id", "tradeId", "id", "transactionHash", "transaction_hash") or uuid4().hex,
         order_id=_first_text(normalized, "order_id", "orderId"),
         condition_id=_first_text(normalized, "condition_id", "conditionId", "condition") or "",
-        token_id=_first_text(normalized, "token_id", "tokenId", "asset_id", "assetId") or "",
+        token_id=_first_text(normalized, "token_id", "tokenId", "asset_id", "assetId", "asset") or "",
         market_slug=_first_text(normalized, "market_slug", "marketSlug", "slug"),
         side=side_text,
         price=price,
         size_shares=size,
         notional_usdc=notional,
         status=_first_text(normalized, "status") or "confirmed",
-        confirmed_at=_coerce_datetime(_first_value(normalized, "confirmed_at", "confirmedAt")) or _utc_now(),
+        confirmed_at=_coerce_datetime(_first_value(normalized, "confirmed_at", "confirmedAt", "timestamp")) or _utc_now(),
     )
 
 
-def normalize_balance_payload(payload: Mapping[str, Any]) -> DataBalanceDTO:
+def normalize_balance_allowance_payload(payload: Mapping[str, Any]) -> BalanceAllowanceDTO:
     normalized = _unwrap_mapping(payload)
-    balance = _coerce_decimal(_first_value(normalized, "balance", "balance_usdc", "available"))
-    allowance = _coerce_decimal(_first_value(normalized, "allowance", "allowance_usdc"))
-    return DataBalanceDTO(
+    balance = _coerce_decimal(_first_value(normalized, "balance"))
+    allowance = _coerce_decimal(_first_value(normalized, "allowance"))
+    return BalanceAllowanceDTO(
         raw=normalized,
         balance_usdc=balance or Decimal("0"),
         allowance_usdc=allowance or Decimal("0"),
@@ -1397,12 +1484,54 @@ def _coerce_order_status(value: str) -> OrderStatus:
     return OrderStatus.CREATED
 
 
+def _normalize_order_status_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = value.strip().lower()
+    if not text:
+        return None
+    if text.startswith("order_status_"):
+        text = text.removeprefix("order_status_")
+    aliases = {
+        "canceled": "cancelled",
+        "cancelled": "cancelled",
+        "delayed": "submitted",
+        "open": "submitted",
+        "unmatched": "no_fill",
+        "live": "live",
+        "matched": "matched",
+        "partially_filled": "partially_filled",
+        "partial_filled": "partially_filled",
+        "rejected": "rejected",
+        "failed": "failed",
+    }
+    return aliases.get(text, text)
+
+
+def _normalize_trade_status_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = value.strip().lower()
+    if not text:
+        return None
+    if text.startswith("trade_status_"):
+        text = text.removeprefix("trade_status_")
+    aliases = {
+        "confirmed": "confirmed",
+        "matched": "matched",
+        "mined": "mined",
+        "retrying": "retrying",
+        "failed": "failed",
+    }
+    return aliases.get(text, text)
+
+
 __all__ = [
+    "BalanceAllowanceDTO",
     "ClobFillDTO",
     "ClobOrderDTO",
     "ClobOrderRequest",
     "ClobOrderbookDTO",
-    "DataBalanceDTO",
     "DataPositionDTO",
     "DataTradeDTO",
     "GammaEventDTO",
@@ -1425,7 +1554,7 @@ __all__ = [
     "data_position_to_domain_position",
     "data_trade_to_domain_fill",
     "gamma_event_to_raw_market_events",
-    "normalize_balance_payload",
+    "normalize_balance_allowance_payload",
     "normalize_fill_payload",
     "normalize_gamma_event",
     "normalize_gamma_market",

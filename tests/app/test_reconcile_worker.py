@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 
 from fdv_trader.app.reconcile_service import ReconcileActionType, ReconcileService
 from fdv_trader.app.trading_service import TradingService
@@ -93,6 +94,29 @@ class _StubClobClient:
 
     async def get_fee_rate(self, token_id: str) -> int:
         return self._fee_rate_bps
+
+
+class _StubPositionsDataClient:
+    async def list_positions(self) -> tuple[Position, ...]:
+        return ()
+
+
+class _StubAccountClobClient:
+    def __init__(self, *, balance_usdc: Decimal, allowance_usdc: Decimal) -> None:
+        self._balance = balance_usdc
+        self._allowance = allowance_usdc
+
+    async def list_open_orders(self) -> tuple[OrderRecord, ...]:
+        return ()
+
+    async def list_fills(self) -> tuple[object, ...]:
+        return ()
+
+    async def get_balance_allowance(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            balance_usdc=self._balance,
+            allowance_usdc=self._allowance,
+        )
 
 
 def test_reconcile_worker_cancels_open_buy_and_backfills_missing_sell() -> None:
@@ -224,5 +248,33 @@ def test_reconcile_worker_refreshes_market_fee_fields() -> None:
         status = worker.status_snapshot()
         assert status.last_refresh_summary is not None
         assert status.last_refresh_summary.refreshed_fee_rates == 1
+
+    asyncio.run(run())
+
+
+def test_reconcile_worker_refreshes_account_balance_from_clob_balance_allowance() -> None:
+    async def run() -> None:
+        account_state_store = AccountStateStore()
+        worker = ReconcileWorker(
+            reconcile_service=ReconcileService(),
+            account_state_store=account_state_store,
+            data_client=_StubPositionsDataClient(),
+            clob_client=_StubAccountClobClient(
+                balance_usdc=Decimal("120"),
+                allowance_usdc=Decimal("90"),
+            ),
+            trading_client=object(),
+        )
+
+        summary = await worker._refresh_account_authority(
+            trace_id="trace-reconcile",
+            markets=(),
+        )
+
+        snapshot = account_state_store.snapshot()
+        assert snapshot.balance_usdc == Decimal("120")
+        assert snapshot.allowance_usdc == Decimal("90")
+        assert summary.refreshed_balance is True
+        assert summary.refreshed_allowance is True
 
     asyncio.run(run())

@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from decimal import Decimal
 from typing import Any
 
 import httpx
 
 from fdv_trader.infra.polymarket.auth import PolymarketTradingClient
 from fdv_trader.infra.polymarket.schemas import (
-    DataBalanceDTO,
     DataPositionDTO,
     DataTradeDTO,
     PolymarketRestClientBase,
-    normalize_balance_payload,
     normalize_position_payload,
     normalize_trade_payload,
 )
@@ -21,7 +20,7 @@ def _iter_mappings(payload: Any) -> tuple[Mapping[str, Any], ...]:
     if isinstance(payload, list):
         return tuple(item for item in payload if isinstance(item, Mapping))
     if isinstance(payload, Mapping):
-        for key in ("data", "items", "results", "rows", "positions", "trades", "balances"):
+        for key in ("data", "items", "results", "rows", "positions", "trades"):
             value = payload.get(key)
             if isinstance(value, list):
                 return tuple(item for item in value if isinstance(item, Mapping))
@@ -32,7 +31,8 @@ def _iter_mappings(payload: Any) -> tuple[Mapping[str, Any], ...]:
 class DataClient(PolymarketRestClientBase):
     """Polymarket Data API 适配器。
 
-    这里只负责把余额、持仓和成交原始响应转换成内部 DTO，避免上层直接依赖 Data API 字段名。
+    这里只负责把持仓、成交和只读账户查询原始响应转换成内部 DTO，
+    避免上层直接依赖 Data API 字段名。
     """
 
     def __init__(
@@ -45,15 +45,11 @@ class DataClient(PolymarketRestClientBase):
         auth_client: PolymarketTradingClient | None = None,
         positions_path: str = "/positions",
         trades_path: str = "/trades",
-        balances_path: str = "/balances",
-        orders_path: str = "/orders",
     ) -> None:
         super().__init__(base_url, client=client, timeout_s=timeout_s, headers=headers)
         self._auth_client = auth_client
         self._positions_path = positions_path
         self._trades_path = trades_path
-        self._balances_path = balances_path
-        self._orders_path = orders_path
 
     @property
     def has_auth_client(self) -> bool:
@@ -65,23 +61,68 @@ class DataClient(PolymarketRestClientBase):
             return None
         return self._auth_client.get_address()
 
+    @property
+    def default_user_address(self) -> str | None:
+        return self.default_wallet_address
+
+    def _resolve_user_address(self, user_address: str | None) -> str:
+        resolved = user_address or self.default_user_address
+        if resolved is None:
+            raise ValueError("DataClient requires user_address or an auth client with a default address")
+        return resolved
+
+    def _build_market_params(
+        self,
+        *,
+        market_ids: tuple[str, ...] | None = None,
+        event_ids: tuple[int, ...] | None = None,
+    ) -> dict[str, Any]:
+        if market_ids and event_ids:
+            raise ValueError("market_ids and event_ids are mutually exclusive")
+        params: dict[str, Any] = {}
+        if market_ids:
+            params["market"] = ",".join(market_ids)
+        if event_ids:
+            params["eventId"] = ",".join(str(event_id) for event_id in event_ids)
+        return params
+
     async def list_positions(
         self,
         *,
-        wallet_address: str | None = None,
-        condition_id: str | None = None,
-        token_id: str | None = None,
+        user_address: str | None = None,
+        market_ids: tuple[str, ...] | None = None,
+        event_ids: tuple[int, ...] | None = None,
+        size_threshold: Decimal | None = None,
+        redeemable: bool | None = None,
+        mergeable: bool | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        sort_by: str | None = None,
+        sort_direction: str | None = None,
+        title: str | None = None,
         timeout_s: float | None = None,
         path: str | None = None,
     ) -> tuple[DataPositionDTO, ...]:
-        wallet_address = wallet_address or self.default_wallet_address
-        params: dict[str, Any] = {}
-        if wallet_address is not None:
-            params["address"] = wallet_address
-        if condition_id is not None:
-            params["condition_id"] = condition_id
-        if token_id is not None:
-            params["token_id"] = token_id
+        params = {
+            "user": self._resolve_user_address(user_address),
+            **self._build_market_params(market_ids=market_ids, event_ids=event_ids),
+        }
+        if size_threshold is not None:
+            params["sizeThreshold"] = str(size_threshold)
+        if redeemable is not None:
+            params["redeemable"] = redeemable
+        if mergeable is not None:
+            params["mergeable"] = mergeable
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
+        if sort_by is not None:
+            params["sortBy"] = sort_by
+        if sort_direction is not None:
+            params["sortDirection"] = sort_direction
+        if title is not None:
+            params["title"] = title
         payload = await self.get_json(
             path or self._positions_path,
             params=params,
@@ -94,20 +135,35 @@ class DataClient(PolymarketRestClientBase):
     async def list_trades(
         self,
         *,
-        wallet_address: str | None = None,
-        condition_id: str | None = None,
-        token_id: str | None = None,
+        user_address: str | None = None,
+        market_ids: tuple[str, ...] | None = None,
+        event_ids: tuple[int, ...] | None = None,
+        side: str | None = None,
+        taker_only: bool | None = None,
+        filter_type: str | None = None,
+        filter_amount: Decimal | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
         timeout_s: float | None = None,
         path: str | None = None,
     ) -> tuple[DataTradeDTO, ...]:
-        wallet_address = wallet_address or self.default_wallet_address
-        params: dict[str, Any] = {}
-        if wallet_address is not None:
-            params["address"] = wallet_address
-        if condition_id is not None:
-            params["condition_id"] = condition_id
-        if token_id is not None:
-            params["token_id"] = token_id
+        if (filter_type is None) != (filter_amount is None):
+            raise ValueError("filter_type and filter_amount must be provided together")
+        params = {
+            "user": self._resolve_user_address(user_address),
+            **self._build_market_params(market_ids=market_ids, event_ids=event_ids),
+        }
+        if side is not None:
+            params["side"] = side
+        if taker_only is not None:
+            params["takerOnly"] = taker_only
+        if filter_type is not None:
+            params["filterType"] = filter_type
+            params["filterAmount"] = str(filter_amount)
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
         payload = await self.get_json(
             path or self._trades_path,
             params=params,
@@ -116,70 +172,6 @@ class DataClient(PolymarketRestClientBase):
             operation="data.list_trades",
         )
         return tuple(normalize_trade_payload(item) for item in _iter_mappings(payload))
-
-    async def get_balance(
-        self,
-        *,
-        wallet_address: str | None = None,
-        timeout_s: float | None = None,
-        path: str | None = None,
-    ) -> DataBalanceDTO:
-        wallet_address = wallet_address or self.default_wallet_address
-        params: dict[str, Any] = {}
-        if wallet_address is not None:
-            params["address"] = wallet_address
-        payload = await self.get_json(
-            path or self._balances_path,
-            params=params,
-            headers=self._auth_headers("GET", path or self._balances_path),
-            timeout_s=timeout_s,
-            operation="data.get_balance",
-        )
-        if isinstance(payload, Mapping):
-            return normalize_balance_payload(payload)
-        raise TypeError("data balance response is not a mapping")
-
-    async def get_account_snapshot(
-        self,
-        *,
-        wallet_address: str | None = None,
-        timeout_s: float | None = None,
-    ) -> dict[str, Any]:
-        # 账户快照只做结构化拼接，不把 Data API 的原始格式继续向上层暴露。
-        positions = await self.list_positions(wallet_address=wallet_address, timeout_s=timeout_s)
-        trades = await self.list_trades(wallet_address=wallet_address, timeout_s=timeout_s)
-        balance = await self.get_balance(wallet_address=wallet_address, timeout_s=timeout_s)
-        return {
-            "balance": balance,
-            "positions": positions,
-            "trades": trades,
-        }
-
-    async def list_open_orders(
-        self,
-        *,
-        wallet_address: str | None = None,
-        condition_id: str | None = None,
-        token_id: str | None = None,
-        timeout_s: float | None = None,
-        path: str | None = None,
-    ) -> tuple[Mapping[str, Any], ...]:
-        wallet_address = wallet_address or self.default_wallet_address
-        params: dict[str, Any] = {}
-        if wallet_address is not None:
-            params["address"] = wallet_address
-        if condition_id is not None:
-            params["condition_id"] = condition_id
-        if token_id is not None:
-            params["token_id"] = token_id
-        payload = await self.get_json(
-            path or self._orders_path,
-            params=params,
-            headers=self._auth_headers("GET", path or self._orders_path),
-            timeout_s=timeout_s,
-            operation="data.list_open_orders",
-        )
-        return tuple(_iter_mappings(payload))
 
     def _auth_headers(self, method: str, request_path: str) -> Mapping[str, str] | None:
         if self._auth_client is None:

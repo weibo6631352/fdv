@@ -877,12 +877,12 @@ class ReconcileWorker:
         self,
         failures: list[str],
     ) -> tuple[Decimal, Decimal, bool, bool]:
-        if self._data_client is None:
+        if self._clob_client is None:
             return Decimal("0"), Decimal("0"), False, False
         try:
-            balance = await self._data_client.get_balance()
+            balance = await self._clob_client.get_balance_allowance()
         except Exception as exc:  # pragma: no cover - external SDK failure path
-            failures.append(f"data:balance:{exc}")
+            failures.append(f"clob:balance_allowance:{exc}")
             return Decimal("0"), Decimal("0"), False, False
         return balance.balance_usdc, balance.allowance_usdc, True, True
 
