@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from fdv_trader.cli import main as cli_main
@@ -109,3 +110,19 @@ def test_cli_reconcile_command_posts_trace_and_condition_ids(monkeypatch, capsys
             {"trace_id": "trace-cli", "condition_ids": ["condition-1", "condition-2"]},
         )
     ]
+
+
+def test_cli_replay_command_runs_local_strategy_replay(capsys) -> None:
+    fixture_path = (
+        Path(__file__).resolve().parents[1]
+        / "strategies"
+        / "fixtures"
+        / "entry_replay.json"
+    )
+
+    cli_main.main(["replay", "--fixture", str(fixture_path)])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["strategy"]["module_path"] == "fdv_trader.strategies.current.strategy"
+    assert payload["plan"]["ready_to_trade"] is True
+    assert payload["plan"]["intent"]["amount_usdc"] == "50"

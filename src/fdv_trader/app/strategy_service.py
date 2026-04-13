@@ -19,7 +19,7 @@ from fdv_trader.domain.strategy import StrategyEngine
 from fdv_trader.observability.trace import ensure_trace_id
 from fdv_trader.runtime.account_state import AccountSnapshot
 from fdv_trader.runtime.registry import MarketRegistry
-from fdv_trader.strategies.fdv_default.strategy import FDVDefaultStrategy
+from fdv_trader.strategies.current.strategy import CurrentStrategy
 from fdv_trader.strategy_api.interfaces import StrategyModule
 from fdv_trader.strategy_api.models import StrategyAction, StrategyContext, StrategyDecision
 
@@ -37,7 +37,7 @@ class StrategyService:
         registry: MarketRegistry | None = None,
         orderbook_reader: OrderbookReader | None = None,
     ) -> None:
-        self._strategy_module = strategy_module or FDVDefaultStrategy()
+        self._strategy_module = strategy_module or CurrentStrategy()
         self._strategy_engine = strategy_engine or StrategyEngine()
         self._registry = registry
         self._orderbook_reader = orderbook_reader

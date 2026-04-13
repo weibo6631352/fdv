@@ -17,7 +17,7 @@ import fdv_trader.strategies as strategies_pkg
 def test_resolve_strategy_module_path_defaults_to_builtin_strategy() -> None:
     assert resolve_strategy_module_path() == DEFAULT_STRATEGY_MODULE_PATH
     assert resolve_strategy_module_path("   ") == DEFAULT_STRATEGY_MODULE_PATH
-    assert resolve_strategy_module_path("fdv_default") == DEFAULT_STRATEGY_MODULE_PATH
+    assert resolve_strategy_module_path("fdv_default") == "fdv_trader.strategies.fdv_default.strategy"
     assert resolve_strategy_module_path("custom.module") == "custom.module"
 
 

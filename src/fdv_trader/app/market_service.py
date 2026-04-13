@@ -10,7 +10,7 @@ from fdv_trader.domain.events import DomainEvent, DomainEventType
 from fdv_trader.domain.market import Market
 from fdv_trader.observability.trace import ensure_trace_id
 from fdv_trader.runtime.registry import MarketRegistry
-from fdv_trader.strategies.fdv_default.strategy import FDVDefaultStrategy
+from fdv_trader.strategies.current.strategy import CurrentStrategy
 from fdv_trader.strategy_api.interfaces import StrategyModule
 from fdv_trader.strategy_api.models import UniverseDecision
 
@@ -27,7 +27,7 @@ class MarketService:
         market_tracker: Any | None = None,
     ) -> None:
         self._classifier = classifier or MarketClassifier()
-        self._strategy_module = strategy_module or FDVDefaultStrategy()
+        self._strategy_module = strategy_module or CurrentStrategy()
         self._registry = registry
         self._market_tracker = market_tracker
 

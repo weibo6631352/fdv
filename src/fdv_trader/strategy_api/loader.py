@@ -9,7 +9,7 @@ from fdv_trader.strategy_api.errors import StrategyLoadError
 from fdv_trader.strategy_api.interfaces import StrategyModule
 from fdv_trader.strategy_api.models import StrategySpec
 
-DEFAULT_STRATEGY_MODULE_PATH = "fdv_trader.strategies.fdv_default.strategy"
+DEFAULT_STRATEGY_MODULE_PATH = "fdv_trader.strategies.current.strategy"
 
 
 @dataclass(frozen=True, slots=True)

@@ -37,3 +37,4 @@
 - `fdv-trader config-summary`
 - `fdv-trader status`
 - `fdv-trader reconcile`
+- `fdv-trader replay`

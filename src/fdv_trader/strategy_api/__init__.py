@@ -1,3 +1,4 @@
+from fdv_trader.strategy_api.config_loader import load_mapping_file, load_strategy_config
 from fdv_trader.strategy_api.errors import StrategyLoadError
 from fdv_trader.strategy_api.interfaces import (
     EntryPolicy,
@@ -30,6 +31,8 @@ __all__ = [
     "EntrySizing",
     "ExitPolicy",
     "LoadedStrategy",
+    "load_mapping_file",
+    "load_strategy_config",
     "RecoveryDecision",
     "RecoveryPolicy",
     "RecoveryReplaceRequest",

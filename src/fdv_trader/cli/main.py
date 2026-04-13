@@ -15,6 +15,7 @@ import uvicorn
 from fdv_trader.api.app import create_app
 from fdv_trader.config import load_settings
 from fdv_trader.infra.db import initialize_database
+from fdv_trader.strategy_api.replay import run_entry_replay
 
 DEFAULT_ADMIN_API_URL = (
     os.environ.get("FDV_ADMIN_API_URL")
@@ -37,10 +38,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         "command",
         nargs="?",
         default="run",
-        choices=["run", "config-summary", "status", "reconcile", "init-db"],
+        choices=["run", "config-summary", "status", "reconcile", "init-db", "replay"],
     )
     parser.add_argument("--trace-id", dest="trace_id", default=None)
     parser.add_argument("--condition-id", dest="condition_ids", action="append", default=[])
+    parser.add_argument("--fixture", default=None)
+    parser.add_argument("--strategy-config", dest="strategy_config_path", default=None)
     args = parser.parse_args(argv)
 
     if args.command == "run":
@@ -48,6 +51,16 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     if args.command == "init-db":
         asyncio.run(_initialize_database())
+        return
+    if args.command == "replay":
+        if not args.fixture:
+            raise SystemExit("--fixture is required for replay")
+        _print_json(
+            run_entry_replay(
+                args.fixture,
+                strategy_config_path=args.strategy_config_path,
+            )
+        )
         return
 
     try:
