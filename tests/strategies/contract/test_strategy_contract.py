@@ -38,7 +38,7 @@ from fdv_trader.strategies.template.strategy import build_strategy as build_temp
                 no_token_id="no-template",
                 yes_token_id="yes-template",
                 category="Crypto",
-                matched_keywords=("template",),
+                matched_keywords=("fdv", "500m"),
                 trading_status=TradingStatus.ELIGIBLE,
             ),
         ),

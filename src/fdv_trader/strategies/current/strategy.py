@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from fdv_trader.strategy_api.models import StrategySpec
 from fdv_trader.strategy_api.config_loader import load_strategy_config
+from fdv_trader.strategy_api.models import StrategySpec
 from fdv_trader.strategies.current.config import CurrentStrategyConfig
-from fdv_trader.strategies.fdv_default.strategy import FDVDefaultStrategy
+from fdv_trader.strategies.template.strategy import TemplateStrategy
 
 
-class CurrentStrategy(FDVDefaultStrategy):
+class CurrentStrategy(TemplateStrategy):
     """Fixed runtime entrypoint for the single strategy implementation."""
 
     def __init__(self, config: CurrentStrategyConfig | None = None) -> None:
