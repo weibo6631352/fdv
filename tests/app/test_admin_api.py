@@ -505,6 +505,7 @@ def test_admin_api_supports_reconcile_and_cancel_replace_sell_routes() -> None:
 
 def test_admin_api_supports_fee_filters_and_sorting() -> None:
     runtime = _build_runtime(ready=True)
+    runtime.db_session_factory = object()
     second_market = replace(
         _market(),
         condition_id="condition-1b",

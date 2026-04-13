@@ -100,8 +100,8 @@
 | 来源 | 可拿到的费率字段 | 备注 |
 | --- | --- | --- |
 | Gamma `GET /events` / `GET /markets` 响应 | `makerBaseFee`、`takerBaseFee`、`feesEnabled`、`feeSchedule` | 已用于市场发现和权威刷新，并已写入本地 `Market` / 数据库 / `/markets` 输出 |
-| Market WS `new_market` 事件 | `fees_enabled`、`taker_base_fee`、`fee_schedule.rate`、`fee_schedule.rebate_rate` | WS 主循环已接入；当前这些 fee 字段还没有回写到本地市场模型 |
-| Market WS `last_trade_price` 事件 | `fee_rate_bps` | WS 主循环已接入；当前还没有把该字段写回本地 fee 缓存 |
+| Market WS `new_market` 事件 | `fees_enabled`、`taker_base_fee`、`fee_schedule.rate`、`fee_schedule.rebate_rate` | 已回写本地 `Market` fee 快照；管理端可直接用本地缓存做筛选和展示 |
+| Market WS `last_trade_price` 事件 | `fee_rate_bps` | 已回写本地 `fee_rate_bps` / `fee_rate_updated_at`，优先更新运行态 registry 缓存 |
 
 ### 4.3 当前仓库的费率展示口径
 
@@ -120,9 +120,9 @@
 ```
 
 - `enabled` / `maker_base_fee_bps` / `taker_base_fee_bps`：来自 Gamma 市场元数据。
-- `fee_rate_bps` / `fee_rate_updated_at`：来自 CLOB `GET /fee-rate`，由后台对账刷新后写入本地。
+- `fee_rate_bps` / `fee_rate_updated_at`：来自 CLOB `GET /fee-rate` 与 Market WS `last_trade_price.fee_rate_bps`，都会写入本地。
 - 当前后台使用 `market.no_token_id` 作为 `token_id` 去刷新 `fee_rate_bps`。
-- 管理端 `/markets` 只返回本地快照，不在请求过程中实时调用外部费率接口。
+- 管理端 `/markets` 只返回本地快照，不在请求过程中实时调用外部费率接口；运行中优先读 registry 热态市场缓存，registry 为空时再回退数据库快照。
 - 管理端 `/markets` 当前支持 `fees_enabled`、`fee_rate_bps_min/max`、`maker_base_fee_bps_min/max`、`taker_base_fee_bps_min/max` 筛选，以及 `fee_rate_bps` / `fee_rate_updated_at` / `maker_base_fee_bps` / `taker_base_fee_bps` / `market_slug` 排序。
 
 ### 4.4 静态规则说明页面
@@ -148,11 +148,11 @@
 当前仓库已经把以下官方消息形态纳入处理：
 
 - market WS 的 `price_change.price_changes[]`、`market_resolved.assets_ids[]`
+- market WS 的 `new_market` fee 字段回写、`last_trade_price.fee_rate_bps` 回写
 - user WS 的 `event_type=order|trade`、`market`、`asset_id`、`original_size`、`size_matched`、`matchtime`
 
 当前还没有做的部分：
 
-- Market WS 里的 fee 相关字段还没有回写到本地 `Market` fee 快照。
 - 若订阅市场集合频繁变化，当前实现会重建 stream task 以更新订阅集。
 
 ## 6. 建议的后续对齐顺序
@@ -173,6 +173,7 @@
 4. 市场费率扫描和展示
    - Gamma 静态费率已进入市场模型、数据库和管理端市场视图。
    - `GET /fee-rate` 已进入后台对账刷新链路。
+   - Market WS `new_market` / `last_trade_price.fee_rate_bps` 已回写运行态本地 fee 缓存。
 
 5. market / user WebSocket 订阅对齐并接入主运行链路
    - market WS 已切到官方当前 `assets_ids` / `type=market` 订阅格式。
@@ -182,11 +183,12 @@
 6. 管理端 fee 筛选和排序
    - `/markets` 已支持基于本地 fee 缓存字段做筛选和排序。
    - 查询只读本地快照，不在列表接口里现场请求外部 fee 接口。
+   - 运行中优先读取 registry 热态市场缓存，避免等数据库异步同步后才可见。
 
 继续建议：
 
-1. 若希望 fee 快照更低延迟，可把 Market WS `new_market` / `last_trade_price.fee_rate_bps` 纳入本地市场 fee 更新链路。
-2. 若后续跟踪市场数继续增大，可继续优化 WS 重订阅节流和队列背压参数。
+1. 若后续跟踪市场数继续增大，可继续优化 WS 重订阅节流和队列背压参数。
+2. 若希望数据库快照也更快跟上 WS 热态，可再补一条面向 market snapshot 的异步持久化链路。
 
 ## 7. 官方参考链接
 

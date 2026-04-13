@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Awaitable, Callable, Mapping
 from uuid import uuid4
 
@@ -36,6 +36,74 @@ def _first(mapping: Mapping[str, Any], *keys: str) -> Any | None:
         if value is not None:
             return value
     return None
+
+
+def _mapping(mapping: Mapping[str, Any], *keys: str) -> Mapping[str, Any] | None:
+    for key in keys:
+        value = mapping.get(key)
+        if isinstance(value, Mapping):
+            return value
+    return None
+
+
+def _bool(value: Any | None) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes", "y", "on"}:
+        return True
+    if text in {"false", "0", "no", "n", "off"}:
+        return False
+    return None
+
+
+def _bps(value: Any | None) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        numeric = Decimal(text)
+    except InvalidOperation:
+        return None
+    if numeric == numeric.to_integral_value():
+        return int(numeric)
+    if abs(numeric) < Decimal("1"):
+        return int((numeric * Decimal("10000")).to_integral_value())
+    return int(numeric.to_integral_value())
+
+
+def _to_datetime(value: Any | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        numeric = Decimal(text)
+    except InvalidOperation:
+        numeric = None
+    if numeric is not None:
+        timestamp = float(numeric)
+        if timestamp > 10_000_000_000:
+            timestamp /= 1000.0
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _extract_token_id(message: Mapping[str, Any]) -> str | None:
@@ -309,7 +377,13 @@ class MarketWsWorker:
             )
         elif message_type == "last_trade_price":
             events.extend(
-                await self._apply_last_trade_price(token_id, state, message, source=source)
+                await self._apply_last_trade_price(
+                    token_id,
+                    state,
+                    market,
+                    message,
+                    source=source,
+                )
             )
         elif message_type == "market_resolved":
             events.extend(
@@ -552,6 +626,7 @@ class MarketWsWorker:
         self,
         token_id: str,
         state: _BookState,
+        market: Market | None,
         message: Mapping[str, Any],
         *,
         source: str,
@@ -559,17 +634,40 @@ class MarketWsWorker:
         last_trade_price = _decimal(_first(message, "last_trade_price", "lastTradePrice", "price"))
         if last_trade_price is None:
             return []
+        events: list[DomainEvent] = []
+        fee_rate_bps = _bps(_first(message, "fee_rate_bps", "feeRateBps"))
+        updated_at = _to_datetime(_first(message, "timestamp", "updated_at", "updatedAt")) or _utc_now()
+        if market is not None and fee_rate_bps is not None:
+            updated_market = self._update_market_fee_rate(
+                token_id,
+                market,
+                fee_rate_bps,
+                updated_at=updated_at,
+            )
+            if updated_market is not None:
+                market = updated_market
+                events.append(
+                    await self._publish_market_update(
+                        updated_market,
+                        source=source,
+                        reason="last_trade_price",
+                        message=message,
+                    )
+                )
         state.snapshot = replace(
             state.snapshot,
             last_trade_price=last_trade_price,
             received_at=_utc_now(),
         )
-        return await self._emit_snapshot_update(
-            token_id,
-            state,
-            source=source,
-            reason="last_trade_price",
+        events.extend(
+            await self._emit_snapshot_update(
+                token_id,
+                state,
+                source=source,
+                reason="last_trade_price",
+            )
         )
+        return events
 
     async def _apply_market_resolved(
         self,
@@ -613,10 +711,26 @@ class MarketWsWorker:
         *,
         source: str,
     ) -> list[DomainEvent]:
-        if market is not None and self._registry is not None:
-            self._registry.upsert(market)
+        events: list[DomainEvent] = []
+        if market is not None:
+            updated_market = self._update_market_fee_schedule(token_id, market, message)
+            if updated_market is not None:
+                market = updated_market
+                events.append(
+                    await self._publish_market_update(
+                        updated_market,
+                        source=source,
+                        reason="new_market",
+                        message=message,
+                    )
+                )
+            elif self._registry is not None:
+                self._registry.upsert(market)
         state.snapshot = replace(state.snapshot, received_at=_utc_now())
-        return await self._emit_snapshot_update(token_id, state, source=source, reason="new_market")
+        events.extend(
+            await self._emit_snapshot_update(token_id, state, source=source, reason="new_market")
+        )
+        return events
 
     async def _emit_snapshot_update(
         self,
@@ -910,6 +1024,134 @@ class MarketWsWorker:
             "received_at": snapshot.received_at.isoformat(),
             "snapshot_time": snapshot.snapshot_time.isoformat(),
         }
+
+    def _market_payload(self, market: Market) -> dict[str, Any]:
+        return {
+            "condition_id": market.condition_id,
+            "market_slug": market.market_slug,
+            "event_slug": market.event_slug,
+            "event_id": market.event_id,
+            "event_title": market.event_title,
+            "no_token_id": market.no_token_id,
+            "yes_token_id": market.yes_token_id,
+            "tick_size": self._serialize_decimal(market.tick_size),
+            "min_order_size": self._serialize_decimal(market.min_order_size),
+            "neg_risk": market.neg_risk,
+            "fees": {
+                "enabled": market.fees_enabled,
+                "maker_base_fee_bps": market.maker_base_fee_bps,
+                "taker_base_fee_bps": market.taker_base_fee_bps,
+                "fee_rate_bps": market.fee_rate_bps,
+                "fee_rate_updated_at": (
+                    None if market.fee_rate_updated_at is None else market.fee_rate_updated_at.isoformat()
+                ),
+            },
+            "category": market.category,
+            "tags": list(market.tags),
+            "matched_keywords": list(market.matched_keywords),
+            "trading_status": market.trading_status.value,
+            "reject_reason": market.reject_reason,
+        }
+
+    def _update_market_fee_schedule(
+        self,
+        token_id: str,
+        market: Market,
+        message: Mapping[str, Any],
+    ) -> Market | None:
+        fee_schedule = _mapping(message, "fee_schedule", "feeSchedule")
+        fees_enabled = _bool(_first(message, "fees_enabled", "feesEnabled"))
+        if fees_enabled is None and fee_schedule is not None:
+            fees_enabled = _bool(_first(fee_schedule, "enabled", "feesEnabled"))
+        maker_base_fee_bps = _bps(
+            _first(
+                message,
+                "maker_base_fee_bps",
+                "makerBaseFee",
+                "maker_base_fee",
+            )
+        )
+        taker_base_fee_bps = _bps(
+            _first(
+                message,
+                "taker_base_fee_bps",
+                "takerBaseFee",
+                "taker_base_fee",
+            )
+        )
+        if taker_base_fee_bps is None and fee_schedule is not None:
+            taker_base_fee_bps = _bps(_first(fee_schedule, "rate", "base_fee", "baseFee"))
+        updated_market = market.with_fee_schedule(
+            fees_enabled=fees_enabled,
+            maker_base_fee_bps=maker_base_fee_bps,
+            taker_base_fee_bps=taker_base_fee_bps,
+        )
+        if updated_market == market:
+            return None
+        if self._registry is not None:
+            refreshed = self._registry.update_fee_schedule(
+                market.condition_id,
+                fees_enabled=updated_market.fees_enabled,
+                maker_base_fee_bps=updated_market.maker_base_fee_bps,
+                taker_base_fee_bps=updated_market.taker_base_fee_bps,
+            )
+            if refreshed is not None:
+                updated_market = refreshed
+        self._tracked_markets[token_id] = updated_market
+        return updated_market
+
+    def _update_market_fee_rate(
+        self,
+        token_id: str,
+        market: Market,
+        fee_rate_bps: int,
+        *,
+        updated_at: datetime,
+    ) -> Market | None:
+        if market.fee_rate_bps == fee_rate_bps and market.fee_rate_updated_at is not None:
+            return None
+        updated_market = market.with_fee_rate(
+            fee_rate_bps,
+            fee_rate_updated_at=updated_at,
+        )
+        if updated_market == market:
+            return None
+        if self._registry is not None:
+            refreshed = self._registry.update_fee_rate(
+                market.condition_id,
+                fee_rate_bps,
+                fee_rate_updated_at=updated_at,
+            )
+            if refreshed is not None:
+                updated_market = refreshed
+        self._tracked_markets[token_id] = updated_market
+        return updated_market
+
+    async def _publish_market_update(
+        self,
+        market: Market,
+        *,
+        source: str,
+        reason: str,
+        message: Mapping[str, Any],
+    ) -> DomainEvent:
+        event = MarketWsEvent(
+            trace_id=uuid4().hex,
+            event_type=DomainEventType.MARKET_UPDATED,
+            event_id=uuid4().hex,
+            token_id=market.no_token_id,
+            market_slug=market.market_slug,
+            condition_id=market.condition_id,
+            reason=reason,
+            created_at=_utc_now(),
+            merge_key=f"market_updated|{market.condition_id}",
+            payload={
+                "source": source,
+                "market": self._market_payload(market),
+                "message": dict(message),
+            },
+        )
+        return await self._publish(OutboxPriority.P2, event)
 
     def _serialize_decimal(self, value: Decimal | None) -> str | None:
         if value is None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from threading import Lock
 from typing import Callable
@@ -121,6 +122,48 @@ class MarketRegistry:
             lambda: self._update_market_locked(
                 condition_id,
                 lambda market: market.with_min_order_size(min_order_size),
+            ),
+        )
+
+    def update_fee_schedule(
+        self,
+        condition_id: str,
+        *,
+        fees_enabled: bool | None = None,
+        maker_base_fee_bps: int | None = None,
+        taker_base_fee_bps: int | None = None,
+        timeout: float = 0.05,
+    ) -> Market | None:
+        return self._with_condition_lock(
+            condition_id,
+            timeout,
+            lambda: self._update_market_locked(
+                condition_id,
+                lambda market: market.with_fee_schedule(
+                    fees_enabled=fees_enabled,
+                    maker_base_fee_bps=maker_base_fee_bps,
+                    taker_base_fee_bps=taker_base_fee_bps,
+                ),
+            ),
+        )
+
+    def update_fee_rate(
+        self,
+        condition_id: str,
+        fee_rate_bps: int | None,
+        *,
+        fee_rate_updated_at: datetime | None = None,
+        timeout: float = 0.05,
+    ) -> Market | None:
+        return self._with_condition_lock(
+            condition_id,
+            timeout,
+            lambda: self._update_market_locked(
+                condition_id,
+                lambda market: market.with_fee_rate(
+                    fee_rate_bps,
+                    fee_rate_updated_at=fee_rate_updated_at,
+                ),
             ),
         )
 

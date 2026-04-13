@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from fdv_trader.domain.market import Market, TradingStatus
@@ -60,3 +61,30 @@ def test_registry_updates_indexes_after_token_and_slug_change() -> None:
     assert registry.get_by_no_token_id(updated.no_token_id) == updated
     assert registry.get_by_slug(updated.market_slug) == updated
     assert registry.get_by_slug(updated.event_slug or "") == updated
+
+
+def test_registry_updates_fee_schedule_and_fee_rate() -> None:
+    registry = MarketRegistry()
+    market = _market()
+    registry.upsert(market)
+
+    fee_updated_at = datetime(2026, 4, 13, 12, 0, 0, tzinfo=timezone.utc)
+    registry.update_fee_schedule(
+        market.condition_id,
+        fees_enabled=True,
+        maker_base_fee_bps=0,
+        taker_base_fee_bps=100,
+    )
+    registry.update_fee_rate(
+        market.condition_id,
+        125,
+        fee_rate_updated_at=fee_updated_at,
+    )
+
+    updated = registry.get_by_condition_id(market.condition_id)
+    assert updated is not None
+    assert updated.fees_enabled is True
+    assert updated.maker_base_fee_bps == 0
+    assert updated.taker_base_fee_bps == 100
+    assert updated.fee_rate_bps == 125
+    assert updated.fee_rate_updated_at == fee_updated_at

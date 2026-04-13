@@ -261,8 +261,8 @@ class AdminService:
         sort_by: MarketFeeSortField | None = None,
         sort_direction: SortDirection = "desc",
     ) -> dict[str, Any]:
-        if not self._has_db_session_factory():
-            registry = self._registry_snapshot()
+        registry = self._registry_snapshot()
+        if registry.markets or not self._has_db_session_factory():
             account = self._account_snapshot()
             markets = _sort_markets(
                 tuple(

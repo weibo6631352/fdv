@@ -163,6 +163,80 @@ def test_market_ws_worker_handles_official_market_resolved_payload_with_assets_i
     asyncio.run(run())
 
 
+def test_market_ws_worker_writes_market_fee_schedule_from_new_market_message() -> None:
+    async def run() -> None:
+        event_bus = EventBus()
+        registry = MarketRegistry()
+        worker = MarketWsWorker(event_bus=event_bus, registry=registry)
+        market = _market()
+        worker.track_market(market)
+
+        events = await worker.handle_message(
+            {
+                "event_type": "new_market",
+                "market": market.condition_id,
+                "asset_id": market.no_token_id,
+                "fees_enabled": True,
+                "fee_schedule": {
+                    "rate": "0.02",
+                },
+            }
+        )
+
+        updated = registry.get_by_condition_id(market.condition_id)
+        assert updated is not None
+        assert updated.fees_enabled is True
+        assert updated.taker_base_fee_bps == 200
+        assert [str(event.event_type) for event in events] == [
+            DomainEventType.MARKET_UPDATED.value,
+            DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
+        ]
+
+        published = await event_bus.next_maintenance_event()
+        assert published.event_type == DomainEventType.MARKET_UPDATED
+        assert published.payload["market"]["fees"]["taker_base_fee_bps"] == 200
+
+    asyncio.run(run())
+
+
+def test_market_ws_worker_writes_fee_rate_from_last_trade_price_message() -> None:
+    async def run() -> None:
+        event_bus = EventBus()
+        registry = MarketRegistry()
+        worker = MarketWsWorker(event_bus=event_bus, registry=registry)
+        market = _market()
+        worker.track_market(market)
+
+        events = await worker.handle_message(
+            {
+                "event_type": "last_trade_price",
+                "market": market.condition_id,
+                "asset_id": market.no_token_id,
+                "last_trade_price": "0.58",
+                "fee_rate_bps": "125",
+                "timestamp": "1757908892351",
+            }
+        )
+
+        updated = registry.get_by_condition_id(market.condition_id)
+        snapshot = worker.snapshot(market.no_token_id)
+        assert updated is not None
+        assert updated.fee_rate_bps == 125
+        assert updated.fee_rate_updated_at is not None
+        assert snapshot is not None
+        assert snapshot.last_trade_price == Decimal("0.58")
+        assert [str(event.event_type) for event in events] == [
+            DomainEventType.MARKET_UPDATED.value,
+            DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
+        ]
+
+        published = await event_bus.next_maintenance_event()
+        assert published.event_type == DomainEventType.MARKET_UPDATED
+        assert published.payload["market"]["fees"]["fee_rate_bps"] == 125
+
+    asyncio.run(run())
+
+
 def test_market_ws_worker_waits_for_entry_threshold_then_overwrites_latest_snapshot() -> None:
     async def run() -> None:
         event_bus = EventBus()
