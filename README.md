@@ -40,7 +40,7 @@
 ## 策略与测试入口
 
 - 当前运行策略固定在 [src/polymarket_trader/strategies/current/strategy.py](./src/polymarket_trader/strategies/current/strategy.py)。
-- 策略交易阈值定义位于 [src/polymarket_trader/strategies/current/config.py](./src/polymarket_trader/strategies/current/config.py)，不再通过 `.env` 注入。
+- 策略交易阈值常量位于 [src/polymarket_trader/strategies/current/config.py](./src/polymarket_trader/strategies/current/config.py)，不再通过 `.env` 注入。
 - 市场筛选位于 [src/polymarket_trader/strategies/current/market_filter.py](./src/polymarket_trader/strategies/current/market_filter.py)，筛选词直接写在文件内。
 - 交易决策位于 [src/polymarket_trader/strategies/current/trading_strategy.py](./src/polymarket_trader/strategies/current/trading_strategy.py)。
 - 订阅保留与移除规则位于 [src/polymarket_trader/strategies/current/subscription.py](./src/polymarket_trader/strategies/current/subscription.py)。

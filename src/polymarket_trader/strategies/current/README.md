@@ -3,7 +3,7 @@
 这里是仓库里唯一保留的策略目录，也是二次开发优先落点。
 
 - [strategy.py](./strategy.py)：运行时固定装配入口，只做模块装配和委托。
-- [config.py](./config.py)：当前策略的交易阈值，直接写 Python，不再读取 `.env` / `.json` / `.toml`。
+- [config.py](./config.py)：当前策略的交易阈值常量，直接写 Python，不再读取 `.env` / `.json` / `.toml`。
 - [market_filter.py](./market_filter.py)：远端 discovery 查询和最终 universe 筛选，筛选词直接写死在这个文件里。
 - [trading_strategy.py](./trading_strategy.py)：分配、入场、退出、恢复。
 - [subscription.py](./subscription.py)：已筛出 market 的订阅保留与移除条件。

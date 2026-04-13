@@ -13,7 +13,12 @@ from polymarket_trader.strategy_api.models import (
     StrategyDecision,
     UniverseDecision,
 )
-from polymarket_trader.strategies.current.config import CURRENT_STRATEGY_CONFIG, CurrentStrategyConfig
+from polymarket_trader.strategies.current.config import (
+    ENTRY_NO_PRICE_MAX,
+    EXIT_NO_PRICE,
+    MAX_SPREAD,
+    MIN_LIQUIDITY_USDC,
+)
 from polymarket_trader.strategies.current.market_filter import (
     build_discovery_queries,
     select_market,
@@ -34,19 +39,17 @@ class CurrentStrategy:
     """当前运行时固定装配的策略入口。
 
     二次开发时优先阅读：
-    - `config.py`：交易阈值
+    - `config.py`：交易阈值常量
     - `market_filter.py`：市场筛选与 discovery
     - `trading_strategy.py`：分配、入场、退出、恢复
     - `subscription.py`：订阅保留与退订规则
     """
 
-    def __init__(self, config: CurrentStrategyConfig | None = None) -> None:
-        self._config = config or CURRENT_STRATEGY_CONFIG
+    def __init__(self) -> None:
         self._spec = StrategySpec(
             name="current",
             version="1",
             description="Current runtime strategy implementation",
-            config_type=CurrentStrategyConfig,
             capabilities=("discovery", "universe", "sizing", "entry", "exit", "recovery"),
         )
 
@@ -55,24 +58,20 @@ class CurrentStrategy:
         return self._spec
 
     @property
-    def config(self) -> CurrentStrategyConfig:
-        return self._config
-
-    @property
     def entry_no_price_max(self) -> Decimal:
-        return self._config.entry_no_price_max
+        return ENTRY_NO_PRICE_MAX
 
     @property
     def exit_no_price(self) -> Decimal:
-        return self._config.exit_no_price
+        return EXIT_NO_PRICE
 
     @property
     def min_liquidity_usdc(self) -> Decimal:
-        return self._config.min_liquidity_usdc
+        return MIN_LIQUIDITY_USDC
 
     @property
     def max_spread(self) -> Decimal | None:
-        return self._config.max_spread
+        return MAX_SPREAD
 
     def build_discovery_queries(self) -> tuple[DiscoveryQuery, ...]:
         return build_discovery_queries()
@@ -81,13 +80,13 @@ class CurrentStrategy:
         return select_market(market)
 
     def size_entry(self, context: StrategyContext) -> EntrySizing:
-        return size_entry(context, self._config)
+        return size_entry(context)
 
     def decide_entry(self, context: StrategyContext) -> StrategyDecision:
-        return decide_entry(context, self._config)
+        return decide_entry(context)
 
     def decide_exit(self, context: StrategyContext) -> StrategyDecision:
-        return decide_exit(context, self._config)
+        return decide_exit(context)
 
     def decide_recovery(self, context: StrategyContext) -> RecoveryDecision:
         return decide_recovery(context)
@@ -117,7 +116,7 @@ def build_strategy() -> CurrentStrategy:
     """构造当前运行时策略。
 
     这里不再读取外部策略配置文件。
-    交易阈值写在 `config.py`，市场筛选语义写在 `market_filter.py`。
+    交易阈值写在 `config.py` 常量里，市场筛选语义写在 `market_filter.py`。
     """
 
     return CurrentStrategy()

@@ -69,9 +69,6 @@ def test_strategy_contract_positive_path() -> None:
                 "max_order_usdc": Decimal("100"),
                 "max_market_usdc": Decimal("100"),
                 "max_total_usdc": Decimal("100"),
-                "entry_no_price_max": Decimal("0.60"),
-                "min_liquidity_usdc": Decimal("5"),
-                "max_spread": Decimal("0.10"),
             },
         )
     )

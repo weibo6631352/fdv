@@ -11,18 +11,23 @@ from polymarket_trader.strategy_api.models import (
     StrategyContext,
     StrategyDecision,
 )
-from polymarket_trader.strategies.current.config import CurrentStrategyConfig
+from polymarket_trader.strategies.current.config import (
+    ENTRY_NO_PRICE_MAX,
+    EXIT_NO_PRICE,
+    MAX_SPREAD,
+    MIN_LIQUIDITY_USDC,
+)
 from polymarket_trader.strategies.current.market_filter import select_market
 
 
-def size_entry(context: StrategyContext, config: CurrentStrategyConfig) -> EntrySizing:
+def size_entry(context: StrategyContext) -> EntrySizing:
     """计算当前 market 在本轮中的入场预算。"""
 
     portfolio_budget_usdc = _metadata_decimal(context, "portfolio_budget_usdc")
     if portfolio_budget_usdc is None:
         return _empty_sizing(context, reason="missing_portfolio_budget")
 
-    candidate_snapshots = _candidate_snapshots(context, config)
+    candidate_snapshots = _candidate_snapshots(context)
     if not candidate_snapshots:
         return EntrySizing(
             allocation_plan=AllocationPlan(
@@ -57,9 +62,9 @@ def size_entry(context: StrategyContext, config: CurrentStrategyConfig) -> Entry
         max_order_usdc=max_order_usdc,
         max_market_usdc=max_market_usdc,
         max_total_usdc=max_total_usdc,
-        entry_no_price_max=config.entry_no_price_max,
-        min_liquidity_usdc=config.min_liquidity_usdc,
-        max_spread=config.max_spread,
+        entry_no_price_max=ENTRY_NO_PRICE_MAX,
+        min_liquidity_usdc=MIN_LIQUIDITY_USDC,
+        max_spread=MAX_SPREAD,
     )
     allocation = _pick_allocation(
         plan.allocations,
@@ -72,7 +77,7 @@ def size_entry(context: StrategyContext, config: CurrentStrategyConfig) -> Entry
     )
 
 
-def decide_entry(context: StrategyContext, config: CurrentStrategyConfig) -> StrategyDecision:
+def decide_entry(context: StrategyContext) -> StrategyDecision:
     """生成 BUY 决策。"""
 
     if context.market is None or context.orderbook is None:
@@ -80,7 +85,7 @@ def decide_entry(context: StrategyContext, config: CurrentStrategyConfig) -> Str
     best_ask = context.orderbook.best_ask
     if best_ask is None:
         return StrategyDecision.skip(reason="missing_best_ask")
-    if best_ask > config.entry_no_price_max:
+    if best_ask > ENTRY_NO_PRICE_MAX:
         return StrategyDecision.skip(reason="price_above_entry_max")
 
     amount_usdc = _metadata_decimal(context, "amount_usdc", "buy_budget_usdc")
@@ -89,13 +94,13 @@ def decide_entry(context: StrategyContext, config: CurrentStrategyConfig) -> Str
 
     return StrategyDecision.buy(
         reason="strategy_entry",
-        price=config.entry_no_price_max,
+        price=ENTRY_NO_PRICE_MAX,
         amount_usdc=amount_usdc,
         market_slug=context.market.market_slug,
     )
 
 
-def decide_exit(context: StrategyContext, config: CurrentStrategyConfig) -> StrategyDecision:
+def decide_exit(context: StrategyContext) -> StrategyDecision:
     """生成 SELL 决策。"""
 
     size_shares = _metadata_decimal(context, "size_shares")
@@ -110,7 +115,7 @@ def decide_exit(context: StrategyContext, config: CurrentStrategyConfig) -> Stra
 
     return StrategyDecision.sell(
         reason="strategy_exit",
-        price=config.exit_no_price,
+        price=EXIT_NO_PRICE,
         size_shares=uncovered_shares,
         market_slug=(
             context.market.market_slug if context.market is not None else _metadata_text(context, "market_slug")
@@ -175,7 +180,6 @@ def _empty_sizing(context: StrategyContext, *, reason: str) -> EntrySizing:
 
 def _candidate_snapshots(
     context: StrategyContext,
-    config: CurrentStrategyConfig,
 ) -> tuple[AllocationMarketSnapshot, ...]:
     raw_value = context.metadata.get("candidate_snapshots")
     if isinstance(raw_value, tuple):
@@ -186,14 +190,11 @@ def _candidate_snapshots(
         return tuple(
             snapshot for snapshot in raw_value if isinstance(snapshot, AllocationMarketSnapshot)
         )
-    fallback = _fallback_snapshot(context, config)
+    fallback = _fallback_snapshot(context)
     return () if fallback is None else (fallback,)
 
 
-def _fallback_snapshot(
-    context: StrategyContext,
-    config: CurrentStrategyConfig,
-) -> AllocationMarketSnapshot | None:
+def _fallback_snapshot(context: StrategyContext) -> AllocationMarketSnapshot | None:
     if context.market is None or context.orderbook is None:
         return None
     universe_decision = select_market(context.market)
@@ -214,7 +215,7 @@ def _fallback_snapshot(
         archived=context.market.trading_status == TradingStatus.CLOSED,
         liquidity_usdc=_ask_depth_notional(
             context.orderbook,
-            price_cap=config.entry_no_price_max,
+            price_cap=ENTRY_NO_PRICE_MAX,
         ),
         spread=context.orderbook.spread,
         best_ask=context.orderbook.best_ask,

@@ -125,9 +125,6 @@ def test_current_strategy_sizes_entry_from_candidate_snapshots() -> None:
                 "max_order_usdc": Decimal("100"),
                 "max_market_usdc": Decimal("100"),
                 "max_total_usdc": Decimal("100"),
-                "entry_no_price_max": Decimal("0.60"),
-                "min_liquidity_usdc": Decimal("5"),
-                "max_spread": Decimal("0.10"),
             },
         )
     )

@@ -33,7 +33,7 @@
 
 策略配置约定：
 - 当前固定策略入口在 `src/polymarket_trader/strategies/current/strategy.py`。
-- 当前内置策略的交易阈值写在 `src/polymarket_trader/strategies/current/config.py`，不再依赖 `STRATEGY_CONFIG_PATH`。
+- 当前内置策略的交易阈值常量写在 `src/polymarket_trader/strategies/current/config.py`，不再依赖 `STRATEGY_CONFIG_PATH`。
 - 市场筛选、交易决策和订阅保留分别收敛在 `market_filter.py`、`trading_strategy.py`、`subscription.py`。
 - 远端发现查询参数不放环境变量里堆砌；这类官方 Gamma 查询参数由策略代码里的 `build_discovery_queries()` 直接声明并透传。
 
