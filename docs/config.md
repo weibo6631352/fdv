@@ -14,11 +14,11 @@
 | 超时告警 | `ORDER_SUBMIT_TIMEOUT_MS`、`CRITICAL_LOCK_TIMEOUT_MS` | 防止交易链路无限等待 |
 | 数据库 | `DATABASE_URL`、`DATABASE_HOST` | PostgreSQL 连接地址；支持完整 URL 或拆分字段 |
 | 密钥 | `POLYMARKET_API_KEY`、`WALLET_PRIVATE_KEY` | 只能通过安全环境注入 |
-| 策略业务参数 | `strategies/current/config.py` | 当前内置策略直接在 Python 里定义入场、退出、筛选和订阅保留语义 |
+| 策略业务参数 | `strategies/current/` | 当前内置策略直接在 Python 里定义交易阈值、筛选语义和订阅保留规则 |
 
 ## 默认值原则
 
-- 与单一策略语义强相关的值，不继续新增为环境变量，优先收敛到 `strategies/current/config.py`。
+- 与单一策略语义强相关的值，不继续新增为环境变量，优先收敛到 `strategies/current/` 目录内的 Python 文件。
 - 会影响资金风险的配置应默认保守，不能默认放大仓位。
 - 队列容量和线程池大小必须有上限，禁止无限队列。
 - 超时配置必须有明确单位，变量名统一使用 `_MS` 或 `_SECONDS`。
@@ -33,7 +33,7 @@
 
 策略配置约定：
 - 当前固定策略入口在 `src/polymarket_trader/strategies/current/strategy.py`。
-- 当前内置策略的业务参数写在 `src/polymarket_trader/strategies/current/config.py`，不再依赖 `STRATEGY_CONFIG_PATH`。
+- 当前内置策略的交易阈值写在 `src/polymarket_trader/strategies/current/config.py`，不再依赖 `STRATEGY_CONFIG_PATH`。
 - 市场筛选、交易决策和订阅保留分别收敛在 `market_filter.py`、`trading_strategy.py`、`subscription.py`。
 - 远端发现查询参数不放环境变量里堆砌；这类官方 Gamma 查询参数由策略代码里的 `build_discovery_queries()` 直接声明并透传。
 

@@ -196,7 +196,7 @@ def _fallback_snapshot(
 ) -> AllocationMarketSnapshot | None:
     if context.market is None or context.orderbook is None:
         return None
-    universe_decision = select_market(context.market, config)
+    universe_decision = select_market(context.market)
     return AllocationMarketSnapshot(
         market=context.market,
         orderbook=context.orderbook,

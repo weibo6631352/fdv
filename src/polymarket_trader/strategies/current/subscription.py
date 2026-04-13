@@ -3,13 +3,10 @@ from __future__ import annotations
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.runtime.account_state import AccountSnapshot
 
-from polymarket_trader.strategies.current.config import CurrentStrategyConfig
-
 
 def should_keep_tracking(
     market: Market,
     account_snapshot: AccountSnapshot | None,
-    config: CurrentStrategyConfig,
 ) -> bool:
     """决定 market 被策略排除后，是否继续保留订阅/跟踪。
 
@@ -18,8 +15,6 @@ def should_keep_tracking(
     - 等 exposure 归零后，再让框架移除 registry / WS 订阅。
     """
 
-    if not config.retain_filtered_market_tracking:
-        return False
     if account_snapshot is None:
         return True
 

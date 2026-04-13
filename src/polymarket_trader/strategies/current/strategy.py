@@ -34,7 +34,7 @@ class CurrentStrategy:
     """当前运行时固定装配的策略入口。
 
     二次开发时优先阅读：
-    - `config.py`：策略业务参数
+    - `config.py`：交易阈值
     - `market_filter.py`：市场筛选与 discovery
     - `trading_strategy.py`：分配、入场、退出、恢复
     - `subscription.py`：订阅保留与退订规则
@@ -75,10 +75,10 @@ class CurrentStrategy:
         return self._config.max_spread
 
     def build_discovery_queries(self) -> tuple[DiscoveryQuery, ...]:
-        return build_discovery_queries(self._config)
+        return build_discovery_queries()
 
     def select_market(self, market: Market) -> UniverseDecision:
-        return select_market(market, self._config)
+        return select_market(market)
 
     def size_entry(self, context: StrategyContext) -> EntrySizing:
         return size_entry(context, self._config)
@@ -97,7 +97,7 @@ class CurrentStrategy:
         market: Market,
         account_snapshot: AccountSnapshot | None,
     ) -> bool:
-        return should_keep_tracking(market, account_snapshot, self._config)
+        return should_keep_tracking(market, account_snapshot)
 
     def build_filtered_tracking_market(
         self,
@@ -116,8 +116,8 @@ class CurrentStrategy:
 def build_strategy() -> CurrentStrategy:
     """构造当前运行时策略。
 
-    这里不再读取外部策略配置文件；业务参数统一直接写在
-    `strategies/current/config.py` 里。
+    这里不再读取外部策略配置文件。
+    交易阈值写在 `config.py`，市场筛选语义写在 `market_filter.py`。
     """
 
     return CurrentStrategy()
