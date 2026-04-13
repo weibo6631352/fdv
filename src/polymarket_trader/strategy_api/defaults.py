@@ -5,6 +5,7 @@ from decimal import Decimal
 from polymarket_trader.domain.allocation import AllocationPlan
 from polymarket_trader.domain.market import Market
 from polymarket_trader.strategy_api.models import (
+    DiscoveryQuery,
     EntrySizing,
     RecoveryDecision,
     StrategyContext,
@@ -22,12 +23,15 @@ class PassiveStrategy:
             name="passive",
             version="1",
             description="Framework default strategy placeholder",
-            capabilities=("universe", "sizing", "entry", "exit", "recovery"),
+            capabilities=("discovery", "universe", "sizing", "entry", "exit", "recovery"),
         )
 
     @property
     def spec(self) -> StrategySpec:
         return self._spec
+
+    def build_discovery_queries(self) -> tuple[DiscoveryQuery, ...]:
+        return ()
 
     def select_market(self, market: Market) -> UniverseDecision:
         return UniverseDecision.include(reason="framework_default")

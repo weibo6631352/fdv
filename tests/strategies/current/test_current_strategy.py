@@ -8,8 +8,24 @@ from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
 from polymarket_trader.runtime.account_state import AccountSnapshot
-from polymarket_trader.strategy_api.models import StrategyAction, StrategyContext
+from polymarket_trader.strategy_api.models import DiscoveryEndpoint, StrategyAction, StrategyContext
 from polymarket_trader.strategies.current.strategy import build_strategy
+
+
+def test_current_strategy_builds_remote_discovery_query() -> None:
+    strategy = build_strategy()
+
+    queries = strategy.build_discovery_queries()
+
+    assert len(queries) == 2
+    assert all(query.endpoint == DiscoveryEndpoint.EVENTS_KEYSET for query in queries)
+    assert all(query.params["active"] is True for query in queries)
+    assert all(query.params["closed"] is False for query in queries)
+    assert {query.params["title_search"] for query in queries} == {
+        "fdv",
+        "fully diluted valuation",
+    }
+    assert all(query.max_pages == 1 for query in queries)
 
 
 def test_current_strategy_can_decide_entry() -> None:

@@ -14,6 +14,7 @@ from polymarket_trader.strategies.current.strategy import build_strategy as buil
 
 def test_strategy_contract_positive_path() -> None:
     strategy = build_current_strategy()
+    assert strategy.build_discovery_queries()
     market = Market(
         condition_id="condition-current",
         market_slug="slug-current",

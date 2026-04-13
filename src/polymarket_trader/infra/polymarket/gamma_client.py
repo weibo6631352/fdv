@@ -32,6 +32,22 @@ def _iter_mappings(payload: Any) -> tuple[Mapping[str, Any], ...]:
     return ()
 
 
+def _normalize_query_params(params: Mapping[str, Any] | None) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    if params is None:
+        return normalized
+    for key, value in params.items():
+        if value is None:
+            continue
+        if isinstance(value, tuple):
+            normalized[key] = list(value)
+        elif isinstance(value, set):
+            normalized[key] = list(value)
+        else:
+            normalized[key] = value
+    return normalized
+
+
 class GammaClient(PolymarketRestClientBase):
     """Polymarket Gamma 元数据适配器。
 
@@ -76,10 +92,57 @@ class GammaClient(PolymarketRestClientBase):
         if closed is not None:
             params["closed"] = closed
         if tag is not None:
-            params["tag"] = tag
+            params["tag_slug"] = tag
         if slug is not None:
             params["slug"] = slug
         return params
+
+    async def list_events_by_params(
+        self,
+        params: Mapping[str, Any] | None = None,
+        *,
+        timeout_s: float | None = None,
+    ) -> tuple[GammaEventDTO, ...]:
+        payload = await self.get_json(
+            self._events_path,
+            params=_normalize_query_params(params),
+            timeout_s=timeout_s,
+            operation="gamma.list_events",
+        )
+        return tuple(normalize_gamma_event(item) for item in _iter_mappings(payload))
+
+    async def list_events_keyset_by_params(
+        self,
+        params: Mapping[str, Any] | None = None,
+        *,
+        timeout_s: float | None = None,
+    ) -> tuple[tuple[GammaEventDTO, ...], str | None]:
+        payload = await self.get_json(
+            f"{self._events_path.rstrip('/')}/keyset",
+            params=_normalize_query_params(params),
+            timeout_s=timeout_s,
+            operation="gamma.list_events_keyset",
+            unwrap=False,
+        )
+        if not isinstance(payload, Mapping):
+            raise TypeError("gamma keyset events response is not a mapping")
+        events = tuple(normalize_gamma_event(item) for item in _iter_mappings(payload))
+        next_cursor = payload.get("next_cursor")
+        return events, None if next_cursor is None else str(next_cursor)
+
+    async def list_markets_by_params(
+        self,
+        params: Mapping[str, Any] | None = None,
+        *,
+        timeout_s: float | None = None,
+    ) -> tuple[GammaMarketDTO, ...]:
+        payload = await self.get_json(
+            self._markets_path,
+            params=_normalize_query_params(params),
+            timeout_s=timeout_s,
+            operation="gamma.list_markets",
+        )
+        return tuple(normalize_gamma_market(item) for item in _iter_mappings(payload))
 
     async def list_events(
         self,
@@ -92,21 +155,17 @@ class GammaClient(PolymarketRestClientBase):
         offset: int = 0,
         timeout_s: float | None = None,
     ) -> tuple[GammaEventDTO, ...]:
-        params = self._build_query_params(
-            active=active,
-            closed=closed,
-            tag=tag,
-            slug=slug,
-            limit=limit,
-            offset=offset,
-        )
-        payload = await self.get_json(
-            self._events_path,
-            params=params,
+        return await self.list_events_by_params(
+            self._build_query_params(
+                active=active,
+                closed=closed,
+                tag=tag,
+                slug=slug,
+                limit=limit,
+                offset=offset,
+            ),
             timeout_s=timeout_s,
-            operation="gamma.list_events",
         )
-        return tuple(normalize_gamma_event(item) for item in _iter_mappings(payload))
 
     async def list_markets(
         self,
@@ -119,21 +178,17 @@ class GammaClient(PolymarketRestClientBase):
         offset: int = 0,
         timeout_s: float | None = None,
     ) -> tuple[GammaMarketDTO, ...]:
-        params = self._build_query_params(
-            active=active,
-            closed=closed,
-            tag=tag,
-            slug=slug,
-            limit=limit,
-            offset=offset,
-        )
-        payload = await self.get_json(
-            self._markets_path,
-            params=params,
+        return await self.list_markets_by_params(
+            self._build_query_params(
+                active=active,
+                closed=closed,
+                tag=tag,
+                slug=slug,
+                limit=limit,
+                offset=offset,
+            ),
             timeout_s=timeout_s,
-            operation="gamma.list_markets",
         )
-        return tuple(normalize_gamma_market(item) for item in _iter_mappings(payload))
 
     async def get_event(
         self,

@@ -36,6 +36,7 @@
 - `STRATEGY_CONFIG_PATH` 指向当前策略入口读取的结构化配置文件，不指向 `strategy.py` 本身。
 - 当前固定策略入口在 `src/polymarket_trader/strategies/current/strategy.py`。
 - 当前内置加载器支持 `.json` 和 `.toml`。
+- 远端发现查询参数不放环境变量里堆砌；这类官方 Gamma 查询参数由策略代码里的 `build_discovery_queries()` 直接声明并透传。
 
 ## 密钥规则
 

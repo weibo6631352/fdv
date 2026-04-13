@@ -4,6 +4,7 @@ from typing import Protocol, runtime_checkable
 
 from polymarket_trader.domain.market import Market
 from polymarket_trader.strategy_api.models import (
+    DiscoveryQuery,
     EntrySizing,
     RecoveryDecision,
     StrategyContext,
@@ -42,6 +43,8 @@ class RecoveryPolicy(Protocol):
 class StrategyModule(Protocol):
     @property
     def spec(self) -> StrategySpec: ...
+
+    def build_discovery_queries(self) -> tuple[DiscoveryQuery, ...]: ...
 
     def select_market(self, market: Market) -> UniverseDecision: ...
 

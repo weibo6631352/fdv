@@ -22,6 +22,12 @@ class StrategyAction(StrEnum):
     REPLACE = "replace"
 
 
+class DiscoveryEndpoint(StrEnum):
+    EVENTS = "events"
+    EVENTS_KEYSET = "events_keyset"
+    MARKETS = "markets"
+
+
 @dataclass(frozen=True, slots=True)
 class StrategySpec:
     name: str
@@ -29,6 +35,38 @@ class StrategySpec:
     description: str = ""
     config_type: type[Any] | None = None
     capabilities: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryQuery:
+    """Strategy-provided remote discovery query.
+
+    Official Polymarket docs:
+    - List events: https://docs.polymarket.com/api-reference/events/list-events
+    - List events (keyset pagination):
+      https://docs.polymarket.com/api-reference/events/list-events-keyset-pagination
+    - List markets: https://docs.polymarket.com/api-reference/markets/list-markets
+    - List markets (keyset pagination):
+      https://docs.polymarket.com/api-reference/markets/list-markets-keyset-pagination
+    - Fetching markets guide: https://docs.polymarket.com/market-data/fetching-markets
+
+    Chinese notes:
+    - `endpoint` tells the framework which official Gamma endpoint to call.
+    - `params` stores the full official Gamma query parameter set verbatim; the
+      framework only forwards them and does not re-interpret strategy semantics.
+      Strategy code should fill these keys exactly according to the official docs,
+      such as `active` / `closed` / `title_search` / `tag_slug` / `order` /
+      `ascending` / `after_cursor`.
+    - `max_pages` controls how many pages a single scheduled discovery cycle may
+      consume, so strategy code can narrow or broaden scan depth without changing
+      the framework scheduler itself.
+    - `events_keyset` must not send `offset`; it should paginate with `after_cursor`.
+    """
+
+    endpoint: DiscoveryEndpoint
+    params: Mapping[str, Any] = field(default_factory=dict)
+    max_pages: int = 1
+    timeout_s: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

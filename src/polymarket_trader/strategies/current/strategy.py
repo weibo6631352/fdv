@@ -7,6 +7,8 @@ from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.order import OrderSide
 from polymarket_trader.strategy_api.config_loader import load_strategy_config
 from polymarket_trader.strategy_api.models import (
+    DiscoveryEndpoint,
+    DiscoveryQuery,
     EntrySizing,
     RecoveryDecision,
     StrategyContext,
@@ -27,12 +29,40 @@ class CurrentStrategy:
             version="1",
             description="Current runtime strategy implementation",
             config_type=CurrentStrategyConfig,
-            capabilities=("universe", "sizing", "entry", "exit", "recovery"),
+            capabilities=("discovery", "universe", "sizing", "entry", "exit", "recovery"),
         )
 
     @property
     def spec(self) -> StrategySpec:
         return self._spec
+
+    def build_discovery_queries(self) -> tuple[DiscoveryQuery, ...]:
+        return (
+            DiscoveryQuery(
+                endpoint=DiscoveryEndpoint.EVENTS_KEYSET,
+                params={
+                    "active": True,
+                    "closed": False,
+                    "title_search": "fdv",
+                    "limit": 100,
+                    "order": "volume",
+                    "ascending": False,
+                },
+                max_pages=1,
+            ),
+            DiscoveryQuery(
+                endpoint=DiscoveryEndpoint.EVENTS_KEYSET,
+                params={
+                    "active": True,
+                    "closed": False,
+                    "title_search": "fully diluted valuation",
+                    "limit": 100,
+                    "order": "volume",
+                    "ascending": False,
+                },
+                max_pages=1,
+            ),
+        )
 
     def select_market(self, market: Market) -> UniverseDecision:
         return _select_market(market)

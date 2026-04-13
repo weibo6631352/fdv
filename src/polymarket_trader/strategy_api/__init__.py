@@ -10,6 +10,8 @@ from polymarket_trader.strategy_api.interfaces import (
     UniverseSelector,
 )
 from polymarket_trader.strategy_api.models import (
+    DiscoveryEndpoint,
+    DiscoveryQuery,
     EntrySizing,
     RecoveryDecision,
     RecoveryReplaceRequest,
@@ -24,6 +26,8 @@ __all__ = [
     "EntryPolicy",
     "EntrySizing",
     "ExitPolicy",
+    "DiscoveryEndpoint",
+    "DiscoveryQuery",
     "load_mapping_file",
     "load_strategy_config",
     "PassiveStrategy",

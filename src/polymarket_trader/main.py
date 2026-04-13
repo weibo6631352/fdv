@@ -48,6 +48,7 @@ from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
 from polymarket_trader.strategies.current.strategy import build_strategy as build_current_strategy
 from polymarket_trader.strategy_api.interfaces import StrategyModule
+from polymarket_trader.strategy_api.models import DiscoveryEndpoint, DiscoveryQuery
 from polymarket_trader.workers.market_discovery_worker import MarketDiscoveryWorker
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 from polymarket_trader.workers.persistence_worker import PersistenceWorker
@@ -878,16 +879,21 @@ async def _run_supervised_loop(
 async def _run_market_discovery_scan(runtime: RuntimeComponents) -> None:
     runtime.supervisor.heartbeat_worker("market_discovery", detail="discovering")
     try:
-        raw_events = await runtime.gamma_client.discover_events(limit=100, offset=0)
-        if raw_events:
+        queries = runtime.strategy.build_discovery_queries()
+        total_payloads = 0
+        for query in queries:
+            market_payloads = await _execute_discovery_query(runtime.gamma_client, query)
+            total_payloads += len(market_payloads)
+            if not market_payloads:
+                continue
             await runtime.market_discovery_worker.ingest_source_page(
-                {"markets": [event.payload for event in raw_events]},
-                source="gamma.events",
+                {"markets": list(market_payloads)},
+                source=_discovery_source(query),
                 trace_id=f"market-discovery-{uuid4().hex}",
             )
         runtime.supervisor.heartbeat_worker(
             "market_discovery",
-            detail=f"discovered={len(raw_events)}",
+            detail=f"queries={len(queries)} discovered={total_payloads}",
         )
         _sync_runtime_metrics(runtime)
     except Exception as exc:  # pragma: no cover - depends on external gamma
@@ -898,6 +904,116 @@ async def _run_market_discovery_scan(runtime: RuntimeComponents) -> None:
             last_error=str(exc),
         )
         logger.warning("market discovery scan failed", extra={"reason": str(exc)})
+
+
+def _discovery_source(query: DiscoveryQuery) -> str:
+    return f"gamma.{query.endpoint.value}"
+
+
+def _normalize_page_limit(query: DiscoveryQuery) -> int:
+    raw_limit = query.params.get("limit", 100)
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        return 100
+    return max(1, min(limit, 500))
+
+
+def _normalize_offset(value: Any) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _normalize_discovery_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = {}
+    for key, value in params.items():
+        if value is None:
+            continue
+        normalized[key] = value
+    return normalized
+
+
+async def _execute_discovery_query(
+    gamma_client: GammaClient,
+    query: DiscoveryQuery,
+) -> tuple[Mapping[str, Any], ...]:
+    if query.max_pages < 1:
+        return ()
+    if query.endpoint is DiscoveryEndpoint.EVENTS:
+        return await _execute_events_query(gamma_client, query)
+    if query.endpoint is DiscoveryEndpoint.EVENTS_KEYSET:
+        return await _execute_events_keyset_query(gamma_client, query)
+    if query.endpoint is DiscoveryEndpoint.MARKETS:
+        return await _execute_markets_query(gamma_client, query)
+    raise ValueError(f"unsupported discovery endpoint: {query.endpoint!r}")
+
+
+async def _execute_events_query(
+    gamma_client: GammaClient,
+    query: DiscoveryQuery,
+) -> tuple[Mapping[str, Any], ...]:
+    params = _normalize_discovery_params(query.params)
+    limit = _normalize_page_limit(query)
+    base_offset = _normalize_offset(params.get("offset", 0))
+    payloads: list[Mapping[str, Any]] = []
+    for page_index in range(query.max_pages):
+        page_params = dict(params)
+        page_params["limit"] = limit
+        page_params["offset"] = base_offset + page_index * limit
+        events = await gamma_client.list_events_by_params(page_params, timeout_s=query.timeout_s)
+        for event in events:
+            payloads.extend(raw.payload for raw in event.to_raw_market_events(source=_discovery_source(query)))
+        if len(events) < limit:
+            break
+    return tuple(payloads)
+
+
+async def _execute_events_keyset_query(
+    gamma_client: GammaClient,
+    query: DiscoveryQuery,
+) -> tuple[Mapping[str, Any], ...]:
+    params = _normalize_discovery_params(query.params)
+    if "offset" in params:
+        raise ValueError("events_keyset discovery queries must not include offset")
+    limit = _normalize_page_limit(query)
+    after_cursor = params.get("after_cursor")
+    payloads: list[Mapping[str, Any]] = []
+    for _ in range(query.max_pages):
+        page_params = dict(params)
+        page_params["limit"] = limit
+        if after_cursor is not None:
+            page_params["after_cursor"] = after_cursor
+        events, next_cursor = await gamma_client.list_events_keyset_by_params(
+            page_params,
+            timeout_s=query.timeout_s,
+        )
+        for event in events:
+            payloads.extend(raw.payload for raw in event.to_raw_market_events(source=_discovery_source(query)))
+        if not events or not next_cursor:
+            break
+        after_cursor = next_cursor
+    return tuple(payloads)
+
+
+async def _execute_markets_query(
+    gamma_client: GammaClient,
+    query: DiscoveryQuery,
+) -> tuple[Mapping[str, Any], ...]:
+    params = _normalize_discovery_params(query.params)
+    limit = _normalize_page_limit(query)
+    base_offset = _normalize_offset(params.get("offset", 0))
+    payloads: list[Mapping[str, Any]] = []
+    for page_index in range(query.max_pages):
+        page_params = dict(params)
+        page_params["limit"] = limit
+        page_params["offset"] = base_offset + page_index * limit
+        markets = await gamma_client.list_markets_by_params(page_params, timeout_s=query.timeout_s)
+        payloads.extend(market.raw for market in markets)
+        if len(markets) < limit:
+            break
+    return tuple(payloads)
 
 
 async def _run_reconcile_once(
