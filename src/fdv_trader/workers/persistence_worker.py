@@ -23,6 +23,9 @@ _MARKET_EVENT_TYPES = {
     DomainEventType.MARKET_FILTERED_OUT.value,
     DomainEventType.MARKET_RESOLVED_OR_DISABLED.value,
 }
+_ACCOUNT_EVENT_TYPES = {
+    DomainEventType.BALANCE_UPDATED.value,
+}
 _ORDERBOOK_EVENT_TYPES = {
     DomainEventType.ORDERBOOK.value,
     DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
@@ -640,6 +643,9 @@ class PersistenceWorker:
         if event_type in _MARKET_EVENT_TYPES:
             records.append(("market", self._build_market_record(event, payload)))
 
+        if event_type in _ACCOUNT_EVENT_TYPES:
+            records.append(("account", self._build_account_record(event, payload)))
+
         if event_type in _ORDERBOOK_EVENT_TYPES:
             records.append(("orderbook", self._build_orderbook_record(event, payload)))
 
@@ -743,6 +749,27 @@ class PersistenceWorker:
             }
         )
         record.update(_to_jsonable(market))
+        return record
+
+    def _build_account_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any]:
+        record = _base_meta(event)
+        account = {
+            "account_key": "primary",
+            "balance_usdc": _safe_first_payload_value(payload, "balance_usdc"),
+            "allowance_usdc": _safe_first_payload_value(payload, "allowance_usdc"),
+            "user_ws_connected": _safe_first_payload_value(payload, "user_ws_connected"),
+            "allow_new_buys": _safe_first_payload_value(payload, "allow_new_buys"),
+            "paused_markets": _safe_first_payload_value(payload, "paused_markets"),
+            "pause_reasons": _safe_first_payload_value(payload, "pause_reasons"),
+            "last_reconcile_at": _safe_first_payload_value(payload, "last_reconcile_at"),
+        }
+        record.update(
+            {
+                "idempotency_key": _kind_idempotency_key("account", event),
+                "account_data": _to_jsonable(account),
+            }
+        )
+        record.update(_to_jsonable(account))
         return record
 
     def _build_orderbook_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -936,6 +963,7 @@ class PersistenceWorker:
         method_names = {
             "audit": ("save_audit_events", "save_audit_event"),
             "market": ("save_market_snapshots", "save_market_snapshot"),
+            "account": ("save_account_snapshots", "save_account_snapshot"),
             "orderbook": ("save_orderbook_snapshots", "save_orderbook_snapshot"),
             "order": ("save_orders", "save_order"),
             "fill": ("save_fills", "save_fill"),

@@ -123,6 +123,8 @@
 - `fee_rate_bps` / `fee_rate_updated_at`：来自 CLOB `GET /fee-rate` 与 Market WS `last_trade_price.fee_rate_bps`，都会写入本地。
 - 当前后台使用 `market.no_token_id` 作为 `token_id` 去刷新 `fee_rate_bps`。
 - 管理端 `/markets` 只返回本地快照，不在请求过程中实时调用外部费率接口；运行中优先读 registry 热态市场缓存，registry 为空时再回退数据库快照。
+- market 相关事件现在会从 `EventBus` 镜像到 `LocalOutbox`，再由 `PersistenceWorker` 异步写入数据库市场快照。
+- user WS 的 `order_state_updated` / `fill_recorded` / `position_updated` 也会镜像进 outbox，但会裁掉 `snapshot` / `open_orders` 这类大块上下文字段，只保留落库需要的数据。
 - 管理端 `/markets` 当前支持 `fees_enabled`、`fee_rate_bps_min/max`、`maker_base_fee_bps_min/max`、`taker_base_fee_bps_min/max` 筛选，以及 `fee_rate_bps` / `fee_rate_updated_at` / `maker_base_fee_bps` / `taker_base_fee_bps` / `market_slug` 排序。
 
 ### 4.4 静态规则说明页面
@@ -185,10 +187,20 @@
    - 查询只读本地快照，不在列表接口里现场请求外部 fee 接口。
    - 运行中优先读取 registry 热态市场缓存，避免等数据库异步同步后才可见。
 
+7. market snapshot 异步持久化
+   - market 相关 `DomainEvent` 已从 `EventBus` 镜像进 `LocalOutbox`。
+   - `PersistenceWorker` 会异步把这些 market snapshot 事件写入数据库。
+   - 因此 Market WS / Gamma 更新后的市场快照会同时收敛到热态 registry 和数据库。
+
+8. user WS 账户状态异步持久化
+   - user WS 产生的订单、成交、持仓事件也会镜像进 `LocalOutbox`。
+   - 镜像时会裁剪 payload，只保留 `order` / `fill` / `position(s)` 等写库需要的字段。
+   - 因此 user WS 驱动的订单状态、fills、positions 也能异步收敛到数据库快照。
+
 继续建议：
 
 1. 若后续跟踪市场数继续增大，可继续优化 WS 重订阅节流和队列背压参数。
-2. 若希望数据库快照也更快跟上 WS 热态，可再补一条面向 market snapshot 的异步持久化链路。
+2. 若后续需要把 balance / allowance 也纳入同一套持久化口径，可再单独定义账户余额快照模型，而不是把它混进 order / position 事件里。
 
 ## 7. 官方参考链接
 

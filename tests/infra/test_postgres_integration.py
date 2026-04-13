@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -10,7 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from fdv_trader.app.admin_service import AdminService
 from fdv_trader.config import load_settings
 from fdv_trader.infra.db import Base, DatabasePersistenceRepository, build_session_factory, initialize_database
-from fdv_trader.main import _check_database_connection
+from fdv_trader.main import _check_database_connection, _load_reference_state
 from fdv_trader.runtime.account_state import AccountStateStore
 from fdv_trader.runtime.registry import MarketRegistry
 
@@ -78,6 +79,7 @@ async def test_initialize_database_creates_expected_tables(
         table_names = tuple(rows.scalars().all())
 
     assert table_names == (
+        "account_snapshots",
         "allocations",
         "audit_events",
         "fills",
@@ -143,6 +145,18 @@ async def test_persistence_repository_and_admin_service_round_trip(
             "trading_status": "eligible",
         }
     )
+    await repository.save_account_snapshot(
+        {
+            "trace_id": "trace-balance",
+            "balance_usdc": "120",
+            "allowance_usdc": "90",
+            "user_ws_connected": True,
+            "allow_new_buys": True,
+            "paused_markets": [],
+            "pause_reasons": [],
+            "last_reconcile_at": "2026-01-01T12:05:00+00:00",
+        }
+    )
     await repository.save_fill(
         {
             "trace_id": "trace-fill",
@@ -166,6 +180,8 @@ async def test_persistence_repository_and_admin_service_round_trip(
         registry=MarketRegistry(),
         account_state_store=AccountStateStore(),
     )
+    runtime.market_ws_worker = SimpleNamespace(track_market=runtime.registry.upsert)
+    loaded_reference = await _load_reference_state(runtime)
     service = AdminService(runtime=runtime)
 
     markets = await service.list_markets(limit=10, offset=0)
@@ -194,3 +210,6 @@ async def test_persistence_repository_and_admin_service_round_trip(
     assert fills["items"][0]["trace_id"] == "trace-fill"
     assert fills["items"][0]["trade_id"] == "trade-1"
     assert fills["items"][0]["status"] == "confirmed"
+    assert loaded_reference["account_snapshots"] == 1
+    assert runtime.account_state_store.snapshot().balance_usdc == Decimal("120")
+    assert runtime.account_state_store.snapshot().allowance_usdc == Decimal("90")

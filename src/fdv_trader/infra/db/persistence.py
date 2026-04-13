@@ -15,6 +15,7 @@ from fdv_trader.domain.order import Order, OrderSide, OrderStatus, OrderType
 from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from fdv_trader.domain.position import Position
 from fdv_trader.infra.db.repositories import (
+    AccountSnapshotRepository,
     AllocationRepository,
     AuditEventRepository,
     FillRepository,
@@ -24,6 +25,7 @@ from fdv_trader.infra.db.repositories import (
     OutboxEventRepository,
     PositionRepository,
 )
+from fdv_trader.runtime.account_state import AccountSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +122,19 @@ def _mapping(value: Any | None) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return {str(key): item for key, item in value.items()}
     return {}
+
+
+def _pair_tuple(value: Any | None) -> tuple[tuple[str, str], ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    pairs: list[tuple[str, str]] = []
+    for item in value:
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            first = _text(item[0])
+            second = _text(item[1]) or ""
+            if first is not None:
+                pairs.append((first, second))
+    return tuple(pairs)
 
 
 def _price_levels(value: Any | None) -> tuple[PriceLevel, ...]:
@@ -350,6 +365,23 @@ def _position_from_record(record: Mapping[str, Any]) -> Position | None:
     )
 
 
+def _account_snapshot_from_record(record: Mapping[str, Any]) -> AccountSnapshot | None:
+    balance_usdc = _decimal(record.get("balance_usdc"))
+    allowance_usdc = _decimal(record.get("allowance_usdc"))
+    if balance_usdc is None or allowance_usdc is None:
+        _log_skip("account", record, "missing balance_usdc/allowance_usdc")
+        return None
+    return AccountSnapshot(
+        balance_usdc=balance_usdc,
+        allowance_usdc=allowance_usdc,
+        user_ws_connected=_bool(record.get("user_ws_connected"), False),
+        allow_new_buys=_bool(record.get("allow_new_buys"), False),
+        paused_markets=_string_tuple(record.get("paused_markets")),
+        pause_reasons=_pair_tuple(record.get("pause_reasons")),
+        last_reconcile_at=_datetime(record.get("last_reconcile_at")),
+    )
+
+
 def _allocation_from_record(record: Mapping[str, Any]) -> Allocation | None:
     condition_id = _text(record.get("condition_id"))
     if condition_id is None:
@@ -397,6 +429,7 @@ def _outbox_event_from_record(record: Mapping[str, Any]) -> OutboxEvent | None:
 
 @dataclass(frozen=True, slots=True)
 class _RepositoryGroup:
+    account: AccountSnapshotRepository
     audit: AuditEventRepository
     market: MarketRepository
     orderbook: OrderbookSnapshotRepository
@@ -437,6 +470,32 @@ class DatabasePersistenceRepository:
 
     async def save_market_snapshot(self, record: Mapping[str, Any]) -> int:
         return await self.save_market_snapshots([record])
+
+    async def save_account_snapshot(self, record: Mapping[str, Any]) -> int:
+        return await self.save_account_snapshots([record])
+
+    async def save_account_snapshots(self, records: Sequence[Mapping[str, Any]]) -> int:
+        grouped: dict[tuple[str | None], list[tuple[AccountSnapshot, dict[str, Any]]]] = {}
+        for record in records:
+            snapshot = _account_snapshot_from_record(record)
+            if snapshot is None:
+                continue
+            key = (_text(record.get("trace_id")),)
+            grouped.setdefault(key, []).append((snapshot, dict(record)))
+        if not grouped:
+            return 0
+
+        async def write(repos: _RepositoryGroup) -> int:
+            total = 0
+            for (trace_id,), items in grouped.items():
+                total += await repos.account.save_snapshots(
+                    [item[0] for item in items],
+                    trace_id=trace_id,
+                    raw_payloads=[item[1] for item in items],
+                )
+            return total
+
+        return await self._with_repositories(write)
 
     async def save_market_snapshots(self, records: Sequence[Mapping[str, Any]]) -> int:
         grouped: dict[tuple[str | None, str | None], list[tuple[Market, dict[str, Any]]]] = {}
@@ -607,6 +666,7 @@ class DatabasePersistenceRepository:
     async def _with_repositories(self, callback: Any) -> int:
         async with self._session_factory() as session:
             repositories = _RepositoryGroup(
+                account=AccountSnapshotRepository(session),
                 audit=AuditEventRepository(session),
                 market=MarketRepository(session),
                 orderbook=OrderbookSnapshotRepository(session),

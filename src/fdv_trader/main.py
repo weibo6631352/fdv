@@ -17,6 +17,7 @@ from fdv_trader.app.strategy_service import StrategyService
 from fdv_trader.app.trading_service import TradingService
 from fdv_trader.config import Settings, StartupReadiness, load_settings
 from fdv_trader.infra.db import (
+    AccountSnapshotRepository,
     DatabasePersistenceRepository,
     FillRepository,
     MarketRepository,
@@ -25,6 +26,7 @@ from fdv_trader.infra.db import (
     build_session_factory,
 )
 from fdv_trader.infra.outbox.local_queue import LocalOutbox
+from fdv_trader.infra.outbox import build_domain_event_outbox_sink
 from fdv_trader.infra.polymarket import (
     ClobClient,
     DataClient,
@@ -129,6 +131,7 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     )
     registry = MarketRegistry()
     outbox = LocalOutbox(max_size=settings.persistence_event_queue_max_size)
+    event_bus.bind_persistence_sink(build_domain_event_outbox_sink(outbox))
     db_session_factory = build_session_factory(settings.database_url)
     persistence_repository = DatabasePersistenceRepository(db_session_factory)
     persistence_worker = PersistenceWorker(
@@ -409,19 +412,26 @@ async def _check_database_connection(
 
 
 async def _load_reference_state(runtime: RuntimeComponents) -> dict[str, int]:
-    loaded = {"markets": 0, "positions": 0, "open_orders": 0, "fills": 0}
+    loaded = {"markets": 0, "positions": 0, "open_orders": 0, "fills": 0, "account_snapshots": 0}
     try:
         async with runtime.db_session_factory() as session:
+            account_snapshot = await AccountSnapshotRepository(session).get_current_snapshot()
             markets = await MarketRepository(session).list_markets_snapshot(limit=500, offset=0)
             positions = await PositionRepository(session).list_positions_snapshot(limit=500, offset=0)
             open_orders = await OrderRepository(session).list_open_orders_snapshot(limit=500, offset=0)
             fills = await FillRepository(session).list_fills_snapshot(limit=500, offset=0)
+        if account_snapshot is not None:
+            runtime.account_state_store.update_balances(
+                balance_usdc=account_snapshot.balance_usdc,
+                allowance_usdc=account_snapshot.allowance_usdc,
+            )
         for market in markets.items:
             runtime.market_ws_worker.track_market(market)
         runtime.account_state_store.replace_positions(positions.items)
         runtime.account_state_store.replace_open_orders(open_orders.items)
         runtime.account_state_store.replace_fills(fills.items)
         loaded = {
+            "account_snapshots": 0 if account_snapshot is None else 1,
             "markets": len(markets.items),
             "positions": len(positions.items),
             "open_orders": len(open_orders.items),

@@ -15,6 +15,7 @@ from fdv_trader.domain.market import Market, TradingStatus
 from fdv_trader.domain.order import Order, OrderResult, OrderSide, OrderStatus, OrderType
 from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from fdv_trader.domain.position import Position
+from fdv_trader.runtime.account_state import AccountSnapshot
 
 JsonValue = Any
 JsonMapping = Mapping[str, Any]
@@ -73,6 +74,21 @@ def _tuple_from_sequence(value: Any) -> tuple[str, ...]:
         return tuple(str(item) for item in value if str(item).strip())
     text_value = str(value).strip()
     return (text_value,) if text_value else ()
+
+
+def _pair_tuple_from_sequence(value: Any) -> tuple[tuple[str, str], ...]:
+    if not value:
+        return ()
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return ()
+    pairs: list[tuple[str, str]] = []
+    for item in value:
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            first = str(item[0]).strip()
+            second = str(item[1]).strip()
+            if first:
+                pairs.append((first, second))
+    return tuple(pairs)
 
 
 def _level_to_json(level: PriceLevel) -> dict[str, str]:
@@ -829,6 +845,89 @@ class PositionModel(Base, TimestampMixin):
             last_trade_id=self.last_trade_id,
             confirmation_status=self.confirmation_status,
             updated_at=self.updated_at,
+        )
+
+
+class AccountSnapshotModel(Base, TimestampMixin):
+    """账户余额和买入闸门快照。"""
+
+    __tablename__ = "account_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    trace_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    balance_usdc: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False, default=Decimal("0"))
+    allowance_usdc: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False, default=Decimal("0"))
+    user_ws_connected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    allow_new_buys: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    paused_markets: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    pause_reasons: Mapped[list[list[str]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    last_reconcile_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    raw_payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+
+    __table_args__ = (
+        Index("ix_account_snapshots_trace_account", "trace_id", "account_key"),
+    )
+
+    @classmethod
+    def from_domain(
+        cls,
+        snapshot: AccountSnapshot,
+        *,
+        trace_id: str | None = None,
+        raw_payload: JsonMapping | None = None,
+        account_key: str = "primary",
+    ) -> "AccountSnapshotModel":
+        payload = _json_mapping(raw_payload) if raw_payload is not None else {
+            "account_key": account_key,
+            "trace_id": trace_id,
+            "balance_usdc": str(snapshot.balance_usdc),
+            "allowance_usdc": str(snapshot.allowance_usdc),
+            "user_ws_connected": snapshot.user_ws_connected,
+            "allow_new_buys": snapshot.allow_new_buys,
+            "paused_markets": list(snapshot.paused_markets),
+            "pause_reasons": [list(item) for item in snapshot.pause_reasons],
+            "last_reconcile_at": _json_safe(snapshot.last_reconcile_at),
+        }
+        return cls(
+            account_key=account_key,
+            trace_id=trace_id,
+            balance_usdc=snapshot.balance_usdc,
+            allowance_usdc=snapshot.allowance_usdc,
+            user_ws_connected=snapshot.user_ws_connected,
+            allow_new_buys=snapshot.allow_new_buys,
+            paused_markets=list(snapshot.paused_markets),
+            pause_reasons=[list(item) for item in snapshot.pause_reasons],
+            last_reconcile_at=snapshot.last_reconcile_at,
+            raw_payload=payload,
+        )
+
+    def to_domain(self) -> AccountSnapshot:
+        return AccountSnapshot(
+            balance_usdc=_decimal(self.balance_usdc) or Decimal("0"),
+            allowance_usdc=_decimal(self.allowance_usdc) or Decimal("0"),
+            user_ws_connected=bool(self.user_ws_connected),
+            allow_new_buys=bool(self.allow_new_buys),
+            paused_markets=_tuple_from_sequence(self.paused_markets),
+            pause_reasons=_pair_tuple_from_sequence(self.pause_reasons),
+            last_reconcile_at=(
+                None if self.last_reconcile_at is None else _ensure_aware(self.last_reconcile_at)
+            ),
         )
 
 

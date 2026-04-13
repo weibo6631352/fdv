@@ -1,6 +1,7 @@
 """Database infrastructure."""
 
 from fdv_trader.infra.db.models import (
+    AccountSnapshotModel,
     AllocationModel,
     AuditEventModel,
     Base,
@@ -13,6 +14,7 @@ from fdv_trader.infra.db.models import (
 )
 from fdv_trader.infra.db.persistence import DatabasePersistenceRepository
 from fdv_trader.infra.db.repositories import (
+    AccountSnapshotRepository,
     AllocationRepository,
     AuditEventRepository,
     BaseRepository,
@@ -27,6 +29,8 @@ from fdv_trader.infra.db.repositories import (
 from fdv_trader.infra.db.session import build_engine, build_session_factory, initialize_database
 
 __all__ = [
+    "AccountSnapshotModel",
+    "AccountSnapshotRepository",
     "AllocationModel",
     "AllocationRepository",
     "AuditEventModel",

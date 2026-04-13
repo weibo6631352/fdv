@@ -14,6 +14,7 @@ from fdv_trader.domain.order import Order, OrderResult
 from fdv_trader.domain.orderbook import OrderbookSnapshot
 from fdv_trader.domain.position import Position
 from fdv_trader.infra.db.models import (
+    AccountSnapshotModel,
     AllocationModel,
     AuditEventModel,
     Base,
@@ -24,6 +25,7 @@ from fdv_trader.infra.db.models import (
     OutboxEventModel,
     PositionModel,
 )
+from fdv_trader.runtime.account_state import AccountSnapshot
 
 T = TypeVar("T")
 
@@ -597,6 +599,71 @@ class PositionRepository(BaseRepository):
             stmt = stmt.where(PositionModel.token_id == token_id)
         rows, total = await self._paginate(stmt, limit=limit, offset=offset)
         return RepositoryPage(items=tuple(row.to_domain() for row in rows), total=total, limit=limit, offset=offset)
+
+
+class AccountSnapshotRepository(BaseRepository):
+    """账户余额快照仓储。"""
+
+    async def save_snapshot(
+        self,
+        snapshot: AccountSnapshot,
+        *,
+        trace_id: str | None = None,
+        raw_payload: dict[str, Any] | None = None,
+        account_key: str = "primary",
+    ) -> AccountSnapshot:
+        await self.save_snapshots(
+            [snapshot],
+            trace_id=trace_id,
+            raw_payloads=[raw_payload],
+            account_key=account_key,
+        )
+        return snapshot
+
+    async def save_snapshots(
+        self,
+        snapshots: Iterable[AccountSnapshot],
+        *,
+        trace_id: str | None = None,
+        raw_payloads: Sequence[dict[str, Any] | None] | None = None,
+        account_key: str = "primary",
+    ) -> int:
+        snapshots = tuple(snapshots)
+        payloads = raw_payloads or (None,) * len(snapshots)
+        rows = [
+            _row_dict(
+                AccountSnapshotModel.from_domain(
+                    snapshot,
+                    trace_id=trace_id,
+                    raw_payload=payload,
+                    account_key=account_key,
+                )
+            )
+            for snapshot, payload in zip(snapshots, payloads, strict=False)
+        ]
+        return await self._bulk_upsert(
+            AccountSnapshotModel,
+            rows,
+            conflict_columns=("account_key",),
+            update_columns=(
+                "trace_id",
+                "balance_usdc",
+                "allowance_usdc",
+                "user_ws_connected",
+                "allow_new_buys",
+                "paused_markets",
+                "pause_reasons",
+                "last_reconcile_at",
+                "raw_payload",
+                "updated_at",
+            ),
+        )
+
+    async def get_current_snapshot(self, *, account_key: str = "primary") -> AccountSnapshot | None:
+        row = await self._session.scalar(
+            select(AccountSnapshotModel).where(AccountSnapshotModel.account_key == account_key)
+        )
+        return None if row is None else row.to_domain()
 
 
 class AuditEventRepository(BaseRepository):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from fdv_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
+from fdv_trader.infra.outbox import LocalOutbox, build_domain_event_outbox_sink
 from fdv_trader.runtime.event_bus import EventBus
 
 
@@ -75,5 +76,72 @@ def test_event_bus_prioritizes_trading_and_restores_retained_low_priority_events
         assert final_snapshot.trading_queue_depth == 0
         assert final_snapshot.maintenance_queue_depth == 0
         assert final_snapshot.persistence_queue_depth == 0
+
+    asyncio.run(run())
+
+
+def test_event_bus_mirrors_supported_domain_events_and_trims_user_payloads() -> None:
+    async def run() -> None:
+        bus = EventBus()
+        outbox = LocalOutbox(max_size=8)
+        bus.bind_persistence_sink(build_domain_event_outbox_sink(outbox))
+
+        market_event = _event(
+            trace_id="trace-market",
+            event_id="event-market",
+            event_type=DomainEventType.MARKET_UPDATED,
+            reason="market_snapshot",
+        )
+        order_event = DomainEvent(
+            trace_id="trace-order",
+            event_id="event-order",
+            event_type=DomainEventType.ORDER_STATE_UPDATED,
+            condition_id="condition",
+            token_id="token",
+            market_slug="token-500m-fdv",
+            reason="order_update",
+            payload={
+                "order": {
+                    "condition_id": "condition",
+                    "token_id": "token",
+                    "side": "BUY",
+                    "order_type": "FAK",
+                    "price": "0.60",
+                },
+                "open_orders": [{"order_id": "order-1"}],
+                "snapshot": {"open_orders": [{"order_id": "order-1"}]},
+            },
+        )
+        non_domain_event = _event(
+            trace_id="trace-risk",
+            event_id="event-risk",
+            event_type=DomainEventType.RISK_CHECK_PASSED,
+            reason="risk_ok",
+        )
+
+        await bus.publish(OutboxPriority.P2, market_event)
+        await bus.publish(OutboxPriority.P0, order_event)
+        await bus.publish(OutboxPriority.P0, non_domain_event)
+
+        order_queued = await outbox.get()
+        market_queued = await outbox.get()
+
+        assert order_queued.event_id == "event-order"
+        assert order_queued.event_type == DomainEventType.ORDER_STATE_UPDATED.value
+        assert order_queued.priority == 0
+        assert "order" in order_queued.payload
+        assert "open_orders" not in order_queued.payload
+        assert "snapshot" not in order_queued.payload
+
+        assert market_queued.event_id == "event-market"
+        assert market_queued.event_type == DomainEventType.MARKET_UPDATED.value
+        assert market_queued.priority == 2
+
+        try:
+            await asyncio.wait_for(outbox.get(), timeout=0.05)
+        except asyncio.TimeoutError:
+            pass
+        else:  # pragma: no cover - defensive assertion path
+            raise AssertionError("unsupported events should not be mirrored into the outbox")
 
     asyncio.run(run())

@@ -581,7 +581,15 @@ class UserWsWorker:
                 payload={
                     "balance_usdc": str(snapshot.balance_usdc),
                     "allowance_usdc": str(snapshot.allowance_usdc),
+                    "user_ws_connected": snapshot.user_ws_connected,
                     "allow_new_buys": snapshot.allow_new_buys,
+                    "paused_markets": list(snapshot.paused_markets),
+                    "pause_reasons": [list(item) for item in snapshot.pause_reasons],
+                    "last_reconcile_at": (
+                        None
+                        if snapshot.last_reconcile_at is None
+                        else snapshot.last_reconcile_at.isoformat()
+                    ),
                 },
             )
         ]

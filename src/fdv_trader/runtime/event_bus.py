@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from enum import IntEnum
 from itertools import count
-from typing import Any
+from typing import Any, Callable
 
 from fdv_trader.domain.events import OutboxPriority
 
@@ -107,26 +107,35 @@ class EventBus:
         }
         self._low_priority_paused = False
         self._wake = asyncio.Event()
+        self._persistence_sink: Callable[[int, Any], None] | None = None
+
+    def bind_persistence_sink(self, sink: Callable[[int, Any], None] | None) -> None:
+        self._persistence_sink = sink
 
     async def publish(self, priority: EventPriority | int | str, event: Any) -> None:
+        outbox_priority = _normalize_outbox_priority(priority)
         lane = _normalize_priority(priority)
         if lane == QueueLane.TRADING:
             await self._trading_queue.put((next(self._sequence), event))
+            self._mirror_to_outbox(outbox_priority, event)
             self._wake.set()
             return
 
         # P2 / P3 不能反向堵住 P0，所以低优先级只能尽量入队，满了就先缓存在本地。
         if self._low_priority_paused:
             self._retain(lane, event)
+            self._mirror_to_outbox(outbox_priority, event)
             self._wake.set()
             return
 
         queue = self._queue_for_lane(lane)
         try:
             queue.put_nowait((next(self._sequence), event))
+            self._mirror_to_outbox(outbox_priority, event)
             self._wake.set()
         except asyncio.QueueFull:
             self._retain(lane, event)
+            self._mirror_to_outbox(outbox_priority, event)
             self._wake.set()
 
     async def next_event(self) -> Any:
@@ -218,6 +227,14 @@ class EventBus:
             retained.pop(0)
         retained.append(_RetainedEvent(key=key, event=event))
 
+    def _mirror_to_outbox(self, priority: int, event: Any) -> None:
+        if self._persistence_sink is None:
+            return
+        try:
+            self._persistence_sink(priority, event)
+        except Exception:
+            return
+
     def _queue_for_lane(self, lane: QueueLane) -> asyncio.Queue[Any]:
         if lane == QueueLane.MAINTENANCE:
             return self._maintenance_queue
@@ -234,3 +251,15 @@ class EventBus:
             except asyncio.QueueEmpty:
                 continue
         return None
+
+
+def _normalize_outbox_priority(priority: EventPriority | int | str) -> int:
+    if isinstance(priority, EventPriority):
+        text = priority.value.strip().upper()
+        return int(text[1:]) if text.startswith("P") and text[1:].isdigit() else int(text)
+    if isinstance(priority, str):
+        text = priority.strip().upper()
+        if text.startswith("P") and text[1:].isdigit():
+            return int(text[1:])
+        return int(text)
+    return int(priority)
