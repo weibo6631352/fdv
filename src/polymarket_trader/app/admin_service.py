@@ -567,7 +567,7 @@ class AdminService:
         limit: int = 100,
         offset: int = 0,
         trace_id: str | None = None,
-        event_type: str | None = None,
+        event_title: str | None = None,
     ) -> dict[str, Any]:
         if not self._has_db_session_factory():
             page = RepositoryPage(items=tuple(), total=0, limit=limit, offset=offset)
@@ -578,7 +578,7 @@ class AdminService:
                 limit=limit,
                 offset=offset,
                 trace_id=trace_id,
-                event_type=event_type,
+                event_title=event_title,
             )
 
         page = await self._with_repositories(_query)

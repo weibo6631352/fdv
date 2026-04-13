@@ -663,7 +663,7 @@ class PersistenceWorker:
 
     def _build_audit_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any]:
         audit = AuditEvent(
-            event_type=str(event.event_type),
+            event_title=str(event.event_type),
             trace_id=event.trace_id,
             event_id=event.event_id,
             market_slug=event.market_slug,

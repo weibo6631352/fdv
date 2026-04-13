@@ -1010,6 +1010,7 @@ class AuditEventModel(Base, TimestampMixin):
 
     def to_domain(self) -> AuditEvent:
         return AuditEvent(
+            event_title=self.event_title,
             payload=dict(self.payload),
             trace_id=self.trace_id,
             created_at=self.created_at,

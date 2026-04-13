@@ -263,7 +263,7 @@ class AuditEvent:
 
     def __init__(
         self,
-        event_type: str | None = None,
+        event_title: str | None = None,
         trace_id: str | None = None,
         created_at: datetime | None = None,
         payload: Mapping[str, Any] | None = None,
@@ -274,9 +274,12 @@ class AuditEvent:
             merged.update(dict(payload))
         merged.update(fields)
 
-        event_title = merged.pop("event_title", None) or event_type or merged.pop("event_type", None)
+        legacy_event_type = merged.pop("event_type", None)
+        event_title = event_title or merged.pop("event_title", None)
         if event_title is None:
-            raise ValueError("AuditEvent requires event_type/event_title")
+            if legacy_event_type is not None:
+                raise ValueError("AuditEvent uses event_title, not event_type")
+            raise ValueError("AuditEvent requires event_title")
         if trace_id is None:
             trace_id = merged.pop("trace_id", None)
         if trace_id is None:
@@ -321,10 +324,6 @@ class AuditEvent:
 
         for key, value in event_fields.items():
             object.__setattr__(self, key, value)
-
-    @property
-    def event_type(self) -> str:
-        return self.event_title
 
     def to_dict(self) -> dict[str, Any]:
         return {

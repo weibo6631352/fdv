@@ -756,7 +756,7 @@ def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypa
 
     audit_events = (
         AuditEvent(
-            event_type="order_cancelled",
+            event_title="order_cancelled",
             trace_id="trace-audit",
             event_id="audit-1",
             market_slug="sample-market-a",
@@ -801,13 +801,13 @@ def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypa
         limit: int = 100,
         offset: int = 0,
         trace_id: str | None = None,
-        event_type: str | None = None,
+        event_title: str | None = None,
     ) -> RepositoryPage[AuditEvent]:
         items = [
             event
             for event in audit_events
             if (trace_id is None or event.trace_id == trace_id)
-            and (event_type is None or event.event_title == event_type)
+            and (event_title is None or event.event_title == event_title)
         ]
         return RepositoryPage(items=tuple(items[offset : offset + limit]), total=len(items), limit=limit, offset=offset)
 
@@ -866,8 +866,12 @@ def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypa
     with TestClient(app) as client:
         audit_payload = client.get(
             "/audit-events",
-            params={"trace_id": "trace-audit", "event_type": "order_cancelled"},
+            params={"trace_id": "trace-audit", "event_title": "order_cancelled"},
         ).json()
+        legacy_audit_response = client.get(
+            "/audit-events",
+            params={"trace_id": "trace-audit", "event_type": "order_cancelled"},
+        )
         allocations_payload = client.get(
             "/allocations",
             params={"condition_id": "condition-500m"},
@@ -884,6 +888,8 @@ def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypa
         assert audit_payload["total"] == 1
         assert audit_payload["items"][0]["event_id"] == "audit-1"
         assert audit_payload["items"][0]["event_title"] == "order_cancelled"
+        assert legacy_audit_response.status_code == 422
+        assert legacy_audit_response.json()["detail"] == "event_type is removed; use event_title"
 
         assert allocations_payload["total"] == 1
         assert allocations_payload["items"][0]["idempotency_key"] == "alloc-1"

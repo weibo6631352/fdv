@@ -276,6 +276,7 @@
 - 优先返回本地 `market_ws_worker` 热态快照，`source=hot`。
 - 热态缺失时回退 `ClobClient.get_orderbook()`，`source=rest`。
 - 上游 Polymarket 暂时不可用时返回 `502 market_orderbook_upstream_unavailable`。
+- 若运行时没有可用 `clob_client`，返回 `503 clob_client_unavailable`。
 
 ### 3.7 `GET /markets/midpoint`
 
@@ -312,6 +313,7 @@
 - 当本地热态 snapshot 同时存在 `best_bid` 和 `best_ask` 时，直接本地计算 midpoint，`source=hot`。
 - 热态缺失时回退 `ClobClient.get_midpoint()`，`source=rest`。
 - 上游 Polymarket 暂时不可用时返回 `502 market_midpoint_upstream_unavailable`。
+- 若运行时没有可用 `clob_client`，返回 `503 clob_client_unavailable`。
 
 ### 3.8 `GET /markets/prices-history`
 
@@ -346,6 +348,7 @@
 - 该接口直连 `ClobClient.get_prices_history()`。
 - 返回时间统一转成 ISO 8601 UTC 字符串；上游原始字段是 `t`。
 - 上游 Polymarket 暂时不可用时返回 `502 market_prices_history_upstream_unavailable`。
+- 若运行时没有可用 `clob_client`，返回 `503 clob_client_unavailable`。
 
 ### 3.9 `GET /orders`
 
@@ -391,6 +394,7 @@
 
 - `open_only=true` 时只返回运行态 open orders。
 - `open_only=false` 且存在 DB session factory 时，走仓储快照查询。
+- `open_only=false` 但运行时没有 DB session factory 时，仍然回退运行态 open orders。
 
 ### 3.10 `GET /fills`
 
@@ -424,6 +428,11 @@
 - `notional_usdc`
 - `status`
 - `confirmed_at`
+
+说明：
+
+- 有 DB session factory 时读仓储快照。
+- 没有 DB session factory 时回退运行态 fills。
 
 ### 3.11 `GET /positions`
 
@@ -495,7 +504,7 @@
 | `limit` | `int` | `100` | `1..500` |
 | `offset` | `int` | `0` | `>=0` |
 | `trace_id` | `str` | `null` | 可选过滤 |
-| `event_type` | `str` | `null` | 对应 `event_title` |
+| `event_title` | `str` | `null` | 按事件标题精确过滤 |
 
 单项结构重点：
 
@@ -547,6 +556,11 @@
 - `reason`
 - `release_reason`
 - `idempotency_key`
+
+说明：
+
+- 有 DB session factory 时返回已落库分配快照。
+- 没有 DB session factory 时返回空分页结果。
 
 ### 3.15 `GET /workers`
 
@@ -608,6 +622,11 @@
 - `raw_response_summary`
 - `payload`
 
+说明：
+
+- 有 DB session factory 时返回待处理 outbox 事件。
+- 没有 DB session factory 时返回空分页结果。
+
 ## 4. 受控操作接口
 
 ### 4.1 `POST /operations/reconcile`
@@ -649,7 +668,7 @@
 
 用途：
 
-- 对某个 market 的现有 SELL 单执行 cancel + replace。
+- 对某个 market 的 open SELL 做人工重挂。
 
 请求体：
 
@@ -683,6 +702,11 @@
 - `replace_review`
 - `replace_order_submitted`
 
+说明：
+
+- 先取消该 market 现有 open SELL。
+- 如果当前没有 open SELL，但账户里仍有持仓，也会直接提交新的 SELL。
+
 当前明确失败原因：
 
 - `market_not_found`
@@ -703,7 +727,7 @@ Admin API 是人工查询和受控操作入口，不是交易策略入口。
 - 健康检查
 - readiness 查询
 - runtime 查询
-- market / profile / order / fill / position / portfolio 查询
+- market / order / fill / position / portfolio 查询
 - 手动 reconcile
 - 手动 cancel + replace sell
 

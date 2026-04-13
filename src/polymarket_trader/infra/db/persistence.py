@@ -217,12 +217,12 @@ def _log_skip(kind: str, record: Mapping[str, Any], reason: str) -> None:
 
 def _audit_event_from_record(record: Mapping[str, Any]) -> AuditEvent | None:
     trace_id = _text(record.get("trace_id"))
-    event_type = _text(record.get("event_title")) or _text(record.get("event_type"))
-    if trace_id is None or event_type is None:
-        _log_skip("audit", record, "missing trace_id or event_type")
+    event_title = _text(record.get("event_title"))
+    if trace_id is None or event_title is None:
+        _log_skip("audit", record, "missing trace_id or event_title")
         return None
     return AuditEvent(
-        event_type=event_type,
+        event_title=event_title,
         trace_id=trace_id,
         created_at=_datetime(record.get("created_at"), _utc_now()),
         payload=dict(record),

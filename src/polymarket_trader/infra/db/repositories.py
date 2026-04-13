@@ -745,14 +745,14 @@ class AuditEventRepository(BaseRepository):
         limit: int = 100,
         offset: int = 0,
         trace_id: str | None = None,
-        event_type: str | None = None,
+        event_title: str | None = None,
     ) -> RepositoryPage[AuditEvent]:
         limit, offset = _limit_offset(limit, offset)
         stmt = select(AuditEventModel).order_by(AuditEventModel.created_at.desc(), AuditEventModel.id.desc())
         if trace_id is not None:
             stmt = stmt.where(AuditEventModel.trace_id == trace_id)
-        if event_type is not None:
-            stmt = stmt.where(AuditEventModel.event_title == event_type)
+        if event_title is not None:
+            stmt = stmt.where(AuditEventModel.event_title == event_title)
         rows, total = await self._paginate(stmt, limit=limit, offset=offset)
         return RepositoryPage(items=tuple(row.to_domain() for row in rows), total=total, limit=limit, offset=offset)
 
