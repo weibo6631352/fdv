@@ -16,6 +16,10 @@
 - 市场静态费率字段已经接入 `Market`、数据库落表和管理端 `/markets` 输出。
 - `GET /fee-rate` 已由后台对账链路接入，用于按 `token_id` 刷新本地费率缓存。
 - 管理端 `/markets` 已支持基于本地 fee 缓存字段做筛选和排序，不在 HTTP handler 内直接请求 Polymarket。
+- 管理端已新增 `/profiles/detail`，通过 `GET /public-profile?address=...` 提供公开用户资料查询。
+- 管理端已新增 `/profiles/activity`，通过 `GET /activity?user=...` 提供公开用户活动查询。
+- 管理端已新增 `/markets/holders`，通过 `GET /holders?market=...` 提供市场持有人列表查询。
+- 管理端已新增 `/profiles/search`，通过 `GET /public-search?q=...` 提供公开用户搜索。
 
 ## 1. 官方基础地址
 
@@ -74,7 +78,16 @@
 
 ## 3. 已封装但当前不在主运行链路的接口
 
-当前没有继续记录的“已封装但和官方当前文档 / 官方 SDK 不一致”的 REST 接口。
+当前已封装但不在交易主运行链路里的读接口如下。
+
+| 场景 | 仓库入口 | 当前代码路径 | 官方接口 | 鉴权 | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| 用户公开资料 | `GammaClient.get_public_profile()` | `src/fdv_trader/infra/polymarket/gamma_client.py` | `GET /public-profile?address=...` | 无 | 管理端 `/profiles/detail` 读取并序列化 `name`、`profileImage`、`xUsername`、`verifiedBadge` 等稳定字段 |
+| 用户公开活动 | `DataClient.list_activity()` | `src/fdv_trader/infra/polymarket/data_client.py` | `GET /activity?user=...` | 官方文档当前标注为公开 | 管理端 `/profiles/activity` 读取并序列化 `type`、`size`、`usdcSize`、`transactionHash`、`profileImage` 等稳定字段 |
+| 市场持有人列表 | `DataClient.list_holders()` | `src/fdv_trader/infra/polymarket/data_client.py` | `GET /holders?market=...` | 官方文档当前标注为公开 | 管理端 `/markets/holders` 读取并序列化 `token`、`amount`、`name`、`profileImage` 等稳定字段 |
+| 用户公开搜索 | `GammaClient.search_public_profiles()` | `src/fdv_trader/infra/polymarket/gamma_client.py` | `GET /public-search?q=...` | 无 | 管理端 `/profiles/search` 只提取 `profiles` 与 `pagination`，不透传 events / tags |
+
+补充说明：
 
 - `DataClient.list_positions()` / `DataClient.list_trades()` 已收敛到官方当前 `user` / `market` / `eventId` 参数口径。
 - 后续新增 Polymarket 接口时，仍以官方文档和 `py-clob-client` 当前实现为准，不再引入旧参数别名。
@@ -211,7 +224,11 @@
 - List markets：<https://docs.polymarket.com/api-reference/markets/list-markets>
 - Get order book：<https://docs.polymarket.com/api-reference/market-data/get-order-book>
 - Get current positions for a user：<https://docs.polymarket.com/api-reference/core/get-current-positions-for-a-user>
+- Get top holders for markets：<https://docs.polymarket.com/api-reference/core/get-top-holders-for-markets>
+- Get user activity：<https://docs.polymarket.com/api-reference/core/get-user-activity>
 - Get trades for a user or markets：<https://docs.polymarket.com/api-reference/core/get-trades-for-a-user-or-markets>
+- Get public profile by wallet address：<https://docs.polymarket.com/api-reference/profiles/get-public-profile-by-wallet-address>
+- Search markets, events, and profiles：<https://docs.polymarket.com/api-reference/search/search-markets-events-and-profiles>
 - Post a new order：<https://docs.polymarket.com/api-reference/trade/post-a-new-order>
 - Get trades：<https://docs.polymarket.com/api-reference/trade/get-trades>
 - Get fee rate：<https://docs.polymarket.com/api-reference/market-data/get-fee-rate>

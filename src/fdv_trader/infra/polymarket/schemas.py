@@ -53,6 +53,15 @@ def _maybe_mapping(value: Any) -> Mapping[str, Any] | None:
     return None
 
 
+def _profile_image_optimized_url(value: Any) -> str | None:
+    if isinstance(value, Mapping):
+        return _first_text(value, "imageUrlOptimized", "image_url_optimized", "url", "imageUrlSource")
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _iter_items(payload: Any, *keys: str) -> tuple[Any, ...]:
     if isinstance(payload, list):
         return tuple(payload)
@@ -766,6 +775,206 @@ class GammaEventDTO:
 
 
 @dataclass(frozen=True, slots=True)
+class GammaProfileUserDTO:
+    raw: Mapping[str, Any]
+    user_id: str | None = None
+    creator: bool | None = None
+    mod: bool | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "user_id", self.user_id or _first_text(self.raw, "id"))
+        object.__setattr__(
+            self,
+            "creator",
+            self.creator if self.creator is not None else _coerce_bool(_first_value(self.raw, "creator")),
+        )
+        object.__setattr__(
+            self,
+            "mod",
+            self.mod if self.mod is not None else _coerce_bool(_first_value(self.raw, "mod")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class GammaProfileDTO:
+    raw: Mapping[str, Any]
+    created_at: datetime | None = None
+    proxy_wallet: str | None = None
+    profile_image: str | None = None
+    display_username_public: bool | None = None
+    bio: str | None = None
+    pseudonym: str | None = None
+    name: str | None = None
+    users: tuple[GammaProfileUserDTO, ...] = field(default_factory=tuple)
+    x_username: str | None = None
+    verified_badge: bool | None = None
+    raw_summary: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "created_at",
+            self.created_at if self.created_at is not None else _coerce_datetime(_first_value(self.raw, "createdAt", "created_at")),
+        )
+        object.__setattr__(self, "proxy_wallet", self.proxy_wallet or _first_text(self.raw, "proxyWallet", "proxy_wallet"))
+        object.__setattr__(self, "profile_image", self.profile_image or _first_text(self.raw, "profileImage", "profile_image"))
+        object.__setattr__(
+            self,
+            "display_username_public",
+            self.display_username_public
+            if self.display_username_public is not None
+            else _coerce_bool(_first_value(self.raw, "displayUsernamePublic", "display_username_public")),
+        )
+        object.__setattr__(self, "bio", self.bio or _first_text(self.raw, "bio"))
+        object.__setattr__(self, "pseudonym", self.pseudonym or _first_text(self.raw, "pseudonym"))
+        object.__setattr__(self, "name", self.name or _first_text(self.raw, "name"))
+        if not self.users:
+            users = tuple(
+                GammaProfileUserDTO(raw=item)
+                for item in _iter_mappings(self.raw, "users", "items", "results")
+            )
+            object.__setattr__(self, "users", users)
+        object.__setattr__(self, "x_username", self.x_username or _first_text(self.raw, "xUsername", "x_username"))
+        object.__setattr__(
+            self,
+            "verified_badge",
+            self.verified_badge
+            if self.verified_badge is not None
+            else _coerce_bool(_first_value(self.raw, "verifiedBadge", "verified_badge")),
+        )
+        summary = self.raw_summary.strip() if self.raw_summary else ""
+        if not summary:
+            summary = _summary(self.raw) or ""
+        object.__setattr__(self, "raw_summary", summary)
+
+
+@dataclass(frozen=True, slots=True)
+class GammaSearchProfileDTO:
+    raw: Mapping[str, Any]
+    profile_id: str | None = None
+    name: str | None = None
+    pseudonym: str | None = None
+    display_username_public: bool | None = None
+    profile_image: str | None = None
+    profile_image_optimized: str | None = None
+    bio: str | None = None
+    proxy_wallet: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    wallet_activated: bool | None = None
+    is_close_only: bool | None = None
+    is_cert_req: bool | None = None
+    cert_req_date: datetime | None = None
+    raw_summary: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "profile_id", self.profile_id or _first_text(self.raw, "id"))
+        object.__setattr__(self, "name", self.name or _first_text(self.raw, "name"))
+        object.__setattr__(self, "pseudonym", self.pseudonym or _first_text(self.raw, "pseudonym"))
+        object.__setattr__(
+            self,
+            "display_username_public",
+            self.display_username_public
+            if self.display_username_public is not None
+            else _coerce_bool(_first_value(self.raw, "displayUsernamePublic", "display_username_public")),
+        )
+        object.__setattr__(self, "profile_image", self.profile_image or _first_text(self.raw, "profileImage", "profile_image"))
+        object.__setattr__(
+            self,
+            "profile_image_optimized",
+            self.profile_image_optimized
+            or _profile_image_optimized_url(_first_value(self.raw, "profileImageOptimized", "profile_image_optimized")),
+        )
+        object.__setattr__(self, "bio", self.bio or _first_text(self.raw, "bio"))
+        object.__setattr__(self, "proxy_wallet", self.proxy_wallet or _first_text(self.raw, "proxyWallet", "proxy_wallet"))
+        object.__setattr__(
+            self,
+            "created_at",
+            self.created_at if self.created_at is not None else _coerce_datetime(_first_value(self.raw, "createdAt", "created_at")),
+        )
+        object.__setattr__(
+            self,
+            "updated_at",
+            self.updated_at if self.updated_at is not None else _coerce_datetime(_first_value(self.raw, "updatedAt", "updated_at")),
+        )
+        object.__setattr__(
+            self,
+            "wallet_activated",
+            self.wallet_activated
+            if self.wallet_activated is not None
+            else _coerce_bool(_first_value(self.raw, "walletActivated", "wallet_activated")),
+        )
+        object.__setattr__(
+            self,
+            "is_close_only",
+            self.is_close_only
+            if self.is_close_only is not None
+            else _coerce_bool(_first_value(self.raw, "isCloseOnly", "is_close_only")),
+        )
+        object.__setattr__(
+            self,
+            "is_cert_req",
+            self.is_cert_req
+            if self.is_cert_req is not None
+            else _coerce_bool(_first_value(self.raw, "isCertReq", "is_cert_req")),
+        )
+        object.__setattr__(
+            self,
+            "cert_req_date",
+            self.cert_req_date
+            if self.cert_req_date is not None
+            else _coerce_datetime(_first_value(self.raw, "certReqDate", "cert_req_date")),
+        )
+        summary = self.raw_summary.strip() if self.raw_summary else ""
+        if not summary:
+            summary = _summary(self.raw) or ""
+        object.__setattr__(self, "raw_summary", summary)
+
+
+@dataclass(frozen=True, slots=True)
+class GammaSearchPaginationDTO:
+    raw: Mapping[str, Any]
+    has_more: bool | None = None
+    total_results: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "has_more",
+            self.has_more if self.has_more is not None else _coerce_bool(_first_value(self.raw, "hasMore", "has_more")),
+        )
+        object.__setattr__(
+            self,
+            "total_results",
+            self.total_results
+            if self.total_results is not None
+            else _coerce_int(_first_value(self.raw, "totalResults", "total_results")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class GammaProfileSearchResultDTO:
+    raw: Mapping[str, Any]
+    profiles: tuple[GammaSearchProfileDTO, ...] = field(default_factory=tuple)
+    pagination: GammaSearchPaginationDTO | None = None
+
+    def __post_init__(self) -> None:
+        if not self.profiles:
+            profiles = tuple(
+                GammaSearchProfileDTO(raw=item)
+                for item in _iter_mappings(self.raw, "profiles", "items", "results")
+            )
+            object.__setattr__(self, "profiles", profiles)
+        if self.pagination is None:
+            pagination = _maybe_mapping(_first_value(self.raw, "pagination"))
+            object.__setattr__(
+                self,
+                "pagination",
+                None if pagination is None else GammaSearchPaginationDTO(raw=pagination),
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class OrderbookLevelDTO:
     price: Decimal
     size: Decimal
@@ -1151,6 +1360,152 @@ class DataTradeDTO:
 
 
 @dataclass(frozen=True, slots=True)
+class DataActivityDTO:
+    raw: Mapping[str, Any]
+    proxy_wallet: str | None = None
+    timestamp: datetime = field(default_factory=_utc_now)
+    condition_id: str | None = None
+    activity_type: str | None = None
+    size: Decimal | None = None
+    usdc_size: Decimal | None = None
+    transaction_hash: str | None = None
+    price: Decimal | None = None
+    asset: str | None = None
+    side: str | None = None
+    outcome_index: int | None = None
+    title: str | None = None
+    market_slug: str | None = None
+    icon: str | None = None
+    event_slug: str | None = None
+    outcome: str | None = None
+    name: str | None = None
+    pseudonym: str | None = None
+    bio: str | None = None
+    profile_image: str | None = None
+    profile_image_optimized: str | None = None
+    raw_summary: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "proxy_wallet", self.proxy_wallet or _first_text(self.raw, "proxyWallet", "proxy_wallet"))
+        timestamp = _coerce_datetime(_first_value(self.raw, "timestamp", "createdAt", "created_at"))
+        if timestamp is not None:
+            object.__setattr__(self, "timestamp", timestamp)
+        object.__setattr__(
+            self,
+            "condition_id",
+            self.condition_id or _first_text(self.raw, "conditionId", "condition_id", "condition"),
+        )
+        object.__setattr__(self, "activity_type", self.activity_type or _first_text(self.raw, "type"))
+        object.__setattr__(self, "size", self.size if self.size is not None else _coerce_decimal(_first_value(self.raw, "size")))
+        object.__setattr__(
+            self,
+            "usdc_size",
+            self.usdc_size if self.usdc_size is not None else _coerce_decimal(_first_value(self.raw, "usdcSize", "usdc_size")),
+        )
+        object.__setattr__(
+            self,
+            "transaction_hash",
+            self.transaction_hash or _first_text(self.raw, "transactionHash", "transaction_hash"),
+        )
+        object.__setattr__(self, "price", self.price if self.price is not None else _coerce_decimal(_first_value(self.raw, "price")))
+        object.__setattr__(self, "asset", self.asset or _first_text(self.raw, "asset"))
+        object.__setattr__(self, "side", self.side or _first_text(self.raw, "side"))
+        object.__setattr__(
+            self,
+            "outcome_index",
+            self.outcome_index
+            if self.outcome_index is not None
+            else _coerce_int(_first_value(self.raw, "outcomeIndex", "outcome_index")),
+        )
+        object.__setattr__(self, "title", self.title or _first_text(self.raw, "title"))
+        object.__setattr__(self, "market_slug", self.market_slug or _first_text(self.raw, "slug", "marketSlug", "market_slug"))
+        object.__setattr__(self, "icon", self.icon or _first_text(self.raw, "icon"))
+        object.__setattr__(self, "event_slug", self.event_slug or _first_text(self.raw, "eventSlug", "event_slug"))
+        object.__setattr__(self, "outcome", self.outcome or _first_text(self.raw, "outcome"))
+        object.__setattr__(self, "name", self.name or _first_text(self.raw, "name"))
+        object.__setattr__(self, "pseudonym", self.pseudonym or _first_text(self.raw, "pseudonym"))
+        object.__setattr__(self, "bio", self.bio or _first_text(self.raw, "bio"))
+        object.__setattr__(self, "profile_image", self.profile_image or _first_text(self.raw, "profileImage", "profile_image"))
+        object.__setattr__(
+            self,
+            "profile_image_optimized",
+            self.profile_image_optimized
+            or _first_text(self.raw, "profileImageOptimized", "profile_image_optimized"),
+        )
+        summary = self.raw_summary.strip() if self.raw_summary else ""
+        if not summary:
+            summary = _summary(self.raw) or ""
+        object.__setattr__(self, "raw_summary", summary)
+
+
+@dataclass(frozen=True, slots=True)
+class DataHolderDTO:
+    raw: Mapping[str, Any]
+    proxy_wallet: str | None = None
+    bio: str | None = None
+    asset: str | None = None
+    pseudonym: str | None = None
+    amount: Decimal | None = None
+    display_username_public: bool | None = None
+    outcome_index: int | None = None
+    name: str | None = None
+    profile_image: str | None = None
+    profile_image_optimized: str | None = None
+    raw_summary: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "proxy_wallet", self.proxy_wallet or _first_text(self.raw, "proxyWallet", "proxy_wallet"))
+        object.__setattr__(self, "bio", self.bio or _first_text(self.raw, "bio"))
+        object.__setattr__(self, "asset", self.asset or _first_text(self.raw, "asset"))
+        object.__setattr__(self, "pseudonym", self.pseudonym or _first_text(self.raw, "pseudonym"))
+        object.__setattr__(self, "amount", self.amount if self.amount is not None else _coerce_decimal(_first_value(self.raw, "amount")))
+        object.__setattr__(
+            self,
+            "display_username_public",
+            self.display_username_public
+            if self.display_username_public is not None
+            else _coerce_bool(_first_value(self.raw, "displayUsernamePublic", "display_username_public")),
+        )
+        object.__setattr__(
+            self,
+            "outcome_index",
+            self.outcome_index
+            if self.outcome_index is not None
+            else _coerce_int(_first_value(self.raw, "outcomeIndex", "outcome_index")),
+        )
+        object.__setattr__(self, "name", self.name or _first_text(self.raw, "name"))
+        object.__setattr__(self, "profile_image", self.profile_image or _first_text(self.raw, "profileImage", "profile_image"))
+        object.__setattr__(
+            self,
+            "profile_image_optimized",
+            self.profile_image_optimized
+            or _first_text(self.raw, "profileImageOptimized", "profile_image_optimized"),
+        )
+        summary = self.raw_summary.strip() if self.raw_summary else ""
+        if not summary:
+            summary = _summary(self.raw) or ""
+        object.__setattr__(self, "raw_summary", summary)
+
+
+@dataclass(frozen=True, slots=True)
+class DataMarketHoldersDTO:
+    raw: Mapping[str, Any]
+    token_id: str | None = None
+    holders: tuple[DataHolderDTO, ...] = field(default_factory=tuple)
+    raw_summary: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "token_id", self.token_id or _first_text(self.raw, "token"))
+        if not self.holders:
+            holders = tuple(DataHolderDTO(raw=item) for item in _iter_mappings(self.raw, "holders", "items", "results"))
+            object.__setattr__(self, "holders", holders)
+        summary = self.raw_summary.strip() if self.raw_summary else ""
+        if not summary:
+            summary = _summary(self.raw) or ""
+        object.__setattr__(self, "raw_summary", summary)
+
+
+@dataclass(frozen=True, slots=True)
 class WebSocketSubscription:
     channel: PolymarketSubscriptionChannel
     token_ids: tuple[str, ...] = field(default_factory=tuple)
@@ -1220,6 +1575,14 @@ def normalize_gamma_event(payload: Mapping[str, Any]) -> GammaEventDTO:
     normalized = _unwrap_mapping(payload)
     markets = tuple(normalize_gamma_market(item) for item in _iter_mappings(normalized, "markets", "items", "results"))
     return GammaEventDTO(raw=normalized, markets=markets)
+
+
+def normalize_gamma_profile(payload: Mapping[str, Any]) -> GammaProfileDTO:
+    return GammaProfileDTO(raw=_unwrap_mapping(payload))
+
+
+def normalize_gamma_profile_search(payload: Mapping[str, Any]) -> GammaProfileSearchResultDTO:
+    return GammaProfileSearchResultDTO(raw=payload)
 
 
 def gamma_event_to_raw_market_events(
@@ -1382,6 +1745,16 @@ def normalize_trade_payload(payload: Mapping[str, Any]) -> DataTradeDTO:
         status=_first_text(normalized, "status") or "confirmed",
         confirmed_at=_coerce_datetime(_first_value(normalized, "confirmed_at", "confirmedAt", "timestamp")) or _utc_now(),
     )
+
+
+def normalize_activity_payload(payload: Mapping[str, Any]) -> DataActivityDTO:
+    normalized = _unwrap_mapping(payload)
+    return DataActivityDTO(raw=normalized)
+
+
+def normalize_market_holders_payload(payload: Mapping[str, Any]) -> DataMarketHoldersDTO:
+    normalized = _unwrap_mapping(payload)
+    return DataMarketHoldersDTO(raw=normalized)
 
 
 def normalize_balance_allowance_payload(payload: Mapping[str, Any]) -> BalanceAllowanceDTO:
@@ -1566,10 +1939,18 @@ __all__ = [
     "ClobOrderDTO",
     "ClobOrderRequest",
     "ClobOrderbookDTO",
+    "DataActivityDTO",
+    "DataHolderDTO",
+    "DataMarketHoldersDTO",
     "DataPositionDTO",
     "DataTradeDTO",
     "GammaEventDTO",
     "GammaMarketDTO",
+    "GammaProfileSearchResultDTO",
+    "GammaProfileDTO",
+    "GammaProfileUserDTO",
+    "GammaSearchPaginationDTO",
+    "GammaSearchProfileDTO",
     "OrderbookLevelDTO",
     "PolymarketAuthError",
     "PolymarketClientError",
@@ -1590,8 +1971,12 @@ __all__ = [
     "gamma_event_to_raw_market_events",
     "normalize_balance_allowance_payload",
     "normalize_fill_payload",
+    "normalize_activity_payload",
     "normalize_gamma_event",
     "normalize_gamma_market",
+    "normalize_gamma_profile",
+    "normalize_gamma_profile_search",
+    "normalize_market_holders_payload",
     "normalize_order_payload",
     "normalize_orderbook_payload",
     "normalize_position_payload",

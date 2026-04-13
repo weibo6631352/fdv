@@ -35,6 +35,13 @@ from fdv_trader.infra.db import (
     PositionRepository,
     RepositoryPage,
 )
+from fdv_trader.infra.polymarket import (
+    DataActivityDTO,
+    DataMarketHoldersDTO,
+    GammaProfileDTO,
+    GammaProfileSearchResultDTO,
+    GammaSearchProfileDTO,
+)
 from fdv_trader.runtime.account_state import AccountSnapshot
 from fdv_trader.runtime.event_bus import EventBus, QueueDepthSnapshot
 from fdv_trader.runtime.registry import MarketRegistrySnapshot
@@ -465,6 +472,81 @@ class AdminService:
         if market is None:
             return None
         return self._serialize_market_view(market)
+
+    async def get_profile(
+        self,
+        *,
+        address: str,
+    ) -> dict[str, Any]:
+        profile = await self._gamma_client().get_public_profile(address)
+        return self._serialize_profile(profile)
+
+    async def list_profile_activity(
+        self,
+        *,
+        address: str,
+        limit: int = 100,
+        offset: int = 0,
+        condition_id: str | None = None,
+        event_id: int | None = None,
+        activity_type: str | None = None,
+        start: int | None = None,
+        end: int | None = None,
+        sort_by: str | None = None,
+        sort_direction: str | None = None,
+        side: str | None = None,
+    ) -> dict[str, Any]:
+        activities = await self._data_client().list_activity(
+            user_address=address,
+            market_ids=None if condition_id is None else (condition_id,),
+            event_ids=None if event_id is None else (event_id,),
+            activity_types=None if activity_type is None else (activity_type,),
+            start=start,
+            end=end,
+            sort_by=sort_by,
+            sort_direction=sort_direction,
+            side=side,
+            limit=limit,
+            offset=offset,
+        )
+        return {
+            "items": [self._serialize_profile_activity(item) for item in activities],
+            "limit": limit,
+            "offset": offset,
+        }
+
+    async def list_market_holders(
+        self,
+        *,
+        condition_id: str,
+        limit: int = 20,
+        min_balance: int = 1,
+    ) -> dict[str, Any]:
+        holders = await self._data_client().list_holders(
+            market_ids=(condition_id,),
+            limit=limit,
+            min_balance=min_balance,
+        )
+        return {
+            "items": [self._serialize_market_holders(item) for item in holders],
+            "condition_id": condition_id,
+            "limit": limit,
+            "min_balance": min_balance,
+        }
+
+    async def search_profiles(
+        self,
+        *,
+        query: str,
+        limit: int = 20,
+        page: int = 1,
+    ) -> dict[str, Any]:
+        result = await self._gamma_client().search_public_profiles(
+            query=query,
+            limit_per_type=limit,
+            page=page,
+        )
+        return self._serialize_profile_search_result(result, limit=limit, page=page)
 
     async def list_audit_events(
         self,
@@ -1013,6 +1095,106 @@ class AdminService:
             "reject_reason": market.reject_reason,
         }
 
+    def _serialize_profile(self, profile: GammaProfileDTO) -> dict[str, Any]:
+        return {
+            "created_at": _jsonable(profile.created_at),
+            "proxy_wallet": profile.proxy_wallet,
+            "profile_image": profile.profile_image,
+            "display_username_public": profile.display_username_public,
+            "bio": profile.bio,
+            "pseudonym": profile.pseudonym,
+            "name": profile.name,
+            "users": [
+                {
+                    "id": user.user_id,
+                    "creator": user.creator,
+                    "mod": user.mod,
+                }
+                for user in profile.users
+            ],
+            "x_username": profile.x_username,
+            "verified_badge": profile.verified_badge,
+        }
+
+    def _serialize_profile_activity(self, activity: DataActivityDTO) -> dict[str, Any]:
+        return {
+            "proxy_wallet": activity.proxy_wallet,
+            "timestamp": _jsonable(activity.timestamp),
+            "condition_id": activity.condition_id,
+            "type": activity.activity_type,
+            "size": _decimal_text(activity.size),
+            "usdc_size": _decimal_text(activity.usdc_size),
+            "transaction_hash": activity.transaction_hash,
+            "price": _decimal_text(activity.price),
+            "asset": activity.asset,
+            "side": activity.side,
+            "outcome_index": activity.outcome_index,
+            "title": activity.title,
+            "market_slug": activity.market_slug,
+            "icon": activity.icon,
+            "event_slug": activity.event_slug,
+            "outcome": activity.outcome,
+            "name": activity.name,
+            "pseudonym": activity.pseudonym,
+            "bio": activity.bio,
+            "profile_image": activity.profile_image,
+            "profile_image_optimized": activity.profile_image_optimized,
+        }
+
+    def _serialize_market_holders(self, holders: DataMarketHoldersDTO) -> dict[str, Any]:
+        return {
+            "token_id": holders.token_id,
+            "holders": [
+                {
+                    "proxy_wallet": holder.proxy_wallet,
+                    "bio": holder.bio,
+                    "asset": holder.asset,
+                    "pseudonym": holder.pseudonym,
+                    "amount": _decimal_text(holder.amount),
+                    "display_username_public": holder.display_username_public,
+                    "outcome_index": holder.outcome_index,
+                    "name": holder.name,
+                    "profile_image": holder.profile_image,
+                    "profile_image_optimized": holder.profile_image_optimized,
+                }
+                for holder in holders.holders
+            ],
+        }
+
+    def _serialize_profile_search_result(
+        self,
+        result: GammaProfileSearchResultDTO,
+        *,
+        limit: int,
+        page: int,
+    ) -> dict[str, Any]:
+        pagination = result.pagination
+        return {
+            "items": [self._serialize_search_profile(profile) for profile in result.profiles],
+            "limit": limit,
+            "page": page,
+            "has_more": None if pagination is None else pagination.has_more,
+            "total_results": None if pagination is None else pagination.total_results,
+        }
+
+    def _serialize_search_profile(self, profile: GammaSearchProfileDTO) -> dict[str, Any]:
+        return {
+            "profile_id": profile.profile_id,
+            "name": profile.name,
+            "pseudonym": profile.pseudonym,
+            "display_username_public": profile.display_username_public,
+            "profile_image": profile.profile_image,
+            "profile_image_optimized": profile.profile_image_optimized,
+            "bio": profile.bio,
+            "proxy_wallet": profile.proxy_wallet,
+            "created_at": _jsonable(profile.created_at),
+            "updated_at": _jsonable(profile.updated_at),
+            "wallet_activated": profile.wallet_activated,
+            "is_close_only": profile.is_close_only,
+            "is_cert_req": profile.is_cert_req,
+            "cert_req_date": _jsonable(profile.cert_req_date),
+        }
+
     def _serialize_orderbook(self, orderbook: OrderbookSnapshot | None) -> dict[str, Any] | None:
         if orderbook is None:
             return None
@@ -1274,6 +1456,18 @@ class AdminService:
 
     def _settings(self) -> Any | None:
         return getattr(self.runtime, "settings", None)
+
+    def _gamma_client(self) -> Any:
+        gamma_client = getattr(self.runtime, "gamma_client", None)
+        if gamma_client is None:
+            raise RuntimeError("gamma_client unavailable")
+        return gamma_client
+
+    def _data_client(self) -> Any:
+        data_client = getattr(self.runtime, "data_client", None)
+        if data_client is None:
+            raise RuntimeError("data_client unavailable")
+        return data_client
 
     def _trading_service(self) -> TradingService:
         trading_service = getattr(self.runtime, "trading_service", None)

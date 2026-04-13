@@ -36,6 +36,13 @@ from fdv_trader.domain.order import (
 from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from fdv_trader.domain.position import Position
 from fdv_trader.infra.db import RepositoryPage
+from fdv_trader.infra.polymarket import PolymarketResponseError
+from fdv_trader.infra.polymarket.schemas import (
+    normalize_activity_payload,
+    normalize_gamma_profile,
+    normalize_gamma_profile_search,
+    normalize_market_holders_payload,
+)
 from fdv_trader.runtime.account_state import AccountStateStore
 from fdv_trader.runtime.event_bus import EventBus
 from fdv_trader.runtime.registry import MarketRegistry
@@ -93,6 +100,145 @@ class FakeSupervisor:
 
     def snapshot(self) -> RuntimeSnapshot:
         return self._snapshot
+
+
+class FakeGammaClient:
+    def __init__(self, *, profile: object | None = None, error: Exception | None = None) -> None:
+        self._profile = profile or normalize_gamma_profile(
+            {
+                "createdAt": "2026-01-01T12:00:00Z",
+                "proxyWallet": "0x1111111111111111111111111111111111111111",
+                "profileImage": "https://example.com/profile.png",
+                "displayUsernamePublic": True,
+                "bio": "fdv watcher",
+                "pseudonym": "fdv-watch-001",
+                "name": "FDV Watcher",
+                "users": [
+                    {
+                        "id": "user-1",
+                        "creator": True,
+                        "mod": False,
+                    }
+                ],
+                "xUsername": "fdvwatcher",
+                "verifiedBadge": True,
+            }
+        )
+        self._search_result = normalize_gamma_profile_search(
+            {
+                "profiles": [
+                    {
+                        "id": "profile-1",
+                        "name": "FDV Watcher",
+                        "pseudonym": "fdv-watch-001",
+                        "displayUsernamePublic": True,
+                        "profileImage": "https://example.com/profile.png",
+                        "profileImageOptimized": {
+                            "imageUrlOptimized": "https://example.com/profile-optimized.png",
+                        },
+                        "bio": "fdv watcher",
+                        "proxyWallet": "0x1111111111111111111111111111111111111111",
+                        "createdAt": "2026-01-01T12:00:00Z",
+                        "updatedAt": "2026-01-02T12:00:00Z",
+                        "walletActivated": True,
+                        "isCloseOnly": False,
+                        "isCertReq": False,
+                    }
+                ],
+                "pagination": {
+                    "hasMore": False,
+                    "totalResults": 1,
+                },
+            }
+        )
+        self._error = error
+        self.calls: list[str] = []
+        self.search_calls: list[dict[str, object]] = []
+
+    async def get_public_profile(self, address: str) -> object:
+        self.calls.append(address)
+        if self._error is not None:
+            raise self._error
+        return self._profile
+
+    async def search_public_profiles(self, query: str, **kwargs: object) -> object:
+        self.search_calls.append({"query": query, **kwargs})
+        if self._error is not None:
+            raise self._error
+        return self._search_result
+
+
+class FakeDataClient:
+    def __init__(
+        self,
+        *,
+        activities: tuple[object, ...] | None = None,
+        holders: tuple[object, ...] | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self._activities = activities or (
+            normalize_activity_payload(
+                {
+                    "proxyWallet": "0x1111111111111111111111111111111111111111",
+                    "timestamp": 1704100800,
+                    "conditionId": "0x" + "1" * 64,
+                    "type": "TRADE",
+                    "size": 5,
+                    "usdcSize": 3.5,
+                    "transactionHash": "0xtrade1",
+                    "price": 0.7,
+                    "asset": "no-token-500m",
+                    "side": "SELL",
+                    "outcomeIndex": 1,
+                    "title": "Crypto FDV 500M",
+                    "slug": "token-500m-fdv",
+                    "icon": "https://example.com/icon.png",
+                    "eventSlug": "crypto-fdv-500m",
+                    "outcome": "No",
+                    "name": "FDV Watcher",
+                    "pseudonym": "fdv-watch-001",
+                    "bio": "fdv watcher",
+                    "profileImage": "https://example.com/profile.png",
+                    "profileImageOptimized": "https://example.com/profile-optimized.png",
+                }
+            ),
+        )
+        self._holders = holders or (
+            normalize_market_holders_payload(
+                {
+                    "token": "no-token-500m",
+                    "holders": [
+                        {
+                            "proxyWallet": "0x1111111111111111111111111111111111111111",
+                            "bio": "fdv watcher",
+                            "asset": "no-token-500m",
+                            "pseudonym": "fdv-watch-001",
+                            "amount": 25,
+                            "displayUsernamePublic": True,
+                            "outcomeIndex": 1,
+                            "name": "FDV Watcher",
+                            "profileImage": "https://example.com/profile.png",
+                            "profileImageOptimized": "https://example.com/profile-optimized.png",
+                        }
+                    ],
+                }
+            ),
+        )
+        self._error = error
+        self.calls: list[dict[str, object]] = []
+        self.holder_calls: list[dict[str, object]] = []
+
+    async def list_activity(self, **kwargs: object) -> tuple[object, ...]:
+        self.calls.append(kwargs)
+        if self._error is not None:
+            raise self._error
+        return self._activities
+
+    async def list_holders(self, **kwargs: object) -> tuple[object, ...]:
+        self.holder_calls.append(kwargs)
+        if self._error is not None:
+            raise self._error
+        return self._holders
 
 
 class FakeReconcileWorker:
@@ -397,6 +543,8 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
         settings=settings,
         readiness=readiness,
         registry=registry,
+        gamma_client=FakeGammaClient(),
+        data_client=FakeDataClient(),
         account_state_store=account_state_store,
         market_ws_worker=fake_market_ws_worker,
         event_bus=event_bus,
@@ -423,6 +571,37 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         metrics = client.get("/metrics").json()
         markets = client.get("/markets").json()
         market_detail = client.get("/markets/detail", params={"market_slug": "token-500m-fdv"}).json()
+        market_holders = client.get(
+            "/markets/holders",
+            params={
+                "condition_id": "0x" + "1" * 64,
+                "limit": 20,
+                "min_balance": 1,
+            },
+        ).json()
+        profile_detail = client.get(
+            "/profiles/detail",
+            params={"address": "0x1111111111111111111111111111111111111111"},
+        ).json()
+        profile_search = client.get(
+            "/profiles/search",
+            params={"q": "fdv", "limit": 10, "page": 2},
+        ).json()
+        profile_activity = client.get(
+            "/profiles/activity",
+            params={
+                "address": "0x1111111111111111111111111111111111111111",
+                "limit": 50,
+                "offset": 10,
+                "condition_id": "0x" + "1" * 64,
+                "type": "TRADE",
+                "start": 1704000000,
+                "end": 1704200000,
+                "sort_by": "TIMESTAMP",
+                "sort_direction": "DESC",
+                "side": "SELL",
+            },
+        ).json()
         orders = client.get("/orders").json()
         positions = client.get("/positions").json()
         fills = client.get("/fills").json()
@@ -454,6 +633,35 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert markets["items"][0]["entry_price_touched"] is True
         assert market_detail["market"]["condition_id"] == "condition-500m"
         assert market_detail["market"]["market_slug"] == "token-500m-fdv"
+        assert market_holders["condition_id"] == "0x" + "1" * 64
+        assert market_holders["items"][0]["token_id"] == "no-token-500m"
+        assert market_holders["items"][0]["holders"][0]["amount"] == "25"
+        assert runtime.data_client.holder_calls[0]["market_ids"] == ("0x" + "1" * 64,)
+        assert runtime.data_client.holder_calls[0]["limit"] == 20
+        assert runtime.data_client.holder_calls[0]["min_balance"] == 1
+        assert profile_detail["name"] == "FDV Watcher"
+        assert profile_detail["profile_image"] == "https://example.com/profile.png"
+        assert profile_detail["x_username"] == "fdvwatcher"
+        assert profile_detail["users"][0]["id"] == "user-1"
+        assert profile_search["limit"] == 10
+        assert profile_search["page"] == 2
+        assert profile_search["has_more"] is False
+        assert profile_search["total_results"] == 1
+        assert profile_search["items"][0]["profile_id"] == "profile-1"
+        assert profile_search["items"][0]["profile_image_optimized"] == "https://example.com/profile-optimized.png"
+        assert runtime.gamma_client.search_calls[0]["query"] == "fdv"
+        assert runtime.gamma_client.search_calls[0]["limit_per_type"] == 10
+        assert runtime.gamma_client.search_calls[0]["page"] == 2
+        assert profile_activity["limit"] == 50
+        assert profile_activity["offset"] == 10
+        assert profile_activity["items"][0]["type"] == "TRADE"
+        assert profile_activity["items"][0]["transaction_hash"] == "0xtrade1"
+        assert profile_activity["items"][0]["profile_image_optimized"] == "https://example.com/profile-optimized.png"
+        assert runtime.data_client.calls[0]["market_ids"] == ("0x" + "1" * 64,)
+        assert runtime.data_client.calls[0]["activity_types"] == ("TRADE",)
+        assert runtime.data_client.calls[0]["sort_by"] == "TIMESTAMP"
+        assert runtime.data_client.calls[0]["sort_direction"] == "DESC"
+        assert runtime.data_client.calls[0]["side"] == "SELL"
 
         assert orders["total"] == 2
         assert orders["items"][0]["order_id"] == "buy-1"
@@ -723,3 +931,24 @@ def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypa
 
         assert filtered_orders["total"] == 1
         assert filtered_orders["items"][0]["order_id"] == "buy-1"
+
+
+def test_profiles_detail_returns_404_when_upstream_profile_is_missing() -> None:
+    runtime = _build_runtime(ready=True)
+    runtime.gamma_client = FakeGammaClient(
+        error=PolymarketResponseError(
+            "profile not found",
+            operation="gamma.get_public_profile",
+            status_code=404,
+        )
+    )
+    app = create_app(runtime=runtime, admin_service=AdminService())
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/profiles/detail",
+            params={"address": "0x1111111111111111111111111111111111111111"},
+        )
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "profile not found"

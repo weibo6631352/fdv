@@ -26,17 +26,20 @@
 | `GET` | `/allocations` | 资金分配分页查询 |
 | `GET` | `/markets` | 市场分页查询 |
 | `GET` | `/markets/detail` | 单 market 详情 |
+| `GET` | `/markets/holders` | 市场持有人列表 |
 | `GET` | `/orders` | 订单分页查询 |
 | `POST` | `/orders/cancel-replace-sell` | 人工取消并重挂 SELL |
 | `GET` | `/fills` | fills 分页查询 |
 | `GET` | `/positions` | 持仓分页查询 |
 | `GET` | `/portfolio` | 组合与账户摘要 |
+| `GET` | `/profiles/detail` | 用户公开资料详情 |
+| `GET` | `/profiles/activity` | 用户公开活动列表 |
+| `GET` | `/profiles/search` | 用户公开资料搜索 |
 | `GET` | `/outbox/pending` | outbox 待处理事件 |
 | `POST` | `/operations/reconcile` | 手动触发 reconcile |
 
 当前没有对外暴露的路由：
 
-- `audit_events`
 - 直接下 BUY 单
 - 直接撤任意单
 - 直接暂停/恢复 market
@@ -53,6 +56,47 @@
   "total": 0,
   "limit": 100,
   "offset": 0
+}
+```
+
+`/profiles/activity` 返回：
+
+```json
+{
+  "items": [],
+  "limit": 100,
+  "offset": 0
+}
+```
+
+说明：
+
+- 不返回 `total`，因为上游官方 `GET /activity` 当前不提供总数。
+
+`/markets/holders` 返回：
+
+```json
+{
+  "items": [],
+  "condition_id": "0x...",
+  "limit": 20,
+  "min_balance": 1
+}
+```
+
+说明：
+
+- 不返回 `total`，因为上游官方 `GET /holders` 当前不提供总数。
+
+`/profiles/search` 返回：
+
+```json
+{
+  "items": [],
+  "limit": 20,
+  "page": 1,
+  "has_more": false,
+  "total_results": 0
 }
 ```
 
@@ -203,7 +247,153 @@
 
 - 与 `/markets.items[]` 单项结构一致。
 
-### 3.6 `GET /orders`
+### 3.6 `GET /markets/holders`
+
+用途：
+
+- 查询单个市场当前 top holders，并带出可展示的公开资料字段。
+
+查询参数：
+
+| 参数 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `condition_id` | `str` | 必填 | `0x` 开头的 64 位 condition id |
+| `limit` | `int` | `20` | `1..20`，每个 token 最多返回多少 holder |
+| `min_balance` | `int` | `1` | `0..999999`，过滤过小余额 |
+
+返回结构：
+
+- `items[].token_id`
+- `items[].holders[].proxy_wallet`
+- `items[].holders[].pseudonym`
+- `items[].holders[].name`
+- `items[].holders[].amount`
+- `items[].holders[].profile_image`
+- `items[].holders[].profile_image_optimized`
+
+说明：
+
+- 该接口直连 `DataClient.list_holders()`。
+- 返回按 token 分组，不同 outcome 会拆成不同 `items[]`。
+- 上游 Polymarket 暂时不可用时返回 `502 market_holders_upstream_unavailable`。
+
+### 3.7 `GET /profiles/detail`
+
+用途：
+
+- 按钱包地址查询 Polymarket 公开资料。
+
+查询参数：
+
+| 参数 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `address` | `str` | 必填 | `0x` 开头的 40 位钱包地址 |
+
+关键返回字段：
+
+- `created_at`
+- `proxy_wallet`
+- `profile_image`
+- `display_username_public`
+- `bio`
+- `pseudonym`
+- `name`
+- `users`
+- `x_username`
+- `verified_badge`
+
+说明：
+
+- 该接口直连 `GammaClient.get_public_profile()`，不写数据库，不修改运行态账户快照。
+- 找不到 profile 时返回 `404 profile not found`。
+- 上游 Polymarket 暂时不可用时返回 `502 profile_upstream_unavailable`。
+
+### 3.8 `GET /profiles/activity`
+
+用途：
+
+- 按钱包地址查询 Polymarket 用户公开活动。
+
+查询参数：
+
+| 参数 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `address` | `str` | 必填 | `0x` 开头的 40 位钱包地址 |
+| `limit` | `int` | `100` | `1..500` |
+| `offset` | `int` | `0` | `0..10000` |
+| `condition_id` | `str` | `null` | 可选，单个 condition id |
+| `event_id` | `int` | `null` | 可选，单个 event id |
+| `type` | `str` | `null` | `TRADE` / `SPLIT` / `MERGE` / `REDEEM` / `REWARD` / `CONVERSION` / `MAKER_REBATE` / `REFERRAL_REWARD` |
+| `start` | `int` | `null` | Unix 时间戳下界 |
+| `end` | `int` | `null` | Unix 时间戳上界 |
+| `sort_by` | `str` | `null` | `TIMESTAMP` / `TOKENS` / `CASH` |
+| `sort_direction` | `str` | `null` | `ASC` / `DESC` |
+| `side` | `str` | `null` | `BUY` / `SELL` |
+
+约束：
+
+- `condition_id` 和 `event_id` 互斥。
+- `start`、`end` 同时存在时必须满足 `start <= end`。
+
+单项结构重点：
+
+- `proxy_wallet`
+- `timestamp`
+- `condition_id`
+- `type`
+- `size`
+- `usdc_size`
+- `transaction_hash`
+- `price`
+- `asset`
+- `side`
+- `outcome_index`
+- `title`
+- `market_slug`
+- `event_slug`
+- `name`
+- `pseudonym`
+- `profile_image`
+
+说明：
+
+- 该接口直连 `DataClient.list_activity()`。
+- 时间统一输出 ISO 8601 UTC 字符串；上游原始 `timestamp` 是 Unix 时间戳。
+- 上游 Polymarket 暂时不可用时返回 `502 profile_activity_upstream_unavailable`。
+
+### 3.9 `GET /profiles/search`
+
+用途：
+
+- 按关键字搜索 Polymarket 公开用户资料。
+
+查询参数：
+
+| 参数 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `q` | `str` | 必填 | 搜索关键字 |
+| `limit` | `int` | `20` | `1..100` |
+| `page` | `int` | `1` | `>=1` |
+
+关键返回字段：
+
+- `items[].profile_id`
+- `items[].name`
+- `items[].pseudonym`
+- `items[].display_username_public`
+- `items[].profile_image`
+- `items[].profile_image_optimized`
+- `items[].bio`
+- `items[].proxy_wallet`
+- `has_more`
+- `total_results`
+
+说明：
+
+- 该接口直连 `GammaClient.search_public_profiles()`，只取 `profiles` 和 `pagination`，不透出 events / tags 结果。
+- 上游 Polymarket 暂时不可用时返回 `502 profile_search_upstream_unavailable`。
+
+### 3.10 `GET /orders`
 
 用途：
 
@@ -248,7 +438,7 @@
 - `open_only=true` 时只返回运行态 open orders。
 - `open_only=false` 且存在 DB session factory 时，走仓储快照查询。
 
-### 3.7 `GET /fills`
+### 3.11 `GET /fills`
 
 用途：
 
@@ -281,7 +471,7 @@
 - `status`
 - `confirmed_at`
 
-### 3.8 `GET /positions`
+### 3.12 `GET /positions`
 
 用途：
 
@@ -312,7 +502,7 @@
 - `confirmation_status`
 - `updated_at`
 
-### 3.9 `GET /portfolio`
+### 3.13 `GET /portfolio`
 
 用途：
 
@@ -338,7 +528,7 @@
 - 当前 `available_usdc` 直接等于 `balance_usdc`。
 - 若仓储可用，会补 `recent_allocations`；否则返回空数组。
 
-### 3.10 `GET /audit-events`
+### 3.14 `GET /audit-events`
 
 用途：
 
@@ -374,7 +564,7 @@
 - `reason`
 - `created_at`
 
-### 3.11 `GET /allocations`
+### 3.15 `GET /allocations`
 
 用途：
 
@@ -404,7 +594,7 @@
 - `release_reason`
 - `idempotency_key`
 
-### 3.12 `GET /workers`
+### 3.16 `GET /workers`
 
 用途：
 
@@ -419,7 +609,7 @@
 - `scheduler`
 - `workers`
 
-### 3.13 `GET /metrics`
+### 3.17 `GET /metrics`
 
 用途：
 
@@ -433,7 +623,7 @@
 - `queue_depths`
 - `metrics`
 
-### 3.14 `GET /outbox/pending`
+### 3.18 `GET /outbox/pending`
 
 用途：
 
@@ -559,7 +749,7 @@ Admin API 是人工查询和受控操作入口，不是交易策略入口。
 - 健康检查
 - readiness 查询
 - runtime 查询
-- market / order / fill / position / portfolio 查询
+- market / profile / order / fill / position / portfolio 查询
 - 手动 reconcile
 - 手动 cancel + replace sell
 
@@ -578,4 +768,8 @@ Admin API 是人工查询和受控操作入口，不是交易策略入口。
 - 判断能否自动交易用 `/ready`
 - 本地排障先看 `/runtime`
 - 市场扫描和费率筛选用 `/markets`
+- 用户资料查询用 `/profiles/detail`
+- 用户活动回放用 `/profiles/activity`
+- 用户搜索入口用 `/profiles/search`
+- 市场持有人展示用 `/markets/holders`
 - 人工修复只用 `/operations/reconcile` 和 `/orders/cancel-replace-sell`

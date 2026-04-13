@@ -13,6 +13,7 @@
 - `fills.py`：成交查询。
 - `positions.py`：持仓查询。
 - `portfolio.py`：组合预算、exposure 和分配状态查询。
+- `profiles.py`：用户公开资料、活动与搜索查询。
 - `outbox.py`：暴露 `/outbox/pending`。
 - `operations.py`：受控 reconcile 操作。
 

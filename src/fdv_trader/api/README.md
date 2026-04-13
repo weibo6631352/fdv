@@ -50,10 +50,14 @@ route -> AdminService -> TradingService -> RiskManager -> OrderExecutor
 - `GET /allocations`
 - `GET /markets`
 - `GET /markets/detail`
+- `GET /markets/holders`
 - `GET /orders`
 - `GET /fills`
 - `GET /positions`
 - `GET /portfolio`
+- `GET /profiles/detail`
+- `GET /profiles/activity`
+- `GET /profiles/search`
 - `GET /outbox/pending`
 - `POST /operations/reconcile`
 - `POST /orders/cancel-replace-sell`

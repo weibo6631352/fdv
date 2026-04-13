@@ -8,11 +8,15 @@ import httpx
 from fdv_trader.infra.polymarket.schemas import (
     GammaEventDTO,
     GammaMarketDTO,
+    GammaProfileDTO,
+    GammaProfileSearchResultDTO,
     PolymarketRestClientBase,
     RawMarketEvent,
     gamma_event_to_raw_market_events,
     normalize_gamma_event,
     normalize_gamma_market,
+    normalize_gamma_profile,
+    normalize_gamma_profile_search,
 )
 
 
@@ -44,10 +48,14 @@ class GammaClient(PolymarketRestClientBase):
         headers: Mapping[str, str] | None = None,
         events_path: str = "/events",
         markets_path: str = "/markets",
+        profiles_path: str = "/public-profile",
+        profiles_search_path: str = "/public-search",
     ) -> None:
         super().__init__(base_url, client=client, timeout_s=timeout_s, headers=headers)
         self._events_path = events_path
         self._markets_path = markets_path
+        self._profiles_path = profiles_path
+        self._profiles_search_path = profiles_search_path
 
     @staticmethod
     def _build_query_params(
@@ -160,6 +168,49 @@ class GammaClient(PolymarketRestClientBase):
         if isinstance(payload, Mapping):
             return normalize_gamma_market(payload)
         raise TypeError("gamma market response is not a mapping")
+
+    async def get_public_profile(
+        self,
+        address: str,
+        *,
+        timeout_s: float | None = None,
+        path: str | None = None,
+    ) -> GammaProfileDTO:
+        payload = await self.get_json(
+            path or self._profiles_path,
+            params={"address": address},
+            timeout_s=timeout_s,
+            operation="gamma.get_public_profile",
+        )
+        if isinstance(payload, Mapping):
+            return normalize_gamma_profile(payload)
+        raise TypeError("gamma public profile response is not a mapping")
+
+    async def search_public_profiles(
+        self,
+        query: str,
+        *,
+        limit_per_type: int = 20,
+        page: int = 1,
+        timeout_s: float | None = None,
+        path: str | None = None,
+    ) -> GammaProfileSearchResultDTO:
+        payload = await self.get_json(
+            path or self._profiles_search_path,
+            params={
+                "q": query,
+                "limit_per_type": limit_per_type,
+                "page": page,
+                "search_profiles": True,
+                "search_tags": False,
+            },
+            timeout_s=timeout_s,
+            operation="gamma.search_public_profiles",
+            unwrap=False,
+        )
+        if isinstance(payload, Mapping):
+            return normalize_gamma_profile_search(payload)
+        raise TypeError("gamma public search response is not a mapping")
 
     async def iter_raw_market_events(
         self,

@@ -126,6 +126,140 @@ async def test_data_client_list_trades_uses_official_query_params_and_maps_curre
     assert trade.confirmed_at == datetime.fromtimestamp(1700000000, tz=timezone.utc)
 
 
+async def test_data_client_list_activity_uses_official_query_params_and_maps_current_fields() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/activity"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "proxyWallet": "0x56687bf447db6ffa42ffe2204a05edaa20f55839",
+                    "timestamp": 1700000000,
+                    "conditionId": "0x" + "3" * 64,
+                    "type": "TRADE",
+                    "size": 4,
+                    "usdcSize": 1,
+                    "transactionHash": "0xdef",
+                    "price": 0.25,
+                    "asset": "token-3",
+                    "side": "BUY",
+                    "outcomeIndex": 0,
+                    "title": "Token FDV 2B",
+                    "slug": "token-fdv-2b",
+                    "icon": "https://example.com/icon.png",
+                    "eventSlug": "event-fdv-2b",
+                    "outcome": "Yes",
+                    "name": "Trader",
+                    "pseudonym": "trader-1",
+                    "bio": "active trader",
+                    "profileImage": "https://example.com/profile.png",
+                    "profileImageOptimized": "https://example.com/profile-optimized.png",
+                }
+            ],
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(
+        base_url="https://data-api.polymarket.com",
+        transport=transport,
+        trust_env=False,
+    ) as client:
+        data = DataClient(client=client)
+        activities = await data.list_activity(
+            user_address="0x56687bf447db6ffa42ffe2204a05edaa20f55839",
+            market_ids=("0x" + "3" * 64,),
+            activity_types=("TRADE",),
+            start=1700000000,
+            end=1700003600,
+            sort_by="TIMESTAMP",
+            sort_direction="DESC",
+            side="BUY",
+            limit=25,
+            offset=10,
+        )
+
+    request = requests[0]
+    assert request.url.params.get("user") == "0x56687bf447db6ffa42ffe2204a05edaa20f55839"
+    assert request.url.params.get("market") == "0x" + "3" * 64
+    assert request.url.params.get("type") == "TRADE"
+    assert request.url.params.get("start") == "1700000000"
+    assert request.url.params.get("end") == "1700003600"
+    assert request.url.params.get("sortBy") == "TIMESTAMP"
+    assert request.url.params.get("sortDirection") == "DESC"
+    assert request.url.params.get("side") == "BUY"
+    assert request.url.params.get("limit") == "25"
+    assert request.url.params.get("offset") == "10"
+    assert len(activities) == 1
+    activity = activities[0]
+    assert activity.proxy_wallet == "0x56687bf447db6ffa42ffe2204a05edaa20f55839"
+    assert activity.condition_id == "0x" + "3" * 64
+    assert activity.activity_type == "TRADE"
+    assert activity.asset == "token-3"
+    assert activity.side == "BUY"
+    assert activity.market_slug == "token-fdv-2b"
+    assert activity.timestamp == datetime.fromtimestamp(1700000000, tz=timezone.utc)
+
+
+async def test_data_client_list_holders_uses_official_query_params_and_maps_current_fields() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/holders"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "token": "token-4",
+                    "holders": [
+                        {
+                            "proxyWallet": "0x56687bf447db6ffa42ffe2204a05edaa20f55839",
+                            "bio": "active holder",
+                            "asset": "token-4",
+                            "pseudonym": "holder-1",
+                            "amount": 42,
+                            "displayUsernamePublic": True,
+                            "outcomeIndex": 1,
+                            "name": "Holder",
+                            "profileImage": "https://example.com/profile.png",
+                            "profileImageOptimized": "https://example.com/profile-optimized.png",
+                        }
+                    ],
+                }
+            ],
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(
+        base_url="https://data-api.polymarket.com",
+        transport=transport,
+        trust_env=False,
+    ) as client:
+        data = DataClient(client=client)
+        holders = await data.list_holders(
+            market_ids=("0x" + "4" * 64,),
+            limit=20,
+            min_balance=2,
+        )
+
+    request = requests[0]
+    assert request.url.params.get("market") == "0x" + "4" * 64
+    assert request.url.params.get("limit") == "20"
+    assert request.url.params.get("minBalance") == "2"
+    assert len(holders) == 1
+    market_holders = holders[0]
+    assert market_holders.token_id == "token-4"
+    assert len(market_holders.holders) == 1
+    holder = market_holders.holders[0]
+    assert holder.proxy_wallet == "0x56687bf447db6ffa42ffe2204a05edaa20f55839"
+    assert holder.amount == Decimal("42")
+    assert holder.display_username_public is True
+    assert holder.profile_image_optimized == "https://example.com/profile-optimized.png"
+
+
 async def test_data_client_requires_user_and_rejects_partial_trade_filter() -> None:
     async with httpx.AsyncClient(
         base_url="https://data-api.polymarket.com",
@@ -140,3 +274,5 @@ async def test_data_client_requires_user_and_rejects_partial_trade_filter() -> N
                 user_address="0x56687bf447db6ffa42ffe2204a05edaa20f55839",
                 filter_type="CASH",
             )
+        with pytest.raises(ValueError, match="user_address"):
+            await data.list_activity()

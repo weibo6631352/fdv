@@ -5,6 +5,7 @@ from typing import Literal
 
 from fdv_trader.api.deps import get_admin_service
 from fdv_trader.app.admin_service import AdminService
+from fdv_trader.infra.polymarket import PolymarketClientError
 
 router = APIRouter(prefix="/markets", tags=["markets"])
 
@@ -26,6 +27,27 @@ async def get_market_detail(
     if payload is None:
         raise HTTPException(status_code=404, detail="market not found")
     return payload
+
+
+@router.get("/holders")
+async def get_market_holders(
+    condition_id: str = Query(pattern=r"^0x[a-fA-F0-9]{64}$"),
+    limit: int = Query(default=20, ge=1, le=20),
+    min_balance: int = Query(default=1, ge=0, le=999999),
+    service: AdminService = Depends(get_admin_service),
+) -> dict[str, object]:
+    try:
+        return await service.list_market_holders(
+            condition_id=condition_id,
+            limit=limit,
+            min_balance=min_balance,
+        )
+    except PolymarketClientError as exc:
+        raise HTTPException(status_code=502, detail="market_holders_upstream_unavailable") from exc
+    except RuntimeError as exc:
+        if str(exc) != "data_client unavailable":
+            raise
+        raise HTTPException(status_code=503, detail="data_client_unavailable") from exc
 
 
 @router.get("")

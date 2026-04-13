@@ -7,6 +7,7 @@ from fdv_trader.infra.polymarket.schemas import (
     build_market_subscription_request,
     build_user_subscription_request,
     normalize_balance_allowance_payload,
+    normalize_gamma_profile,
     parse_ws_message,
 )
 
@@ -70,3 +71,42 @@ def test_build_user_subscription_request_and_parse_ws_message_follow_official_fi
     assert message.message_type == "order"
     assert message.token_id == "token-1"
     assert message.condition_id == "0x" + "1" * 64
+
+
+def test_normalize_gamma_profile_maps_current_public_profile_fields() -> None:
+    dto = normalize_gamma_profile(
+        {
+            "data": {
+                "createdAt": "2026-01-01T12:00:00Z",
+                "proxyWallet": "0x1111111111111111111111111111111111111111",
+                "profileImage": "https://example.com/avatar.png",
+                "displayUsernamePublic": True,
+                "bio": "fdv watcher",
+                "pseudonym": "fdv-watch-001",
+                "name": "FDV Watcher",
+                "users": [
+                    {
+                        "id": "user-1",
+                        "creator": True,
+                        "mod": False,
+                    }
+                ],
+                "xUsername": "fdvwatcher",
+                "verifiedBadge": True,
+            }
+        }
+    )
+
+    assert dto.created_at == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    assert dto.proxy_wallet == "0x1111111111111111111111111111111111111111"
+    assert dto.profile_image == "https://example.com/avatar.png"
+    assert dto.display_username_public is True
+    assert dto.bio == "fdv watcher"
+    assert dto.pseudonym == "fdv-watch-001"
+    assert dto.name == "FDV Watcher"
+    assert dto.x_username == "fdvwatcher"
+    assert dto.verified_badge is True
+    assert len(dto.users) == 1
+    assert dto.users[0].user_id == "user-1"
+    assert dto.users[0].creator is True
+    assert dto.users[0].mod is False

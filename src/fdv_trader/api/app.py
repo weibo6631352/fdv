@@ -6,7 +6,19 @@ from typing import Any
 from fastapi import FastAPI
 
 from fdv_trader.app.admin_service import AdminService
-from fdv_trader.api.routes import allocations, audit_events, fills, health, markets, operations, orders, outbox, portfolio, positions
+from fdv_trader.api.routes import (
+    allocations,
+    audit_events,
+    fills,
+    health,
+    markets,
+    operations,
+    orders,
+    outbox,
+    portfolio,
+    positions,
+    profiles,
+)
 from fdv_trader.api.routes import runtime as runtime_route
 from fdv_trader.main import create_runtime, shutdown_runtime
 
@@ -44,6 +56,7 @@ def create_app(*, runtime: Any | None = None, admin_service: AdminService | None
     app.include_router(fills.router)
     app.include_router(positions.router)
     app.include_router(portfolio.router)
+    app.include_router(profiles.router)
     app.include_router(outbox.router)
     app.include_router(operations.router)
     return app
