@@ -43,6 +43,32 @@ from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
 from polymarket_trader.runtime.status import ReadinessSnapshot, RuntimePhase, RuntimeSnapshot
 
+EXPECTED_ADMIN_ROUTES = {
+    ("GET", "/openapi.json"),
+    ("GET", "/docs"),
+    ("GET", "/docs/oauth2-redirect"),
+    ("GET", "/redoc"),
+    ("GET", "/health"),
+    ("GET", "/ready"),
+    ("GET", "/runtime"),
+    ("GET", "/workers"),
+    ("GET", "/metrics"),
+    ("GET", "/audit-events"),
+    ("GET", "/allocations"),
+    ("GET", "/markets"),
+    ("GET", "/markets/detail"),
+    ("GET", "/markets/orderbook"),
+    ("GET", "/markets/midpoint"),
+    ("GET", "/markets/prices-history"),
+    ("GET", "/orders"),
+    ("POST", "/orders/cancel-replace-sell"),
+    ("GET", "/fills"),
+    ("GET", "/positions"),
+    ("GET", "/portfolio"),
+    ("GET", "/outbox/pending"),
+    ("POST", "/operations/reconcile"),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class FakeConfigReadiness:
@@ -606,6 +632,50 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert portfolio["allow_new_buys"] is True
         assert portfolio["markets_tracked"] == 1
         assert portfolio["position_count"] == 1
+
+
+def test_create_app_registers_expected_routes() -> None:
+    app = create_app(runtime=_build_runtime(ready=True), admin_service=AdminService())
+
+    actual_routes = {
+        (method, route.path)
+        for route in app.routes
+        for method in (route.methods or set())
+        if method in {"GET", "POST"}
+    }
+
+    assert actual_routes == EXPECTED_ADMIN_ROUTES
+
+
+def test_admin_api_exposes_openapi_and_docs_routes() -> None:
+    app = create_app(runtime=_build_runtime(ready=True), admin_service=AdminService())
+
+    with TestClient(app) as client:
+        openapi_response = client.get("/openapi.json")
+        docs_response = client.get("/docs")
+        oauth_redirect_response = client.get("/docs/oauth2-redirect")
+        redoc_response = client.get("/redoc")
+
+        assert openapi_response.status_code == 200
+        schema = openapi_response.json()
+        assert schema["info"]["title"] == "Polymarket Trader Admin API"
+        documented_paths = {
+            path
+            for _, path in EXPECTED_ADMIN_ROUTES
+            if path not in {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
+        }
+        assert set(schema["paths"]) == documented_paths
+        assert schema["paths"]["/orders/cancel-replace-sell"]["post"]
+        assert schema["paths"]["/operations/reconcile"]["post"]
+
+        assert docs_response.status_code == 200
+        assert "Swagger UI" in docs_response.text
+
+        assert oauth_redirect_response.status_code == 200
+        assert "oauth2" in oauth_redirect_response.text.lower()
+
+        assert redoc_response.status_code == 200
+        assert "ReDoc" in redoc_response.text
 
 
 def test_admin_api_supports_reconcile_and_cancel_replace_sell_routes() -> None:
