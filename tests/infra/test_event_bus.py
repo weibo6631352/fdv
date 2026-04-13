@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 
-from fdv_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
-from fdv_trader.infra.outbox import LocalOutbox, build_domain_event_outbox_sink
-from fdv_trader.runtime.event_bus import EventBus
+from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
+from polymarket_trader.infra.outbox import LocalOutbox, build_domain_event_outbox_sink
+from polymarket_trader.runtime.event_bus import EventBus
 
 
 def _event(
@@ -98,7 +98,7 @@ def test_event_bus_mirrors_supported_domain_events_and_trims_user_payloads() -> 
             event_type=DomainEventType.ORDER_STATE_UPDATED,
             condition_id="condition",
             token_id="token",
-            market_slug="token-500m-fdv",
+            market_slug="sample-market-a",
             reason="order_update",
             payload={
                 "order": {

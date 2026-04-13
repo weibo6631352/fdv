@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from fdv_trader.domain.events import DomainEvent, DomainEventType
-from fdv_trader.observability.metrics import MetricsRegistry
-from fdv_trader.runtime.account_state import AccountStateStore
-from fdv_trader.runtime.event_bus import EventBus
-from fdv_trader.runtime.status import RuntimePhase
-from fdv_trader.runtime.supervisor import Supervisor
+from polymarket_trader.domain.events import DomainEvent, DomainEventType
+from polymarket_trader.observability.metrics import MetricsRegistry
+from polymarket_trader.runtime.account_state import AccountStateStore
+from polymarket_trader.runtime.event_bus import EventBus
+from polymarket_trader.runtime.status import RuntimePhase
+from polymarket_trader.runtime.supervisor import Supervisor
 
 
 @dataclass(frozen=True, slots=True)

@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 from decimal import Decimal
 
-from fdv_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
-from fdv_trader.config import Settings
-from fdv_trader.main import build_runtime
+from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
+from polymarket_trader.config import Settings
+from polymarket_trader.main import build_runtime
 
 
 def test_build_runtime_wires_m2_components() -> None:
@@ -57,7 +57,7 @@ def test_build_runtime_binds_market_event_outbox_sink() -> None:
             trace_id="trace-market",
             event_type=DomainEventType.MARKET_UPDATED,
             event_id="event-market",
-            market_slug="token-500m-fdv",
+            market_slug="sample-market-a",
             condition_id="condition-500m",
             token_id="no-token-500m",
             reason="market_snapshot",
@@ -91,7 +91,7 @@ def test_build_runtime_binds_user_event_outbox_sink_with_trimmed_payload() -> No
             trace_id="trace-order",
             event_type=DomainEventType.ORDER_STATE_UPDATED,
             event_id="event-order",
-            market_slug="token-500m-fdv",
+            market_slug="sample-market-a",
             condition_id="condition-500m",
             token_id="no-token-500m",
             reason="order_update",

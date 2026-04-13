@@ -18,7 +18,7 @@
 - 不使用生产 API key、私钥或真实钱包。
 - 不把 SDK 原始对象泄漏到 domain 断言之外。
 - 对外部调用超时、重试和错误类型做断言。
-- 真实 PostgreSQL 集成测试只在显式提供 `FDV_TEST_POSTGRES_DSN` 时运行；默认跳过。
+- 真实 PostgreSQL 集成测试只在显式提供 `TRADER_TEST_POSTGRES_DSN` 时运行；默认跳过。
 
 ## 输入与输出
 

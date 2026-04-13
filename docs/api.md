@@ -3,8 +3,8 @@
 本文档只记录当前仓库已经实际暴露的 HTTP API。
 
 - 核对日期：2026-04-13
-- 适用仓库：`fdv`
-- 服务入口：`src/fdv_trader/api/app.py`
+- 适用仓库：`polymarket-trader`
+- 服务入口：`src/polymarket_trader/api/app.py`
 - 默认无应用层鉴权，建议仅暴露在本机或受控内网
 
 ## 1. 当前实际暴露的路由
@@ -118,7 +118,7 @@
 {
   "token_id": "no-token-500m",
   "condition_id": "condition-500m",
-  "market_slug": "token-500m-fdv",
+  "market_slug": "sample-market-a",
   "source": "hot",
   "midpoint": "0.57",
   "best_bid": "0.55",
@@ -1082,7 +1082,7 @@
 
 ```json
 {
-  "market_slug": "token-500m-fdv",
+  "market_slug": "sample-market-a",
   "new_price": "0.70",
   "operator": "manual",
   "reason": "admin_reprice",

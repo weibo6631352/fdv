@@ -25,7 +25,7 @@
 - 超时配置必须有明确单位，变量名统一使用 `_MS` 或 `_SECONDS`。
 
 数据库初始化约定：
-- 开发环境先准备 PostgreSQL，再调用 `fdv_trader.infra.db.initialize_database` 按当前 metadata 建表。
+- 开发环境先准备 PostgreSQL，再调用 `polymarket_trader.infra.db.initialize_database` 按当前 metadata 建表。
 - 当前阶段不维护历史 schema 兼容层；模型调整后可以直接重建开发库再初始化。
 
 数据库连接加载约定：
@@ -34,7 +34,7 @@
 
 策略配置约定：
 - `STRATEGY_CONFIG_PATH` 指向当前策略入口读取的结构化配置文件，不指向 `strategy.py` 本身。
-- 当前固定策略入口在 `src/fdv_trader/strategies/current/strategy.py`。
+- 当前固定策略入口在 `src/polymarket_trader/strategies/current/strategy.py`。
 - 当前内置加载器支持 `.json` 和 `.toml`。
 
 ## 密钥规则

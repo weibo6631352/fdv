@@ -8,18 +8,18 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from fdv_trader.app.admin_service import AdminService
-from fdv_trader.config import load_settings
-from fdv_trader.infra.db import Base, DatabasePersistenceRepository, build_session_factory, initialize_database
-from fdv_trader.main import _check_database_connection, _load_reference_state
-from fdv_trader.runtime.account_state import AccountStateStore
-from fdv_trader.runtime.registry import MarketRegistry
+from polymarket_trader.app.admin_service import AdminService
+from polymarket_trader.config import load_settings
+from polymarket_trader.infra.db import Base, DatabasePersistenceRepository, build_session_factory, initialize_database
+from polymarket_trader.main import _check_database_connection, _load_reference_state
+from polymarket_trader.runtime.account_state import AccountStateStore
+from polymarket_trader.runtime.registry import MarketRegistry
 
 pytestmark = pytest.mark.asyncio
 
 
 def _integration_database_url() -> str | None:
-    if explicit := os.environ.get("FDV_TEST_POSTGRES_DSN"):
+    if explicit := os.environ.get("TRADER_TEST_POSTGRES_DSN"):
         return explicit
     try:
         settings = load_settings()
@@ -100,12 +100,12 @@ async def test_persistence_repository_and_admin_service_round_trip(
             "trace_id": "trace-market",
             "source": "integration_test",
             "condition_id": "condition-500m",
-            "market_slug": "token-fdv-500m",
+            "market_slug": "sample-market-a",
             "no_token_id": "no-token",
             "yes_token_id": "yes-token",
             "event_id": "event-1",
-            "event_title": "Token FDV above 500M in 2026?",
-            "event_slug": "token-fdv",
+            "event_title": "Sample market A in 2026?",
+            "event_slug": "sample-event-group",
             "tick_size": "0.01",
             "min_order_size": "1",
             "neg_risk": False,
@@ -115,8 +115,8 @@ async def test_persistence_repository_and_admin_service_round_trip(
             "fee_rate_bps": 125,
             "fee_rate_updated_at": "2026-01-01T12:02:00+00:00",
             "category": "Crypto",
-            "tags": ["crypto", "fdv"],
-            "matched_keywords": ["crypto", "fdv", "500m"],
+            "tags": ["sample", "market"],
+            "matched_keywords": ["sample", "market", "threshold"],
             "trading_status": "eligible",
         }
     )
@@ -125,12 +125,12 @@ async def test_persistence_repository_and_admin_service_round_trip(
             "trace_id": "trace-market-2",
             "source": "integration_test",
             "condition_id": "condition-1b",
-            "market_slug": "token-fdv-1b",
+            "market_slug": "sample-market-b",
             "no_token_id": "no-token-1b",
             "yes_token_id": "yes-token-1b",
             "event_id": "event-2",
-            "event_title": "Token FDV above 1B in 2026?",
-            "event_slug": "token-fdv-1b",
+            "event_title": "Sample market B in 2026?",
+            "event_slug": "sample-market-b",
             "tick_size": "0.01",
             "min_order_size": "1",
             "neg_risk": False,
@@ -140,8 +140,8 @@ async def test_persistence_repository_and_admin_service_round_trip(
             "fee_rate_bps": 200,
             "fee_rate_updated_at": "2026-01-01T12:03:00+00:00",
             "category": "Crypto",
-            "tags": ["crypto", "fdv"],
-            "matched_keywords": ["crypto", "fdv", "1b"],
+            "tags": ["sample", "market"],
+            "matched_keywords": ["sample", "market", "secondary"],
             "trading_status": "eligible",
         }
     )
@@ -162,7 +162,7 @@ async def test_persistence_repository_and_admin_service_round_trip(
             "trace_id": "trace-fill",
             "event_type": "trade_confirmed",
             "event_id": "fill-1",
-            "market_slug": "token-fdv-500m",
+            "market_slug": "sample-market-a",
             "condition_id": "condition-500m",
             "token_id": "no-token",
             "order_id": "sell-1",
@@ -196,11 +196,11 @@ async def test_persistence_repository_and_admin_service_round_trip(
 
     assert markets["total"] == 2
     assert {item["market"]["market_slug"] for item in markets["items"]} == {
-        "token-fdv-500m",
-        "token-fdv-1b",
+        "sample-market-a",
+        "sample-market-b",
     }
     assert filtered_markets["total"] == 1
-    assert filtered_markets["items"][0]["market"]["market_slug"] == "token-fdv-1b"
+    assert filtered_markets["items"][0]["market"]["market_slug"] == "sample-market-b"
     assert filtered_markets["items"][0]["market"]["trading_status"] == "eligible"
     assert filtered_markets["items"][0]["market"]["fees"]["enabled"] is True
     assert filtered_markets["items"][0]["market"]["fees"]["taker_base_fee_bps"] == 150

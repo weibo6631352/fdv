@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from fdv_trader.app.market_service import MarketService
-from fdv_trader.domain.events import DomainEventType
-from fdv_trader.runtime.registry import MarketRegistry
-from fdv_trader.strategy_api.models import UniverseDecision
+from polymarket_trader.app.market_service import MarketService
+from polymarket_trader.domain.events import DomainEventType
+from polymarket_trader.runtime.registry import MarketRegistry
+from polymarket_trader.strategy_api.models import UniverseDecision
 
 
 class _Tracker:
@@ -21,11 +21,11 @@ class _Tracker:
         }
 
 
-def _raw_market(*, condition_id: str = "condition", market_slug: str = "token-500m-fdv") -> dict[str, str]:
+def _raw_market(*, condition_id: str = "condition", market_slug: str = "sample-market-a") -> dict[str, str]:
     return {
         "category": "Crypto",
-        "event_title": "Will token FDV reach a threshold?",
-        "question": "Will this project hit $500M FDV?",
+        "event_title": "Will this market reach a threshold?",
+        "question": "Will this market hit a threshold?",
         "market_slug": market_slug,
         "condition_id": condition_id,
         "yes_token_id": "yes-token",
@@ -68,7 +68,7 @@ def test_market_service_respects_strategy_universe_filter() -> None:
     class _RejectingStrategy:
         @property
         def spec(self):
-            from fdv_trader.strategy_api.models import StrategySpec
+            from polymarket_trader.strategy_api.models import StrategySpec
 
             return StrategySpec(name="rejecting")
 

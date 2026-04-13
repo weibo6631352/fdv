@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fdv_trader.domain.events import AuditEvent, OutboxEvent, sanitize_raw_response
-from fdv_trader.infra.outbox import OutboxEvent as InfraOutboxEvent
-from fdv_trader.observability.audit import AuditEvent as ObservabilityAuditEvent
+from polymarket_trader.domain.events import AuditEvent, OutboxEvent, sanitize_raw_response
+from polymarket_trader.infra.outbox import OutboxEvent as InfraOutboxEvent
+from polymarket_trader.observability.audit import AuditEvent as ObservabilityAuditEvent
 
 
 def test_canonical_event_classes_are_shared_across_modules() -> None:

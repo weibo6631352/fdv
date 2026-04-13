@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fdv_trader.observability.metrics import MetricsRegistry
+from polymarket_trader.observability.metrics import MetricsRegistry
 
 
 def test_metrics_registry_snapshot_captures_queue_ws_reconcile_and_gate_state() -> None:

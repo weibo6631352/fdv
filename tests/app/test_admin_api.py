@@ -9,19 +9,19 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from fdv_trader.api.app import create_app
-from fdv_trader.app.admin_service import AdminService
-from fdv_trader.domain.allocation import Allocation
-from fdv_trader.app.reconcile_service import (
+from polymarket_trader.api.app import create_app
+from polymarket_trader.app.admin_service import AdminService
+from polymarket_trader.domain.allocation import Allocation
+from polymarket_trader.app.reconcile_service import (
     ReconcileAction,
     ReconcileActionType,
     ReconcileMarketPlan,
     ReconcilePlan,
 )
-from fdv_trader.config import Settings
-from fdv_trader.domain.events import AuditEvent, Fill, OutboxEvent
-from fdv_trader.domain.market import Market, TradingStatus
-from fdv_trader.domain.order import (
+from polymarket_trader.config import Settings
+from polymarket_trader.domain.events import AuditEvent, Fill, OutboxEvent
+from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.order import (
     CancelOrderIntent,
     ExecutionTimestamps,
     Order,
@@ -33,11 +33,11 @@ from fdv_trader.domain.order import (
     OrderType,
     SellOrderIntent,
 )
-from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
-from fdv_trader.domain.position import Position
-from fdv_trader.infra.db import RepositoryPage
-from fdv_trader.infra.polymarket import PolymarketResponseError
-from fdv_trader.infra.polymarket.schemas import (
+from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from polymarket_trader.domain.position import Position
+from polymarket_trader.infra.db import RepositoryPage
+from polymarket_trader.infra.polymarket import PolymarketResponseError
+from polymarket_trader.infra.polymarket.schemas import (
     normalize_activity_payload,
     normalize_closed_position_payload,
     normalize_gamma_profile,
@@ -50,10 +50,10 @@ from fdv_trader.infra.polymarket.schemas import (
     normalize_trade_payload,
     normalize_user_value_payload,
 )
-from fdv_trader.runtime.account_state import AccountStateStore
-from fdv_trader.runtime.event_bus import EventBus
-from fdv_trader.runtime.registry import MarketRegistry
-from fdv_trader.runtime.status import ReadinessSnapshot, RuntimePhase, RuntimeSnapshot
+from polymarket_trader.runtime.account_state import AccountStateStore
+from polymarket_trader.runtime.event_bus import EventBus
+from polymarket_trader.runtime.registry import MarketRegistry
+from polymarket_trader.runtime.status import ReadinessSnapshot, RuntimePhase, RuntimeSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,9 +117,9 @@ class FakeGammaClient:
                 "proxyWallet": "0x1111111111111111111111111111111111111111",
                 "profileImage": "https://example.com/profile.png",
                 "displayUsernamePublic": True,
-                "bio": "fdv watcher",
-                "pseudonym": "fdv-watch-001",
-                "name": "FDV Watcher",
+                "bio": "market watcher",
+                "pseudonym": "market-watch-001",
+                "name": "Market Watcher",
                 "users": [
                     {
                         "id": "user-1",
@@ -127,7 +127,7 @@ class FakeGammaClient:
                         "mod": False,
                     }
                 ],
-                "xUsername": "fdvwatcher",
+                "xUsername": "marketwatcher",
                 "verifiedBadge": True,
             }
         )
@@ -136,14 +136,14 @@ class FakeGammaClient:
                 "profiles": [
                     {
                         "id": "profile-1",
-                        "name": "FDV Watcher",
-                        "pseudonym": "fdv-watch-001",
+                        "name": "Market Watcher",
+                        "pseudonym": "market-watch-001",
                         "displayUsernamePublic": True,
                         "profileImage": "https://example.com/profile.png",
                         "profileImageOptimized": {
                             "imageUrlOptimized": "https://example.com/profile-optimized.png",
                         },
-                        "bio": "fdv watcher",
+                        "bio": "market watcher",
                         "proxyWallet": "0x1111111111111111111111111111111111111111",
                         "createdAt": "2026-01-01T12:00:00Z",
                         "updatedAt": "2026-01-02T12:00:00Z",
@@ -202,14 +202,14 @@ class FakeDataClient:
                     "asset": "no-token-500m",
                     "side": "SELL",
                     "outcomeIndex": 1,
-                    "title": "Crypto FDV 500M",
-                    "slug": "token-500m-fdv",
+                    "title": "Sample Market A",
+                    "slug": "sample-market-a",
                     "icon": "https://example.com/icon.png",
-                    "eventSlug": "crypto-fdv-500m",
+                    "eventSlug": "sample-event-a",
                     "outcome": "No",
-                    "name": "FDV Watcher",
-                    "pseudonym": "fdv-watch-001",
-                    "bio": "fdv watcher",
+                    "name": "Market Watcher",
+                    "pseudonym": "market-watch-001",
+                    "bio": "market watcher",
                     "profileImage": "https://example.com/profile.png",
                     "profileImageOptimized": "https://example.com/profile-optimized.png",
                 }
@@ -222,13 +222,13 @@ class FakeDataClient:
                     "holders": [
                         {
                             "proxyWallet": "0x1111111111111111111111111111111111111111",
-                            "bio": "fdv watcher",
+                            "bio": "market watcher",
                             "asset": "no-token-500m",
-                            "pseudonym": "fdv-watch-001",
+                            "pseudonym": "market-watch-001",
                             "amount": 25,
                             "displayUsernamePublic": True,
                             "outcomeIndex": 1,
-                            "name": "FDV Watcher",
+                            "name": "Market Watcher",
                             "profileImage": "https://example.com/profile.png",
                             "profileImageOptimized": "https://example.com/profile-optimized.png",
                         }
@@ -243,7 +243,7 @@ class FakeDataClient:
                     "positions": [
                         {
                             "proxyWallet": "0x1111111111111111111111111111111111111111",
-                            "name": "FDV Watcher",
+                            "name": "Market Watcher",
                             "profileImage": "https://example.com/profile.png",
                             "verified": True,
                             "asset": "no-token-500m",
@@ -273,15 +273,15 @@ class FakeDataClient:
                     "size": 5,
                     "price": 0.7,
                     "timestamp": 1704100800,
-                    "title": "Crypto FDV 500M",
-                    "slug": "token-500m-fdv",
+                    "title": "Sample Market A",
+                    "slug": "sample-market-a",
                     "icon": "https://example.com/icon.png",
-                    "eventSlug": "crypto-fdv-500m",
+                    "eventSlug": "sample-event-a",
                     "outcome": "No",
                     "outcomeIndex": 1,
-                    "name": "FDV Watcher",
-                    "pseudonym": "fdv-watch-001",
-                    "bio": "fdv watcher",
+                    "name": "Market Watcher",
+                    "pseudonym": "market-watch-001",
+                    "bio": "market watcher",
                     "profileImage": "https://example.com/profile.png",
                     "profileImageOptimized": "https://example.com/profile-optimized.png",
                     "transactionHash": "0xtrade2",
@@ -312,10 +312,10 @@ class FakeDataClient:
                     "curPrice": 0.6,
                     "redeemable": False,
                     "mergeable": False,
-                    "title": "Crypto FDV 500M",
-                    "slug": "token-500m-fdv",
+                    "title": "Sample Market A",
+                    "slug": "sample-market-a",
                     "icon": "https://example.com/icon.png",
-                    "eventSlug": "crypto-fdv-500m",
+                    "eventSlug": "sample-event-a",
                     "outcome": "No",
                     "outcomeIndex": 1,
                     "oppositeOutcome": "Yes",
@@ -336,10 +336,10 @@ class FakeDataClient:
                     "realizedPnl": 2.5,
                     "curPrice": 1,
                     "timestamp": 1704100800,
-                    "title": "Crypto FDV 1B",
-                    "slug": "token-1b-fdv",
+                    "title": "Sample Market B",
+                    "slug": "sample-market-b",
                     "icon": "https://example.com/icon-1b.png",
-                    "eventSlug": "crypto-fdv-1b",
+                    "eventSlug": "sample-event-b",
                     "outcome": "Yes",
                     "outcomeIndex": 0,
                     "oppositeOutcome": "No",
@@ -429,7 +429,7 @@ class FakeClobClient:
                 "last_trade_price": "0.54",
             },
             token_id="no-token-500m",
-            market_slug="token-500m-fdv",
+            market_slug="sample-market-a",
             condition_id="condition-500m",
         )
         self._midpoint = midpoint or Decimal("0.57")
@@ -555,12 +555,12 @@ class FakeTradingService:
 def _market() -> Market:
     return Market(
         condition_id="condition-500m",
-        market_slug="token-500m-fdv",
+        market_slug="sample-market-a",
         no_token_id="no-token-500m",
         yes_token_id="yes-token-500m",
         event_id="event-1",
-        event_title="Crypto FDV 500M",
-        event_slug="crypto-fdv-500m",
+        event_title="Sample Market A",
+        event_slug="sample-event-a",
         tick_size=Decimal("0.01"),
         min_order_size=Decimal("1"),
         fees_enabled=True,
@@ -569,7 +569,7 @@ def _market() -> Market:
         fee_rate_bps=125,
         fee_rate_updated_at=datetime(2026, 1, 1, 12, 2, 0, tzinfo=timezone.utc),
         category="Crypto",
-        matched_keywords=("crypto", "fdv", "500m"),
+        matched_keywords=("sample", "market", "threshold"),
         trading_status=TradingStatus.ELIGIBLE,
     )
 
@@ -787,9 +787,9 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         workers = client.get("/workers").json()
         metrics = client.get("/metrics").json()
         markets = client.get("/markets").json()
-        market_detail = client.get("/markets/detail", params={"market_slug": "token-500m-fdv"}).json()
-        market_orderbook = client.get("/markets/orderbook", params={"market_slug": "token-500m-fdv"}).json()
-        market_midpoint = client.get("/markets/midpoint", params={"market_slug": "token-500m-fdv"}).json()
+        market_detail = client.get("/markets/detail", params={"market_slug": "sample-market-a"}).json()
+        market_orderbook = client.get("/markets/orderbook", params={"market_slug": "sample-market-a"}).json()
+        market_midpoint = client.get("/markets/midpoint", params={"market_slug": "sample-market-a"}).json()
         market_positions = client.get(
             "/markets/positions",
             params={
@@ -833,7 +833,7 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         ).json()
         profile_search = client.get(
             "/profiles/search",
-            params={"q": "fdv", "limit": 10, "page": 2},
+            params={"q": "market", "limit": 10, "page": 2},
         ).json()
         profile_activity = client.get(
             "/profiles/activity",
@@ -906,7 +906,7 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert runtime_payload["settings"]["wallet_private_key"] == "***"
         assert runtime_payload["readiness"]["ready"] is True
         assert runtime_payload["markets"][0]["orderbook"]["best_ask"] == "0.59"
-        assert runtime_payload["markets"][0]["market"]["market_slug"] == "token-500m-fdv"
+        assert runtime_payload["markets"][0]["market"]["market_slug"] == "sample-market-a"
         assert runtime_payload["markets"][0]["market"]["fees"]["taker_base_fee_bps"] == 100
         assert runtime_payload["markets"][0]["market"]["fees"]["fee_rate_bps"] == 125
         assert workers["phase"] == "trading_enabled"
@@ -920,7 +920,7 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert markets["items"][0]["market"]["fees"]["fee_rate_updated_at"] == "2026-01-01T12:02:00+00:00"
         assert markets["items"][0]["entry_price_touched"] is True
         assert market_detail["market"]["condition_id"] == "condition-500m"
-        assert market_detail["market"]["market_slug"] == "token-500m-fdv"
+        assert market_detail["market"]["market_slug"] == "sample-market-a"
         assert market_orderbook["token_id"] == "no-token-500m"
         assert market_orderbook["source"] == "hot"
         assert market_orderbook["orderbook"]["best_bid"] == "0.55"
@@ -951,9 +951,9 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert runtime.clob_client.history_calls[0]["token_id"] == "no-token-500m"
         assert runtime.clob_client.history_calls[0]["start_ts"] == 1704100800.0
         assert runtime.clob_client.history_calls[0]["end_ts"] == 1704104400.0
-        assert profile_detail["name"] == "FDV Watcher"
+        assert profile_detail["name"] == "Market Watcher"
         assert profile_detail["profile_image"] == "https://example.com/profile.png"
-        assert profile_detail["x_username"] == "fdvwatcher"
+        assert profile_detail["x_username"] == "marketwatcher"
         assert profile_detail["users"][0]["id"] == "user-1"
         assert profile_value["address"] == "0x1111111111111111111111111111111111111111"
         assert profile_value["condition_id"] == "0x" + "1" * 64
@@ -965,7 +965,7 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert profile_search["total_results"] == 1
         assert profile_search["items"][0]["profile_id"] == "profile-1"
         assert profile_search["items"][0]["profile_image_optimized"] == "https://example.com/profile-optimized.png"
-        assert runtime.gamma_client.search_calls[0]["query"] == "fdv"
+        assert runtime.gamma_client.search_calls[0]["query"] == "market"
         assert runtime.gamma_client.search_calls[0]["limit_per_type"] == 10
         assert runtime.gamma_client.search_calls[0]["page"] == 2
         assert profile_activity["limit"] == 50
@@ -1039,7 +1039,7 @@ def test_admin_api_supports_reconcile_and_cancel_replace_sell_routes() -> None:
         cancel_replace_response = client.post(
             "/orders/cancel-replace-sell",
             json={
-                "market_slug": "token-500m-fdv",
+                "market_slug": "sample-market-a",
                 "new_price": "0.70",
                 "operator": "manual",
                 "reason": "admin_reprice",
@@ -1073,7 +1073,7 @@ def test_admin_api_supports_fee_filters_and_sorting() -> None:
     second_market = replace(
         _market(),
         condition_id="condition-1b",
-        market_slug="token-1b-fdv",
+        market_slug="sample-market-b",
         no_token_id="no-token-1b",
         yes_token_id="yes-token-1b",
         fee_rate_bps=200,
@@ -1175,7 +1175,7 @@ def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypa
             event_type="order_cancelled",
             trace_id="trace-audit",
             event_id="audit-1",
-            market_slug="token-500m-fdv",
+            market_slug="sample-market-a",
             condition_id="condition-500m",
             token_id="no-token-500m",
             order_id="buy-1",
@@ -1186,7 +1186,7 @@ def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypa
     allocations = (
         Allocation(
             condition_id="condition-500m",
-            market_slug="token-500m-fdv",
+            market_slug="sample-market-a",
             token_id="no-token-500m",
             target_budget_usdc=Decimal("50"),
             buy_budget_usdc=Decimal("25"),
@@ -1203,7 +1203,7 @@ def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypa
             event_type="order_submitted",
             idempotency_key="outbox-1",
             event_id="outbox-event-1",
-            market_slug="token-500m-fdv",
+            market_slug="sample-market-a",
             condition_id="condition-500m",
             token_id="no-token-500m",
             reason="submit",

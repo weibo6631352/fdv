@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from fdv_trader.domain.constants import ENTRY_NO_PRICE_MAX
-from fdv_trader.domain.order import BuyOrderIntent
-from fdv_trader.domain.risk import RiskManager
+from polymarket_trader.domain.constants import ENTRY_NO_PRICE_MAX
+from polymarket_trader.domain.order import BuyOrderIntent
+from polymarket_trader.domain.risk import RiskManager
 
 
 def test_risk_rejects_intent_without_amount_or_size() -> None:

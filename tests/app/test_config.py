@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from fdv_trader.config import Settings
+from polymarket_trader.config import Settings
 
 
 def test_settings_defaults_match_env_example(monkeypatch) -> None:

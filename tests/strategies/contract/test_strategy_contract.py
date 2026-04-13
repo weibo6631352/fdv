@@ -3,13 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from fdv_trader.domain.allocation import AllocationMarketSnapshot
-from fdv_trader.domain.market import Market, TradingStatus
-from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
-from fdv_trader.domain.position import Position
-from fdv_trader.runtime.account_state import AccountSnapshot
-from fdv_trader.strategy_api.models import EntrySizing, StrategyAction, StrategyContext
-from fdv_trader.strategies.current.strategy import build_strategy as build_current_strategy
+from polymarket_trader.domain.allocation import AllocationMarketSnapshot
+from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from polymarket_trader.domain.position import Position
+from polymarket_trader.runtime.account_state import AccountSnapshot
+from polymarket_trader.strategy_api.models import EntrySizing, StrategyAction, StrategyContext
+from polymarket_trader.strategies.current.strategy import build_strategy as build_current_strategy
 
 
 def test_strategy_contract_positive_path() -> None:
@@ -19,8 +19,9 @@ def test_strategy_contract_positive_path() -> None:
         market_slug="slug-current",
         no_token_id="no-current",
         yes_token_id="yes-current",
+        event_title="Will token FDV reach a threshold?",
+        market_question="Will this project hit $500M FDV?",
         category="Crypto",
-        matched_keywords=("fdv", "500m"),
         trading_status=TradingStatus.ELIGIBLE,
     )
 

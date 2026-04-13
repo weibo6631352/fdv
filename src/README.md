@@ -10,13 +10,13 @@
 
 ## 目录边界
 
-- 主包是 [fdv_trader](./fdv_trader/README.md)。
+- 主包是 [polymarket_trader](./polymarket_trader/README.md)。
 - 这里不放测试代码，测试放在 [tests](../tests/README.md)。
 - 这里不放运行时密钥、`.env` 或生产配置。
 
 ## 开发约束
 
 - Python 目标版本为 3.12+。
-- 源码按现有分层目录组织，避免直接在 `fdv_trader` 根目录堆业务代码。
+- 源码按现有分层目录组织，避免直接在 `polymarket_trader` 根目录堆业务代码。
 - 模块命名使用英文，用户可见文案和关键业务注释可使用中文。
 - 任何交易相关新代码都需要明确属于交易主链路、关键修复链路、后台维护链路或异步支撑链路。

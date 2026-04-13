@@ -4,21 +4,22 @@ import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from fdv_trader.app.strategy_service import StrategyService
-from fdv_trader.app.trading_service import TradingService
-from fdv_trader.domain.events import DomainEvent, DomainEventType
-from fdv_trader.domain.market import Market, TradingStatus
-from fdv_trader.domain.order import OrderResult, OrderResultStatus, OrderSide, OrderType
-from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
-from fdv_trader.infra.polymarket.order_executor import (
+from polymarket_trader.app.strategy_service import StrategyService
+from polymarket_trader.app.trading_service import TradingService
+from polymarket_trader.domain.events import DomainEvent, DomainEventType
+from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.order import OrderResult, OrderResultStatus, OrderSide, OrderType
+from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from polymarket_trader.infra.polymarket.order_executor import (
     InMemoryPolymarketOrderClient,
     PolymarketOrderExecutor,
 )
-from fdv_trader.runtime.account_state import AccountStateStore
-from fdv_trader.runtime.event_bus import EventBus
-from fdv_trader.runtime.registry import MarketRegistry
-from fdv_trader.workers.market_ws_worker import MarketWsWorker
-from fdv_trader.workers.strategy_worker import StrategyWorker
+from polymarket_trader.runtime.account_state import AccountStateStore
+from polymarket_trader.runtime.event_bus import EventBus
+from polymarket_trader.runtime.registry import MarketRegistry
+from polymarket_trader.strategies.current.strategy import build_strategy
+from polymarket_trader.workers.market_ws_worker import MarketWsWorker
+from polymarket_trader.workers.strategy_worker import StrategyWorker
 
 
 def _market(
@@ -34,8 +35,9 @@ def _market(
         yes_token_id=f"yes-{token_id}",
         tick_size=Decimal("0.01"),
         min_order_size=Decimal("1"),
+        event_title="Will token FDV reach a threshold?",
+        market_question="Will this project hit $500M FDV?",
         category="Crypto",
-        matched_keywords=("crypto", "fdv", "500m"),
         trading_status=TradingStatus.ELIGIBLE,
     )
 
@@ -164,6 +166,7 @@ def test_strategy_service_allocates_equally_across_eligible_markets() -> None:
         secondary.no_token_id: _snapshot(market=secondary),
     }
     service = StrategyService(
+        strategy_module=build_strategy(),
         registry=registry,
         orderbook_reader=snapshots.get,
     )
@@ -199,6 +202,7 @@ def test_strategy_worker_turns_entry_price_touch_into_risk_result() -> None:
         market_ws_worker.track_market(market)
 
         strategy_service = StrategyService(
+            strategy_module=build_strategy(),
             registry=registry,
             orderbook_reader=market_ws_worker.snapshot,
         )
@@ -252,6 +256,7 @@ def test_strategy_worker_partial_fill_only_sells_filled_shares() -> None:
         market = _market(condition_id="condition", token_id="no-token", market_slug="token")
         registry.upsert(market)
         strategy_service = StrategyService(
+            strategy_module=build_strategy(),
             registry=registry,
             orderbook_reader={market.no_token_id: _snapshot(market=market)}.get,
         )
@@ -319,6 +324,7 @@ def test_strategy_worker_no_fill_releases_budget_for_next_market() -> None:
         registry.upsert(first)
         registry.upsert(second)
         strategy_service = StrategyService(
+            strategy_module=build_strategy(),
             registry=registry,
             orderbook_reader={
                 first.no_token_id: _snapshot(market=first),

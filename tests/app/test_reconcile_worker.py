@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
-from fdv_trader.app.reconcile_service import ReconcileActionType, ReconcileService
-from fdv_trader.app.trading_service import TradingService
-from fdv_trader.domain.market import Market, TradingStatus
-from fdv_trader.domain.order import (
+from polymarket_trader.app.reconcile_service import ReconcileActionType, ReconcileService
+from polymarket_trader.app.trading_service import TradingService
+from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.order import (
     CancelOrderIntent,
     OrderRecord,
     OrderResult,
@@ -18,11 +18,12 @@ from fdv_trader.domain.order import (
     OrderType,
     SellOrderIntent,
 )
-from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
-from fdv_trader.domain.position import Position
-from fdv_trader.runtime.account_state import AccountStateStore
-from fdv_trader.runtime.registry import MarketRegistry
-from fdv_trader.workers.reconcile_worker import ReconcileWorker
+from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from polymarket_trader.domain.position import Position
+from polymarket_trader.runtime.account_state import AccountStateStore
+from polymarket_trader.runtime.registry import MarketRegistry
+from polymarket_trader.strategies.current.strategy import build_strategy
+from polymarket_trader.workers.reconcile_worker import ReconcileWorker
 
 
 class _StubExecutor:
@@ -129,8 +130,9 @@ def test_reconcile_worker_cancels_open_buy_and_backfills_missing_sell() -> None:
             yes_token_id="yes-token",
             tick_size=Decimal("0.01"),
             min_order_size=Decimal("1"),
+            event_title="Will token FDV reach a threshold?",
+            market_question="Will this project hit $500M FDV?",
             category="Crypto",
-            matched_keywords=("crypto", "fdv", "500m"),
             trading_status=TradingStatus.ELIGIBLE,
         )
         registry.upsert(market)
@@ -165,7 +167,7 @@ def test_reconcile_worker_cancels_open_buy_and_backfills_missing_sell() -> None:
 
         executor = _StubExecutor()
         worker = ReconcileWorker(
-            reconcile_service=ReconcileService(),
+            reconcile_service=ReconcileService(strategy_module=build_strategy()),
             registry_snapshot_provider=registry.snapshot,
             account_state_store=account_state_store,
             trading_service=TradingService(executor=executor),
@@ -193,7 +195,8 @@ def test_reconcile_worker_refreshes_market_fee_fields() -> None:
             tick_size=Decimal("0.01"),
             min_order_size=Decimal("1"),
             category="Crypto",
-            matched_keywords=("crypto", "fdv", "500m"),
+            event_title="Will token FDV reach a threshold?",
+            market_question="Will this project hit $500M FDV?",
             trading_status=TradingStatus.ELIGIBLE,
         )
         registry.upsert(current_market)
@@ -210,7 +213,8 @@ def test_reconcile_worker_refreshes_market_fee_fields() -> None:
             maker_base_fee_bps=0,
             taker_base_fee_bps=100,
             category="Crypto",
-            matched_keywords=("crypto", "fdv", "500m"),
+            event_title="Will token FDV reach a threshold?",
+            market_question="Will this project hit $500M FDV?",
             trading_status=TradingStatus.ELIGIBLE,
         )
         orderbook_snapshot = OrderbookSnapshot(
@@ -228,7 +232,7 @@ def test_reconcile_worker_refreshes_market_fee_fields() -> None:
         )
 
         worker = ReconcileWorker(
-            reconcile_service=ReconcileService(),
+            reconcile_service=ReconcileService(strategy_module=build_strategy()),
             registry_snapshot_provider=registry.snapshot,
             registry=registry,
             gamma_client=_StubGammaClient(refreshed_market),
@@ -256,7 +260,7 @@ def test_reconcile_worker_refreshes_account_balance_from_clob_balance_allowance(
     async def run() -> None:
         account_state_store = AccountStateStore()
         worker = ReconcileWorker(
-            reconcile_service=ReconcileService(),
+            reconcile_service=ReconcileService(strategy_module=build_strategy()),
             account_state_store=account_state_store,
             data_client=_StubPositionsDataClient(),
             clob_client=_StubAccountClobClient(

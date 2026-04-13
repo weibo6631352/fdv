@@ -4,9 +4,9 @@ from decimal import Decimal
 
 from datetime import datetime, timezone
 
-from fdv_trader.domain.allocation import AllocationMarketSnapshot, AllocationPlan, equal_weight_budget
-from fdv_trader.domain.market import Market, TradingStatus
-from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from polymarket_trader.domain.allocation import AllocationMarketSnapshot, AllocationPlan, equal_weight_budget
+from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 
 
 def _market(condition_id: str, market_slug: str, no_token_id: str) -> Market:
@@ -18,7 +18,7 @@ def _market(condition_id: str, market_slug: str, no_token_id: str) -> Market:
         tick_size=Decimal("0.01"),
         min_order_size=Decimal("1"),
         category="Crypto",
-        matched_keywords=("crypto", "fdv", "500m"),
+        matched_keywords=("sample", "market", "threshold"),
         trading_status=TradingStatus.ELIGIBLE,
     )
 

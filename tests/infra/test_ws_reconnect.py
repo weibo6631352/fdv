@@ -3,23 +3,23 @@ from __future__ import annotations
 import asyncio
 from decimal import Decimal
 
-from fdv_trader.domain.events import DomainEventType
-from fdv_trader.domain.market import Market, TradingStatus
-from fdv_trader.runtime.event_bus import EventBus
-from fdv_trader.runtime.registry import MarketRegistry
-from fdv_trader.workers.market_ws_worker import MarketWsWorker
+from polymarket_trader.domain.events import DomainEventType
+from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.runtime.event_bus import EventBus
+from polymarket_trader.runtime.registry import MarketRegistry
+from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 
 
 def _market() -> Market:
     return Market(
         condition_id="condition",
-        market_slug="token-500m-fdv",
+        market_slug="sample-market-a",
         no_token_id="no-token",
         yes_token_id="yes-token",
         tick_size=Decimal("0.01"),
         min_order_size=Decimal("1"),
         category="Crypto",
-        matched_keywords=("crypto", "fdv", "500m"),
+        matched_keywords=("sample", "market", "threshold"),
         trading_status=TradingStatus.ELIGIBLE,
     )
 

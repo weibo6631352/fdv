@@ -15,12 +15,12 @@
 2. 准备 PostgreSQL。开发机可以直接使用系统服务：
    `sudo apt-get update && sudo apt-get install -y postgresql postgresql-client`
 3. 创建开发库和账户：
-   `sudo -u postgres psql -c "CREATE USER fdv WITH PASSWORD 'fdv';"`
-   `sudo -u postgres psql -c "CREATE DATABASE fdv OWNER fdv;"`
+   `sudo -u postgres psql -c "CREATE USER trader WITH PASSWORD 'trader';"`
+   `sudo -u postgres psql -c "CREATE DATABASE trader OWNER trader;"`
    已存在时改为执行 `ALTER USER` / `ALTER DATABASE OWNER`。
 4. 参考 [`.env.example`](../.env.example) 填写 `.env` 中的数据库字段或 `DATABASE_URL`。
-5. 调用 `fdv_trader.infra.db.initialize_database`，按当前 SQLAlchemy metadata 创建开发库表结构。
-6. 启动服务：`uvicorn fdv_trader.api.app:create_app --factory --host 127.0.0.1 --port 8000`。
+5. 调用 `polymarket_trader.infra.db.initialize_database`，按当前 SQLAlchemy metadata 创建开发库表结构。
+6. 启动服务：`uvicorn polymarket_trader.api.app:create_app --factory --host 127.0.0.1 --port 8000`。
 7. 服务启动时会依次完成配置校验、日志初始化、线程池/进程池创建、数据库连通性检查、参考快照加载和首次 reconcile。
 8. 先检查 `/health`，确认进程存活；再检查 `/ready`，确认 DB、交易客户端、WS 状态、outbox 和自动下单闸门。
 9. 用 `/runtime` 查看 phase、队列深度、最近 reconcile、Persistence backlog 和降级状态。
@@ -28,18 +28,18 @@
 
 ## 常用命令
 
-- 启动服务：`uvicorn fdv_trader.api.app:create_app --factory --host 127.0.0.1 --port 8000`
-- 初始化数据库：调用 `fdv_trader.infra.db.initialize_database`
+- 启动服务：`uvicorn polymarket_trader.api.app:create_app --factory --host 127.0.0.1 --port 8000`
+- 初始化数据库：调用 `polymarket_trader.infra.db.initialize_database`
 - 查看运行状态：`GET /runtime`
 - 触发受控 reconcile：`POST /operations/reconcile`
-- 本地策略回放：调用 `fdv_trader.strategy_api.replay.run_entry_replay`
+- 本地策略回放：调用 `polymarket_trader.strategy_api.replay.run_entry_replay`
 
 ## 本地回归
 
 - 默认回归：`pytest`
 - 策略契约回归：`pytest tests/strategies/contract -q`
-- PostgreSQL 集成回归：先设置 `FDV_TEST_POSTGRES_DSN`，再运行 `pytest tests/infra/test_postgres_integration.py -q`
-- 未设置 `FDV_TEST_POSTGRES_DSN` 时，PostgreSQL 集成测试会显示为 `skipped`，这是预期行为
+- PostgreSQL 集成回归：先设置 `TRADER_TEST_POSTGRES_DSN`，再运行 `pytest tests/infra/test_postgres_integration.py -q`
+- 未设置 `TRADER_TEST_POSTGRES_DSN` 时，PostgreSQL 集成测试会显示为 `skipped`，这是预期行为
 
 ## 开发环境数据库说明
 

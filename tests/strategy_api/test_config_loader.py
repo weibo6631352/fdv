@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from fdv_trader.strategy_api import StrategyLoadError, load_mapping_file, load_strategy_config
+from polymarket_trader.strategy_api import StrategyLoadError, load_mapping_file, load_strategy_config
 
 
 @dataclass(frozen=True, slots=True)

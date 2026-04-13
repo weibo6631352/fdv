@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 from decimal import Decimal
 
-from fdv_trader.domain.events import DomainEventType
-from fdv_trader.domain.order import OrderStatus
-from fdv_trader.runtime.account_state import AccountStateStore
-from fdv_trader.workers.user_ws_worker import UserWsWorker
+from polymarket_trader.domain.events import DomainEventType
+from polymarket_trader.domain.order import OrderStatus
+from polymarket_trader.runtime.account_state import AccountStateStore
+from polymarket_trader.workers.user_ws_worker import UserWsWorker
 
 
 def test_user_ws_worker_tracks_balance_position_and_connection_state() -> None:
@@ -33,7 +33,7 @@ def test_user_ws_worker_tracks_balance_position_and_connection_state() -> None:
                 "position": {
                     "condition_id": "condition",
                     "token_id": "token",
-                    "market_slug": "token-500m-fdv",
+                    "market_slug": "sample-market-a",
                     "shares": "5",
                     "cost_usdc": "3.0",
                 },

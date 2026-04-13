@@ -1,39 +1,37 @@
-# Polymarket FDV 自动交易系统
+# Polymarket 单策略交易底座
 
-本仓库用于实现面向 Polymarket Crypto / FDV / 500M markets 的自动交易系统。系统目标不是做通用交易框架，而是围绕明确策略边界构建一个可审计、可恢复、不会让低优先级任务拖慢交易链路的生产服务。
+本仓库提供一个面向 Polymarket 的单策略后端运行时。底座负责交易链路优先级、风控编排、恢复、审计、管理面和外部适配；具体 universe 选择、入场和退出语义收口在当前策略实现中。
 
-业务约束以 [需求文档](./docs/需求文档.md) 和 [设计文档](./docs/设计文档.md) 为准。任何实现、重构和测试都必须保持这些约束不被削弱。
+框架约束以通用分层和运行时边界为准；当前策略约束以 [当前策略需求文档](./docs/需求文档.md) 和 [当前策略设计文档](./docs/设计文档.md) 为准。
 
 ## 核心规则
 
-- 只交易 Crypto 分类下，event 命中 FDV，market 命中 500M 阈值的目标 market。
-- 买入标的是 `NO outcome token`。
-- 买入只允许 `FAK BUY`，买入价格上限为 `0.60`。
+- 单个 runtime 只装配一个当前策略实现。
+- 交易标的、入场规则、退出规则和 universe 选择由当前策略定义。
 - 买入侧不得保留长期 resting BUY order；一旦发现 open BUY 异常，必须立即进入 cancel / reconcile 修复流程。
-- 买入成交后，只对实际成交 shares 挂 `GTC SELL at 0.70`。
-- 资金按 eligible markets 尽量等权分配，FAK 未成交资金必须释放并重新进入分配流程。
+- 资金分配、订单执行、恢复、审计和管理面必须经过统一服务编排。
 - 数据库用于审计、复盘、调试和恢复参考，不作为交易状态唯一真相来源。
 - 交易主链路优先级最高，不得被 Admin 查询、数据库写入、日志落盘、全量 market 扫描、报表或低优先级 reconcile 阻塞。
 
 ## 架构分层
 
-代码采用 `src` layout，主包是 [src/fdv_trader](./src/fdv_trader/README.md)。
+代码采用 `src` layout，主包是 [src/polymarket_trader](./src/polymarket_trader/README.md)。
 
 | 层级 | 目录 | 主要职责 |
 | --- | --- | --- |
-| Interfaces | [api](./src/fdv_trader/api/README.md) | Admin API、健康检查 |
-| Application | [app](./src/fdv_trader/app/README.md) | 用例编排，组合 domain 与 infra |
-| Domain | [domain](./src/fdv_trader/domain/README.md) | 分类、分配、风控、策略、订单和持仓规则 |
-| Infrastructure | [infra](./src/fdv_trader/infra/README.md) | Polymarket、数据库、outbox 和外部 I/O 适配 |
-| Observability | [observability](./src/fdv_trader/observability/README.md) | 审计、trace、指标 |
-| Runtime | [runtime](./src/fdv_trader/runtime/README.md) | 事件总线、状态注册表、调度、supervisor |
-| Workers | [workers](./src/fdv_trader/workers/README.md) | 常驻后台任务 |
+| Interfaces | [api](./src/polymarket_trader/api/README.md) | Admin API、健康检查 |
+| Application | [app](./src/polymarket_trader/app/README.md) | 用例编排，组合 domain 与 infra |
+| Domain | [domain](./src/polymarket_trader/domain/README.md) | 分类、分配、风控、策略、订单和持仓规则 |
+| Infrastructure | [infra](./src/polymarket_trader/infra/README.md) | Polymarket、数据库、outbox 和外部 I/O 适配 |
+| Observability | [observability](./src/polymarket_trader/observability/README.md) | 审计、trace、指标 |
+| Runtime | [runtime](./src/polymarket_trader/runtime/README.md) | 事件总线、状态注册表、调度、supervisor |
+| Workers | [workers](./src/polymarket_trader/workers/README.md) | 常驻后台任务 |
 | Tests | [tests](./tests/README.md) | 单元、编排和基础设施测试 |
 
 ## 文档入口
 
-- [需求文档](./docs/需求文档.md)：业务规则、风控边界和策略约束。
-- [设计文档](./docs/设计文档.md)：系统分层、运行时约束和数据模型。
+- [当前策略需求文档](./docs/需求文档.md)：当前内置策略的业务规则、风控边界和策略约束。
+- [当前策略设计文档](./docs/设计文档.md)：当前内置策略及运行时装配设计。
 - [API 文档](./docs/api.md)：对外 HTTP 接口、请求参数和响应结构。
 - [配置文档](./docs/config.md)：环境变量和配置项说明。
 - [运行说明](./docs/operations.md)：启动方式、运行状态和常用运维查看项。
@@ -41,10 +39,10 @@
 
 ## 策略与测试入口
 
-- 当前运行策略固定在 [src/fdv_trader/strategies/current/strategy.py](./src/fdv_trader/strategies/current/strategy.py)。
-- 策略参数定义位于 [src/fdv_trader/strategies/current/config.py](./src/fdv_trader/strategies/current/config.py)。
+- 当前运行策略固定在 [src/polymarket_trader/strategies/current/strategy.py](./src/polymarket_trader/strategies/current/strategy.py)。
+- 策略参数定义位于 [src/polymarket_trader/strategies/current/config.py](./src/polymarket_trader/strategies/current/config.py)。
 - 日常本地回归直接运行 `pytest`。
-- PostgreSQL 集成测试默认允许跳过；需要验证真实建表和持久化链路时，先设置 `FDV_TEST_POSTGRES_DSN` 再运行 `pytest tests/infra/test_postgres_integration.py -q`。
+- PostgreSQL 集成测试默认允许跳过；需要验证真实建表和持久化链路时，先设置 `TRADER_TEST_POSTGRES_DSN` 再运行 `pytest tests/infra/test_postgres_integration.py -q`。
 
 ## 模块接口原则
 

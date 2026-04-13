@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from fdv_trader.app.strategy_service import StrategyService
-from fdv_trader.domain.allocation import Allocation, AllocationPlan
-from fdv_trader.domain.market import Market, TradingStatus
-from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
-from fdv_trader.runtime.registry import MarketRegistry
-from fdv_trader.strategy_api.models import (
+from polymarket_trader.app.strategy_service import StrategyService
+from polymarket_trader.domain.allocation import Allocation, AllocationPlan
+from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from polymarket_trader.runtime.registry import MarketRegistry
+from polymarket_trader.strategy_api.models import (
     EntrySizing,
     RecoveryDecision,
     StrategyContext,

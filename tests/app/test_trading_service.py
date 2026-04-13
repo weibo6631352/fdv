@@ -4,10 +4,10 @@ import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from fdv_trader.app.trading_service import TradingService
-from fdv_trader.domain.market import Market, TradingStatus
-from fdv_trader.domain.order import BuyOrderIntent
-from fdv_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from polymarket_trader.app.trading_service import TradingService
+from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.order import BuyOrderIntent
+from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 
 
 def test_trading_service_reviews_intent_with_risk_manager() -> None:
@@ -15,13 +15,13 @@ def test_trading_service_reviews_intent_with_risk_manager() -> None:
         service = TradingService()
         market = Market(
             condition_id="condition",
-            market_slug="token-500m-fdv",
+            market_slug="sample-market-a",
             no_token_id="no-token",
             yes_token_id="yes-token",
             tick_size=Decimal("0.01"),
             min_order_size=Decimal("1"),
             category="Crypto",
-            matched_keywords=("crypto", "fdv", "500m"),
+            matched_keywords=("sample", "market", "threshold"),
             trading_status=TradingStatus.ELIGIBLE,
         )
         orderbook = OrderbookSnapshot(

@@ -12,9 +12,9 @@
 
 ## 优先测试清单
 
-- Crypto 分类先于 FDV / 500M 匹配。
-- FDV event + 500M market 才能进入 target pool。
-- 非 500M 阈值被排除。
+- 缺失交易字段的 market 会被拒绝。
+- 只有 universe 选择通过且风控放行的 market 才能进入可交易集合。
+- 非目标 universe 的 market 会被当前策略排除。
 - `NO best ask > 0.60` 不触发买入。
 - FAK partial fill 只对成交 shares 挂 SELL。
 - FAK no fill 会释放预算并重新分配。
@@ -34,5 +34,5 @@
 ## 运行约定
 
 - 默认本地回归直接运行 `pytest`。
-- `tests/infra/test_postgres_integration.py` 依赖真实 PostgreSQL；未设置 `FDV_TEST_POSTGRES_DSN` 时显示 `skipped` 属于预期。
-- 需要验证真实 PostgreSQL 建表和持久化链路时，设置 `FDV_TEST_POSTGRES_DSN` 后单独运行该文件。
+- `tests/infra/test_postgres_integration.py` 依赖真实 PostgreSQL；未设置 `TRADER_TEST_POSTGRES_DSN` 时显示 `skipped` 属于预期。
+- 需要验证真实 PostgreSQL 建表和持久化链路时，设置 `TRADER_TEST_POSTGRES_DSN` 后单独运行该文件。

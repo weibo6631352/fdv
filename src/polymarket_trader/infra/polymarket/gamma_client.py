@@ -1,0 +1,264 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+import httpx
+
+from polymarket_trader.infra.polymarket.schemas import (
+    GammaEventDTO,
+    GammaMarketDTO,
+    GammaProfileDTO,
+    GammaProfileSearchResultDTO,
+    PolymarketRestClientBase,
+    RawMarketEvent,
+    gamma_event_to_raw_market_events,
+    normalize_gamma_event,
+    normalize_gamma_market,
+    normalize_gamma_profile,
+    normalize_gamma_profile_search,
+)
+
+
+def _iter_mappings(payload: Any) -> tuple[Mapping[str, Any], ...]:
+    if isinstance(payload, list):
+        return tuple(item for item in payload if isinstance(item, Mapping))
+    if isinstance(payload, Mapping):
+        for key in ("events", "markets", "items", "results", "rows", "data"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return tuple(item for item in value if isinstance(item, Mapping))
+        return (payload,)
+    return ()
+
+
+class GammaClient(PolymarketRestClientBase):
+    """Polymarket Gamma 元数据适配器。
+
+    Gamma 是只读 market / event 元数据源，最重要的是把 raw payload 规范成内部 DTO，
+    这样上层分类与发现逻辑就不必再关心字段名变化。
+    """
+
+    def __init__(
+        self,
+        base_url: str = "https://gamma-api.polymarket.com",
+        *,
+        client: httpx.AsyncClient | None = None,
+        timeout_s: float = 10.0,
+        headers: Mapping[str, str] | None = None,
+        events_path: str = "/events",
+        markets_path: str = "/markets",
+        profiles_path: str = "/public-profile",
+        profiles_search_path: str = "/public-search",
+    ) -> None:
+        super().__init__(base_url, client=client, timeout_s=timeout_s, headers=headers)
+        self._events_path = events_path
+        self._markets_path = markets_path
+        self._profiles_path = profiles_path
+        self._profiles_search_path = profiles_search_path
+
+    @staticmethod
+    def _build_query_params(
+        *,
+        active: bool | None,
+        closed: bool | None,
+        tag: str | None,
+        slug: str | None,
+        limit: int,
+        offset: int,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+        }
+        if active is not None:
+            params["active"] = active
+        if closed is not None:
+            params["closed"] = closed
+        if tag is not None:
+            params["tag"] = tag
+        if slug is not None:
+            params["slug"] = slug
+        return params
+
+    async def list_events(
+        self,
+        *,
+        active: bool | None = True,
+        closed: bool | None = False,
+        tag: str | None = None,
+        slug: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        timeout_s: float | None = None,
+    ) -> tuple[GammaEventDTO, ...]:
+        params = self._build_query_params(
+            active=active,
+            closed=closed,
+            tag=tag,
+            slug=slug,
+            limit=limit,
+            offset=offset,
+        )
+        payload = await self.get_json(
+            self._events_path,
+            params=params,
+            timeout_s=timeout_s,
+            operation="gamma.list_events",
+        )
+        return tuple(normalize_gamma_event(item) for item in _iter_mappings(payload))
+
+    async def list_markets(
+        self,
+        *,
+        active: bool | None = True,
+        closed: bool | None = False,
+        tag: str | None = None,
+        slug: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        timeout_s: float | None = None,
+    ) -> tuple[GammaMarketDTO, ...]:
+        params = self._build_query_params(
+            active=active,
+            closed=closed,
+            tag=tag,
+            slug=slug,
+            limit=limit,
+            offset=offset,
+        )
+        payload = await self.get_json(
+            self._markets_path,
+            params=params,
+            timeout_s=timeout_s,
+            operation="gamma.list_markets",
+        )
+        return tuple(normalize_gamma_market(item) for item in _iter_mappings(payload))
+
+    async def get_event(
+        self,
+        event_id: str,
+        *,
+        timeout_s: float | None = None,
+        path: str | None = None,
+    ) -> GammaEventDTO:
+        event_path = path or f"{self._events_path.rstrip('/')}/{event_id}"
+        payload = await self.get_json(
+            event_path,
+            timeout_s=timeout_s,
+            operation="gamma.get_event",
+        )
+        if isinstance(payload, Mapping):
+            return normalize_gamma_event(payload)
+        raise TypeError("gamma event response is not a mapping")
+
+    async def get_market(
+        self,
+        market_id: str,
+        *,
+        timeout_s: float | None = None,
+        path: str | None = None,
+    ) -> GammaMarketDTO:
+        market_path = path or f"{self._markets_path.rstrip('/')}/{market_id}"
+        payload = await self.get_json(
+            market_path,
+            timeout_s=timeout_s,
+            operation="gamma.get_market",
+        )
+        if isinstance(payload, Mapping):
+            return normalize_gamma_market(payload)
+        raise TypeError("gamma market response is not a mapping")
+
+    async def get_public_profile(
+        self,
+        address: str,
+        *,
+        timeout_s: float | None = None,
+        path: str | None = None,
+    ) -> GammaProfileDTO:
+        payload = await self.get_json(
+            path or self._profiles_path,
+            params={"address": address},
+            timeout_s=timeout_s,
+            operation="gamma.get_public_profile",
+        )
+        if isinstance(payload, Mapping):
+            return normalize_gamma_profile(payload)
+        raise TypeError("gamma public profile response is not a mapping")
+
+    async def search_public_profiles(
+        self,
+        query: str,
+        *,
+        limit_per_type: int = 20,
+        page: int = 1,
+        timeout_s: float | None = None,
+        path: str | None = None,
+    ) -> GammaProfileSearchResultDTO:
+        payload = await self.get_json(
+            path or self._profiles_search_path,
+            params={
+                "q": query,
+                "limit_per_type": limit_per_type,
+                "page": page,
+                "search_profiles": True,
+                "search_tags": False,
+            },
+            timeout_s=timeout_s,
+            operation="gamma.search_public_profiles",
+            unwrap=False,
+        )
+        if isinstance(payload, Mapping):
+            return normalize_gamma_profile_search(payload)
+        raise TypeError("gamma public search response is not a mapping")
+
+    async def iter_raw_market_events(
+        self,
+        *,
+        active: bool | None = True,
+        closed: bool | None = False,
+        tag: str | None = None,
+        slug: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        source: str = "gamma",
+        timeout_s: float | None = None,
+    ) -> tuple[RawMarketEvent, ...]:
+        events = await self.list_events(
+            active=active,
+            closed=closed,
+            tag=tag,
+            slug=slug,
+            limit=limit,
+            offset=offset,
+            timeout_s=timeout_s,
+        )
+        raw_events: list[RawMarketEvent] = []
+        for event in events:
+            raw_events.extend(event.to_raw_market_events(source=source))
+        return tuple(raw_events)
+
+    async def discover_events(
+        self,
+        *,
+        active: bool | None = True,
+        closed: bool | None = False,
+        tag: str | None = None,
+        slug: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        timeout_s: float | None = None,
+    ) -> tuple[RawMarketEvent, ...]:
+        return await self.iter_raw_market_events(
+            active=active,
+            closed=closed,
+            tag=tag,
+            slug=slug,
+            limit=limit,
+            offset=offset,
+            source="gamma.events",
+            timeout_s=timeout_s,
+        )
+
+
+__all__ = ["GammaClient"]

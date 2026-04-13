@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 
-from fdv_trader.domain.events import OutboxEvent, sanitize_raw_response
-from fdv_trader.infra.outbox.local_queue import LocalOutbox
+from polymarket_trader.domain.events import OutboxEvent, sanitize_raw_response
+from polymarket_trader.infra.outbox.local_queue import LocalOutbox
 
 
 def test_local_outbox_merges_retained_low_priority_events() -> None:

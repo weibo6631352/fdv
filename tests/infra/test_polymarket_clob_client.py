@@ -6,8 +6,8 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from fdv_trader.domain.order import OrderStatus
-from fdv_trader.infra.polymarket.clob_client import ClobClient
+from polymarket_trader.domain.order import OrderStatus
+from polymarket_trader.infra.polymarket.clob_client import ClobClient
 
 pytestmark = pytest.mark.asyncio
 

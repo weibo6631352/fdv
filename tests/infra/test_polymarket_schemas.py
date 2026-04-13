@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from fdv_trader.infra.polymarket.schemas import (
+from polymarket_trader.infra.polymarket.schemas import (
     build_market_subscription_request,
     build_user_subscription_request,
     normalize_balance_allowance_payload,
@@ -81,9 +81,9 @@ def test_normalize_gamma_profile_maps_current_public_profile_fields() -> None:
                 "proxyWallet": "0x1111111111111111111111111111111111111111",
                 "profileImage": "https://example.com/avatar.png",
                 "displayUsernamePublic": True,
-                "bio": "fdv watcher",
-                "pseudonym": "fdv-watch-001",
-                "name": "FDV Watcher",
+                "bio": "market watcher",
+                "pseudonym": "market-watch-001",
+                "name": "Market Watcher",
                 "users": [
                     {
                         "id": "user-1",
@@ -91,7 +91,7 @@ def test_normalize_gamma_profile_maps_current_public_profile_fields() -> None:
                         "mod": False,
                     }
                 ],
-                "xUsername": "fdvwatcher",
+                "xUsername": "marketwatcher",
                 "verifiedBadge": True,
             }
         }
@@ -101,10 +101,10 @@ def test_normalize_gamma_profile_maps_current_public_profile_fields() -> None:
     assert dto.proxy_wallet == "0x1111111111111111111111111111111111111111"
     assert dto.profile_image == "https://example.com/avatar.png"
     assert dto.display_username_public is True
-    assert dto.bio == "fdv watcher"
-    assert dto.pseudonym == "fdv-watch-001"
-    assert dto.name == "FDV Watcher"
-    assert dto.x_username == "fdvwatcher"
+    assert dto.bio == "market watcher"
+    assert dto.pseudonym == "market-watch-001"
+    assert dto.name == "Market Watcher"
+    assert dto.x_username == "marketwatcher"
     assert dto.verified_badge is True
     assert len(dto.users) == 1
     assert dto.users[0].user_id == "user-1"

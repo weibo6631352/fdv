@@ -5,7 +5,7 @@
 ## 覆盖范围
 
 - `allocation.py`：等权预算、剩余资金释放、单 market 上限。
-- `classifier.py`：Crypto 分类、FDV 命中、500M 命中、排除其他阈值。
+- `classifier.py`：交易字段解析、候选 market 接收与拒绝。
 - `risk.py`：价格、notional、tick size、min order、集中度和 open BUY 异常。
 - `strategy.py`：FAK BUY intent、GTC SELL intent、skip reason。
 - `orderbook.py`：best bid / ask、spread、可成交深度。

@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 from decimal import Decimal
 
-from fdv_trader.domain.order import BuyOrderIntent, OrderResultStatus
-from fdv_trader.infra.outbox.local_queue import LocalOutbox
-from fdv_trader.infra.polymarket.order_executor import (
+from polymarket_trader.domain.order import BuyOrderIntent, OrderResultStatus
+from polymarket_trader.infra.outbox.local_queue import LocalOutbox
+from polymarket_trader.infra.polymarket.order_executor import (
     InMemoryPolymarketOrderClient,
     PolymarketOrderExecutor,
 )
@@ -24,7 +24,7 @@ def test_order_executor_records_outbox_before_returning_result() -> None:
                 trace_id="trace",
                 condition_id="condition",
                 token_id="token",
-                market_slug="token-500m-fdv",
+                market_slug="sample-market-a",
                 price=Decimal("0.60"),
                 amount_usdc=Decimal("10"),
             )

@@ -4,13 +4,13 @@ import json
 import logging
 from io import StringIO
 
-from fdv_trader.logging import clear_log_context, configure_logging, log_context_scope, shutdown_logging
+from polymarket_trader.logging import clear_log_context, configure_logging, log_context_scope, shutdown_logging
 
 
 def test_structured_logging_redacts_sensitive_context_and_message() -> None:
     stream = StringIO()
     configure_logging(structured=True, stream=stream, queue_size=16, force=True)
-    logger = logging.getLogger("fdv.test.logging")
+    logger = logging.getLogger("trader.test.logging")
     logger.setLevel(logging.INFO)
 
     try:
