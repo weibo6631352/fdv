@@ -216,6 +216,7 @@ def test_market_service_respects_strategy_universe_filter() -> None:
     assert outcome.market is None
     assert outcome.event.event_type == DomainEventType.MARKET_FILTERED_OUT
     assert outcome.event.reason == "strategy_filtered_out"
+    assert outcome.should_publish_event is False
     assert tracker.markets == []
 
 
@@ -248,6 +249,7 @@ def test_market_service_keeps_filtered_existing_market_paused_while_exposure_rem
     assert outcome.accepted is False
     assert outcome.event.event_type == DomainEventType.MARKET_FILTERED_OUT
     assert outcome.tracking_retained is True
+    assert outcome.should_publish_event is True
     retained = registry.get_by_condition_id("condition")
     assert retained is not None
     assert retained.trading_status == TradingStatus.PAUSED
@@ -277,6 +279,8 @@ def test_market_service_removes_filtered_existing_market_when_flat_and_orderless
 
     assert outcome.accepted is False
     assert outcome.tracking_retained is False
+    assert outcome.tracking_removed is True
+    assert outcome.should_publish_event is True
     assert outcome.event.event_type == DomainEventType.MARKET_FILTERED_OUT
     assert registry.get_by_condition_id("condition") is None
     assert tracker.untracked_token_ids == ["no-condition"]

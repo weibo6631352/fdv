@@ -63,6 +63,11 @@ class Market:
         maker_base_fee_bps: int | None = None,
         taker_base_fee_bps: int | None = None,
     ) -> "Market":
+        resolved_taker_base_fee_bps = (
+            self.taker_base_fee_bps
+            if taker_base_fee_bps is None
+            else taker_base_fee_bps
+        )
         return replace(
             self,
             fees_enabled=self.fees_enabled if fees_enabled is None else fees_enabled,
@@ -71,10 +76,16 @@ class Market:
                 if maker_base_fee_bps is None
                 else maker_base_fee_bps
             ),
-            taker_base_fee_bps=(
-                self.taker_base_fee_bps
+            taker_base_fee_bps=resolved_taker_base_fee_bps,
+            fee_rate_bps=(
+                self.fee_rate_bps
                 if taker_base_fee_bps is None
-                else taker_base_fee_bps
+                else resolved_taker_base_fee_bps
+            ),
+            fee_rate_updated_at=(
+                self.fee_rate_updated_at
+                if taker_base_fee_bps is None
+                else None
             ),
         )
 

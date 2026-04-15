@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from polymarket_trader.app.admin_service import AdminService
 from polymarket_trader.api.routes import (
@@ -46,6 +47,18 @@ def create_app(*, runtime: Any | None = None, admin_service: AdminService | None
                 await shutdown_runtime(bound_runtime)
 
     app = FastAPI(title="Polymarket Trader Admin API", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:5174",
+            "http://localhost:5173",
+            "http://localhost:5174",
+        ],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.include_router(health.router)
     app.include_router(runtime_route.router)
     app.include_router(audit_events.router)

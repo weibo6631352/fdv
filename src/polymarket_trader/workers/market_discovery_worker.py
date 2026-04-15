@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from itertools import count
+from json import dumps, loads
 from typing import Any, Iterable, Mapping
 from uuid import uuid4
 
@@ -24,6 +25,112 @@ def _maybe_mapping(value: Any) -> Mapping[str, Any] | None:
     if isinstance(value, Mapping):
         return value
     return None
+
+
+def _first_value(payload: Mapping[str, Any], *keys: str) -> Any | None:
+    for key in keys:
+        value = payload.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _first_text(payload: Mapping[str, Any], *keys: str) -> str | None:
+    value = _first_value(payload, *keys)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_tags(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        text = value.strip()
+        return (text,) if text else ()
+    if isinstance(value, Mapping):
+        tags: list[str] = []
+        for key in ("label", "slug", "name"):
+            text = _first_text(value, key)
+            if text:
+                tags.append(text)
+        return tuple(tags)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        tags: list[str] = []
+        for item in value:
+            tags.extend(_normalize_tags(item))
+        return tuple(tags)
+    text = str(value).strip()
+    return (text,) if text else ()
+
+
+def _normalize_token_ids(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ()
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = loads(text)
+            except Exception:
+                return (text,)
+            return _normalize_token_ids(parsed)
+        return (text,)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        token_ids: list[str] = []
+        for item in value:
+            text = str(item).strip()
+            if text:
+                token_ids.append(text)
+        return tuple(token_ids)
+    text = str(value).strip()
+    return (text,) if text else ()
+
+
+def _payload_signature(payload: Mapping[str, Any]) -> str:
+    stable = {
+        "condition_id": _first_text(payload, "condition_id", "conditionId", "condition"),
+        "market_slug": _first_text(payload, "market_slug", "marketSlug", "slug"),
+        "market_name": _first_text(payload, "title", "name", "market_name"),
+        "question": _first_text(payload, "question", "prompt", "market_question"),
+        "event_id": _first_text(payload, "event_id", "eventId", "id"),
+        "event_slug": _first_text(payload, "event_slug", "eventSlug"),
+        "event_title": _first_text(payload, "event_title", "eventTitle", "title", "name"),
+        "category": _first_text(payload, "category", "cat"),
+        "tags": _normalize_tags(_first_value(payload, "tags")),
+        "token_ids": _normalize_token_ids(_first_value(payload, "clobTokenIds", "clob_token_ids")),
+        "tick_size": _first_text(payload, "orderPriceMinTickSize", "tick_size", "tickSize"),
+        "min_order_size": _first_text(payload, "orderMinSize", "min_order_size", "minOrderSize"),
+        "active": _first_value(payload, "active", "is_active"),
+        "closed": _first_value(payload, "closed", "is_closed"),
+        "archived": _first_value(payload, "archived", "is_archived"),
+        "clob_enabled": _first_value(
+            payload,
+            "clob_enabled",
+            "enableOrderBook",
+            "clobEnabled",
+            "acceptingOrders",
+        ),
+        "fees_enabled": _first_value(payload, "fees_enabled", "feesEnabled"),
+        "maker_base_fee_bps": _first_value(
+            payload,
+            "maker_base_fee_bps",
+            "makerBaseFee",
+            "maker_base_fee",
+        ),
+        "taker_base_fee_bps": _first_value(
+            payload,
+            "taker_base_fee_bps",
+            "takerBaseFee",
+            "taker_base_fee",
+        ),
+        "end_date": _first_text(payload, "endDate", "end_date", "endDateIso"),
+        "icon_url": _first_text(payload, "icon"),
+    }
+    return dumps(stable, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +165,8 @@ class MarketDiscoveryWorker:
         self._trace_sequence = count()
         self._markets_by_condition_id: dict[str, RawMarketEvent] = {}
         self._markets_by_slug: dict[str, RawMarketEvent] = {}
+        self._seen_by_condition_id: dict[str, RawMarketEvent] = {}
+        self._seen_by_slug: dict[str, RawMarketEvent] = {}
         self._last_failure: DiscoveryFailure | None = None
 
     @property
@@ -81,6 +190,9 @@ class MarketDiscoveryWorker:
             return False
         now = now or _utc_now()
         return now >= self._last_failure.retry_at
+
+    def mark_scan_success(self) -> None:
+        self._last_failure = None
 
     async def ingest_gamma_page(
         self,
@@ -130,7 +242,9 @@ class MarketDiscoveryWorker:
                 payload=_normalize_payload(market_payload),
                 trace_id=discovered_trace_id,
             )
-            events.append(await self._classify_and_emit(raw_event))
+            event = await self._classify_and_emit(raw_event)
+            if event is not None:
+                events.append(event)
         return events
 
     def record_failure(
@@ -162,7 +276,12 @@ class MarketDiscoveryWorker:
             },
         )
 
-    async def _classify_and_emit(self, raw_event: RawMarketEvent) -> DomainEvent:
+    async def _classify_and_emit(self, raw_event: RawMarketEvent) -> DomainEvent | None:
+        previous = self._lookup_seen(raw_event)
+        if previous is not None and _payload_signature(previous.payload) == _payload_signature(raw_event.payload):
+            self._remember_seen(raw_event)
+            self._last_failure = None
+            return None
         outcome: MarketDiscoveryOutcome = self._market_service.ingest_raw_market(
             raw_event.payload,
             source=raw_event.source,
@@ -170,8 +289,13 @@ class MarketDiscoveryWorker:
             discovered_at=raw_event.discovered_at,
         )
         classification = outcome.classification
+        self._remember_seen(raw_event)
         if outcome.accepted:
             self._remember(raw_event)
+        else:
+            self._last_failure = None
+        if not outcome.should_publish_event:
+            return None
 
         event = MarketDiscoveryEvent(
             trace_id=outcome.trace_id,
@@ -230,6 +354,23 @@ class MarketDiscoveryWorker:
             if existing is not None:
                 return existing
         return None
+
+    def _lookup_seen(self, raw_event: RawMarketEvent) -> RawMarketEvent | None:
+        if raw_event.condition_id:
+            existing = self._seen_by_condition_id.get(raw_event.condition_id)
+            if existing is not None:
+                return existing
+        if raw_event.market_slug:
+            existing = self._seen_by_slug.get(raw_event.market_slug)
+            if existing is not None:
+                return existing
+        return None
+
+    def _remember_seen(self, raw_event: RawMarketEvent) -> None:
+        if raw_event.condition_id:
+            self._seen_by_condition_id[raw_event.condition_id] = raw_event
+        if raw_event.market_slug:
+            self._seen_by_slug[raw_event.market_slug] = raw_event
 
     def _extract_market_payloads(self, payload: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
         markets = payload.get("markets")

@@ -43,6 +43,7 @@ from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
 from polymarket_trader.runtime.status import ReadinessSnapshot, RuntimePhase, RuntimeSnapshot
+from polymarket_trader.main import FullMarketDiscoveryState
 
 EXPECTED_ADMIN_ROUTES = {
     ("GET", "/openapi.json"),
@@ -177,7 +178,7 @@ class FakeClobClient:
         self,
         *,
         history: object | None = None,
-        orderbook: object | None = None,
+        orderbooks: dict[str, object] | None = None,
         midpoint: Decimal | None = None,
         error: Exception | None = None,
         wallet_address: str | None = "0x1111111111111111111111111111111111111111",
@@ -190,21 +191,38 @@ class FakeClobClient:
                 ]
             }
         )
-        self._orderbook = orderbook or normalize_orderbook_payload(
-            {
-                "market": "condition-500m",
-                "asset_id": "no-token-500m",
-                "timestamp": 1704100800,
-                "bids": [{"price": "0.55", "size": "100"}],
-                "asks": [{"price": "0.59", "size": "200"}],
-                "min_order_size": "1",
-                "tick_size": "0.01",
-                "last_trade_price": "0.54",
-            },
-            token_id="no-token-500m",
-            market_slug="sample-market-a",
-            condition_id="condition-500m",
-        )
+        self._orderbooks = orderbooks or {
+            "no-token-500m": normalize_orderbook_payload(
+                {
+                    "market": "condition-500m",
+                    "asset_id": "no-token-500m",
+                    "timestamp": 1704100800,
+                    "bids": [{"price": "0.55", "size": "100"}],
+                    "asks": [{"price": "0.59", "size": "200"}],
+                    "min_order_size": "1",
+                    "tick_size": "0.01",
+                    "last_trade_price": "0.54",
+                },
+                token_id="no-token-500m",
+                market_slug="sample-market-a",
+                condition_id="condition-500m",
+            ),
+            "yes-token-500m": normalize_orderbook_payload(
+                {
+                    "market": "condition-500m",
+                    "asset_id": "yes-token-500m",
+                    "timestamp": 1704100801,
+                    "bids": [{"price": "0.95", "size": "80"}],
+                    "asks": [{"price": "0.99", "size": "120"}],
+                    "min_order_size": "1",
+                    "tick_size": "0.01",
+                    "last_trade_price": "0.97",
+                },
+                token_id="yes-token-500m",
+                market_slug="sample-market-a",
+                condition_id="condition-500m",
+            ),
+        }
         self._midpoint = midpoint or Decimal("0.57")
         self._error = error
         self.default_wallet_address = wallet_address
@@ -216,7 +234,7 @@ class FakeClobClient:
         self.orderbook_calls.append({"token_id": token_id, **kwargs})
         if self._error is not None:
             raise self._error
-        return self._orderbook
+        return self._orderbooks[token_id]
 
     async def get_midpoint(self, token_id: str, **kwargs: object) -> Decimal:
         self.midpoint_calls.append({"token_id": token_id, **kwargs})
@@ -534,6 +552,20 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
         settings=settings,
         readiness=readiness,
         registry=registry,
+        market_discovery_scan=FullMarketDiscoveryState(
+            round_id=4,
+            round_started_at=datetime(2026, 1, 1, 12, 3, 0, tzinfo=timezone.utc),
+            last_round_completed_at=datetime(2026, 1, 1, 12, 2, 0, tzinfo=timezone.utc),
+            last_completed_round_pages=26,
+            last_completed_round_markets=13000,
+            pages_scanned_in_round=2,
+            markets_seen_in_round=1000,
+            last_page_size=500,
+            last_tick_started_at=datetime(2026, 1, 1, 12, 3, 10, tzinfo=timezone.utc),
+            last_tick_completed_at=datetime(2026, 1, 1, 12, 3, 10, tzinfo=timezone.utc),
+            last_tick_requests=2,
+            last_tick_markets=1000,
+        ),
         gamma_client=SimpleNamespace(),
         clob_client=FakeClobClient(),
         data_client=FakeDataClient(),
@@ -591,6 +623,10 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert runtime_payload["settings"]["wallet_private_key"] == "***"
         assert runtime_payload["identity"]["wallet_address"] == "0x1111111111111111111111111111111111111111"
         assert runtime_payload["identity"]["funder_address"] == "0x2222222222222222222222222222222222222222"
+        assert runtime_payload["market_discovery"]["round_id"] == 4
+        assert runtime_payload["market_discovery"]["last_completed_round_markets"] == 13000
+        assert runtime_payload["market_discovery"]["pages_scanned_in_round"] == 2
+        assert runtime_payload["market_discovery"]["cursor_active"] is False
         assert runtime_payload["readiness"]["ready"] is True
         assert runtime_payload["markets"][0]["orderbook"]["best_ask"] == "0.59"
         assert runtime_payload["markets"][0]["market"]["market_slug"] == "sample-market-a"
@@ -617,12 +653,20 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert markets["items"][0]["fee_preview"]["basis_size_shares"] == "100"
         assert markets["items"][0]["fee_preview"]["buy"]["fee_usdc"] == "3.02375"
         assert markets["items"][0]["fee_preview"]["sell"]["fee_usdc"] == "3.09375"
+        assert markets["items"][0]["yes_orderbook"]["token_id"] == "yes-token-500m"
+        assert markets["items"][0]["yes_best_ask"] == "0.99"
+        assert markets["items"][0]["yes_best_bid"] == "0.95"
+        assert markets["items"][0]["yes_fee_preview"]["basis_size_shares"] == "100"
+        assert markets["items"][0]["yes_fee_preview"]["buy"]["fee_usdc"] == "0.12375"
+        assert markets["items"][0]["yes_fee_preview"]["sell"]["fee_usdc"] == "0.59375"
         assert markets["items"][0]["entry_price_touched"] is True
         assert market_detail["market"]["condition_id"] == "condition-500m"
         assert market_detail["market"]["market_slug"] == "sample-market-a"
         assert market_detail["market"]["icon_url"] == "https://example.com/icon.png"
         assert market_detail["market"]["end_date"] == "2026-02-01T00:00:00+00:00"
         assert market_detail["fee_preview"]["buy"]["fee_shares"] == "5.12500"
+        assert market_detail["yes_orderbook"]["token_id"] == "yes-token-500m"
+        assert market_detail["yes_fee_preview"]["buy"]["fee_shares"] == "0.12500"
         assert market_orderbook["token_id"] == "no-token-500m"
         assert market_orderbook["source"] == "hot"
         assert market_orderbook["orderbook"]["best_bid"] == "0.55"
@@ -636,6 +680,10 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert market_prices_history["fidelity"] == 60
         assert market_prices_history["history"][0]["timestamp"] == "2024-01-01T09:20:00+00:00"
         assert market_prices_history["history"][1]["price"] == "0.54"
+        assert [call["token_id"] for call in runtime.clob_client.orderbook_calls] == [
+            "yes-token-500m",
+            "yes-token-500m",
+        ]
         assert runtime.clob_client.history_calls[0]["token_id"] == "no-token-500m"
         assert runtime.clob_client.history_calls[0]["start_ts"] == 1704100800.0
         assert runtime.clob_client.history_calls[0]["end_ts"] == 1704104400.0
@@ -874,14 +922,27 @@ def test_admin_ready_route_only_exposes_user_facing_root_blockers() -> None:
     fields = [issue["field"] for issue in payload["blocking_issues"]]
     messages = [issue["message"] for issue in payload["blocking_issues"]]
 
-    assert fields == ["wallet_private_key", "user_ws_connected", "last_reconcile_at"]
+    assert fields == ["wallet_private_key"]
     assert "密钥未配置，启动阶段禁止自动下单" in messages
-    assert "用户行情连接未连接，暂停自动下单" in messages
-    assert "首次 reconcile 未完成，禁止自动下单" in messages
     assert all(issue["field"] != "runtime" for issue in payload["blocking_issues"])
     assert all("config_not_ready" not in message for message in messages)
     assert all("trading_client_not_ready" not in message for message in messages)
     assert all("trading_client_unavailable" not in message for message in messages)
+
+
+def test_admin_ready_route_exposes_runtime_account_blockers_after_config_is_ready() -> None:
+    runtime = _build_runtime(ready=False)
+    app = create_app(runtime=runtime, admin_service=AdminService())
+
+    with TestClient(app) as client:
+        payload = client.get("/ready").json()
+
+    fields = [issue["field"] for issue in payload["blocking_issues"]]
+    messages = [issue["message"] for issue in payload["blocking_issues"]]
+
+    assert fields == ["user_ws_connected", "last_reconcile_at"]
+    assert "用户行情连接未连接，暂停自动下单" in messages
+    assert "首次 reconcile 未完成，禁止自动下单" in messages
 
 
 def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypatch) -> None:

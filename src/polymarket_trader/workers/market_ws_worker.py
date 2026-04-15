@@ -15,6 +15,7 @@ from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
 
 _DEFAULT_RUNTIME_PROFILE = StrategyRuntimeProfile()
+_FEE_RATE_DENOMINATOR = Decimal("1000")
 
 
 def _utc_now() -> datetime:
@@ -78,6 +79,25 @@ def _bps(value: Any | None) -> int | None:
     if abs(numeric) < Decimal("1"):
         return int((numeric * Decimal("10000")).to_integral_value())
     return int(numeric.to_integral_value())
+
+
+def _fee_rate_units(value: Any | None) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        numeric = Decimal(text)
+    except InvalidOperation:
+        return None
+    if numeric < Decimal("0"):
+        return None
+    if numeric < Decimal("1"):
+        return int((numeric * _FEE_RATE_DENOMINATOR).to_integral_value())
+    if numeric == numeric.to_integral_value():
+        return int(numeric)
+    return int((numeric * _FEE_RATE_DENOMINATOR).to_integral_value())
 
 
 def _to_datetime(value: Any | None) -> datetime | None:
@@ -282,14 +302,22 @@ class MarketWsWorker:
         self._last_error: str | None = None
 
     def track_market(self, market: Market) -> None:
-        # 这里只做热态索引，不做数据库同步写；registry / cache 的更新都留在内存边界内。
-        self._tracked_markets[market.no_token_id] = market
+        # 框架层同时维护 YES / NO 两侧盘口；策略层继续只读取 NO。
+        tracked_token_ids = tuple(
+            token_id
+            for token_id in (market.no_token_id, market.yes_token_id)
+            if token_id
+        )
+        for token_id in tracked_token_ids:
+            self._tracked_markets[token_id] = market
         if self._registry is not None:
             self._registry.upsert(market)
-        if market.no_token_id not in self._states:
-            self._states[market.no_token_id] = _BookState(
+        for token_id in tracked_token_ids:
+            if token_id in self._states:
+                continue
+            self._states[token_id] = _BookState(
                 snapshot=OrderbookSnapshot(
-                    token_id=market.no_token_id,
+                    token_id=token_id,
                     best_bid=None,
                     best_ask=None,
                     bids=(),
@@ -305,23 +333,29 @@ class MarketWsWorker:
         token_id = str(no_token_id).strip()
         if not token_id:
             return
-        self._tracked_markets.pop(token_id, None)
-        self._states.pop(token_id, None)
+        market = self._tracked_markets.get(token_id)
+        tracked_token_ids = (
+            tuple(item for item in (market.no_token_id, market.yes_token_id) if item)
+            if market is not None
+            else (token_id,)
+        )
+        for tracked_token_id in tracked_token_ids:
+            self._tracked_markets.pop(tracked_token_id, None)
+            self._states.pop(tracked_token_id, None)
 
     def build_subscription_request(
         self,
-        no_token_id: str | tuple[str, ...] | list[str],
+        token_ids: str | tuple[str, ...] | list[str],
     ) -> dict[str, Any]:
-        # 只订阅 NO token_id，避免把 YES side 的噪声带进入场信号链路。
-        token_ids = (
-            tuple(str(item).strip() for item in no_token_id if str(item).strip())
-            if isinstance(no_token_id, (list, tuple))
-            else ((str(no_token_id).strip(),) if str(no_token_id).strip() else ())
+        normalized_token_ids = (
+            tuple(str(item).strip() for item in token_ids if str(item).strip())
+            if isinstance(token_ids, (list, tuple))
+            else ((str(token_ids).strip(),) if str(token_ids).strip() else ())
         )
-        for token_id in token_ids:
+        for token_id in normalized_token_ids:
             self._mark_subscribed(token_id)
         return {
-            "assets_ids": list(token_ids),
+            "assets_ids": list(normalized_token_ids),
             "type": "market",
             "custom_feature_enabled": True,
         }
@@ -692,7 +726,17 @@ class MarketWsWorker:
         if market is not None and self._registry is not None:
             resolved_market = self._registry.mark_resolved(market.condition_id)
             if resolved_market is not None:
-                self._tracked_markets[token_id] = resolved_market
+                for tracked_token_id in (
+                    item for item in (resolved_market.no_token_id, resolved_market.yes_token_id) if item
+                ):
+                    self._tracked_markets[tracked_token_id] = resolved_market
+                    tracked_state = self._states.get(tracked_token_id)
+                    if tracked_state is not None:
+                        tracked_state.resolved = True
+                        tracked_state.snapshot = replace(
+                            tracked_state.snapshot,
+                            received_at=state.snapshot.received_at,
+                        )
         event = MarketWsEvent(
             trace_id=uuid4().hex,
             event_type=DomainEventType.MARKET_RESOLVED_OR_DISABLED,
@@ -772,36 +816,7 @@ class MarketWsWorker:
                 "needs_rest_snapshot": state.needs_rest_snapshot,
             },
         )
-        events.append(await self._publish(OutboxPriority.P2, event))
-
-        if (
-            not state.entry_price_touched
-            and snapshot.token_id == token_id
-            and snapshot.no_entry_touched(self._entry_price_max)
-        ):
-            # NO ask 侧首次穿越 0.60 立即送到 P0，后续相同价格只做普通快照，不重复打点。
-            state.entry_price_touched = True
-            touched = MarketWsEvent(
-                trace_id=event.trace_id,
-                event_type=DomainEventType.ENTRY_PRICE_TOUCHED,
-                event_id=uuid4().hex,
-                token_id=token_id,
-                market_slug=snapshot.market_slug,
-                condition_id=snapshot.condition_id,
-                reason="no_best_ask_touched",
-                created_at=snapshot.received_at,
-                merge_key=f"entry_price_touched|{token_id}",
-                payload={
-                    "source": source,
-                    "snapshot": self._snapshot_payload(snapshot),
-                    "entry_price_max": self._serialize_decimal(self._entry_price_max),
-                    "buyable_no_depth": self._serialize_decimal(
-                        snapshot.buyable_ask_depth(self._entry_price_max)
-                    ),
-                    "snapshot_time": snapshot.snapshot_time.isoformat(),
-                },
-            )
-            events.append(await self._publish(OutboxPriority.P0, touched))
+        events.append(await self._publish(OutboxPriority.P1, event))
         self._record_result(
             token_id,
             state,
@@ -884,6 +899,10 @@ class MarketWsWorker:
                 return token_id
             if self._registry is not None and self._registry.get_by_no_token_id(token_id) is not None:
                 return token_id
+            if self._registry is not None:
+                snapshot = self._registry.snapshot()
+                if any(market.yes_token_id == token_id for market in snapshot.markets):
+                    return token_id
         return candidates[0]
 
     def _resolve_market(self, message: Mapping[str, Any], token_id: str) -> Market | None:
@@ -901,6 +920,11 @@ class MarketWsWorker:
             if market is not None:
                 self._tracked_markets[token_id] = market
                 return market
+            snapshot = self._registry.snapshot()
+            for candidate in snapshot.markets:
+                if candidate.yes_token_id == token_id:
+                    self._tracked_markets[token_id] = candidate
+                    return candidate
             if market_slug:
                 market = self._registry.get_by_slug(str(market_slug))
                 if market is not None:
@@ -1080,16 +1104,20 @@ class MarketWsWorker:
                 "maker_base_fee",
             )
         )
-        taker_base_fee_bps = _bps(
-            _first(
-                message,
-                "taker_base_fee_bps",
-                "takerBaseFee",
-                "taker_base_fee",
-            )
+        taker_base_fee_bps = (
+            _fee_rate_units(_first(fee_schedule, "rate", "base_fee", "baseFee"))
+            if fee_schedule is not None
+            else None
         )
-        if taker_base_fee_bps is None and fee_schedule is not None:
-            taker_base_fee_bps = _bps(_first(fee_schedule, "rate", "base_fee", "baseFee"))
+        if taker_base_fee_bps is None:
+            taker_base_fee_bps = _bps(
+                _first(
+                    message,
+                    "taker_base_fee_bps",
+                    "takerBaseFee",
+                    "taker_base_fee",
+                )
+            )
         updated_market = market.with_fee_schedule(
             fees_enabled=fees_enabled,
             maker_base_fee_bps=maker_base_fee_bps,
@@ -1117,6 +1145,8 @@ class MarketWsWorker:
         *,
         updated_at: datetime,
     ) -> Market | None:
+        if market.fee_rate_bps is not None or market.taker_base_fee_bps is not None:
+            return None
         if market.fee_rate_bps == fee_rate_bps and market.fee_rate_updated_at is not None:
             return None
         updated_market = market.with_fee_rate(

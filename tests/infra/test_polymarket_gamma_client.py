@@ -132,6 +132,11 @@ async def test_gamma_client_list_markets_by_params_passes_through_query_params()
                     "clobTokenIds": ["yes-1", "no-1"],
                     "orderPriceMinTickSize": "0.01",
                     "orderMinSize": "1",
+                    "takerBaseFee": 1000,
+                    "feeSchedule": {
+                        "rate": 0.072,
+                        "takerOnly": True,
+                    },
                 }
             ],
         )
@@ -157,3 +162,56 @@ async def test_gamma_client_list_markets_by_params_passes_through_query_params()
     assert request.url.params.get("offset") == "5"
     assert len(markets) == 1
     assert markets[0].market_slug == "sample-market-a"
+    assert markets[0].taker_base_fee_bps == 72
+    assert markets[0].to_market().fee_rate_bps == 72
+
+
+async def test_gamma_client_list_markets_keyset_by_params_returns_cursor() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/markets/keyset"
+        return httpx.Response(
+            200,
+            json={
+                "markets": [
+                    {
+                        "conditionId": "condition-1",
+                        "slug": "sample-market-a",
+                        "eventSlug": "sample-event-a",
+                        "eventTitle": "Sample Event A",
+                        "question": "Sample question?",
+                        "clobTokenIds": ["yes-1", "no-1"],
+                        "orderPriceMinTickSize": "0.01",
+                        "orderMinSize": "1",
+                        "active": True,
+                        "closed": False,
+                    }
+                ],
+                "next_cursor": "cursor-2",
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(
+        base_url="https://gamma-api.polymarket.com",
+        transport=transport,
+        trust_env=False,
+    ) as client:
+        gamma = GammaClient(client=client)
+        markets, next_cursor = await gamma.list_markets_keyset_by_params(
+            {
+                "active": True,
+                "closed": False,
+                "limit": 100,
+            }
+        )
+
+    request = requests[0]
+    assert request.url.params.get("active") == "true"
+    assert request.url.params.get("closed") == "false"
+    assert request.url.params.get("limit") == "100"
+    assert len(markets) == 1
+    assert markets[0].market_slug == "sample-market-a"
+    assert next_cursor == "cursor-2"

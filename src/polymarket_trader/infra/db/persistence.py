@@ -104,6 +104,31 @@ def _datetime(value: Any | None, default: datetime | None = None) -> datetime | 
     return parsed.astimezone(timezone.utc)
 
 
+def _fee_rate_units_from_market_payload(payload: Mapping[str, Any] | None) -> int | None:
+    if not isinstance(payload, Mapping):
+        return None
+    fee_schedule = payload.get("feeSchedule")
+    if not isinstance(fee_schedule, Mapping):
+        fee_schedule = payload.get("fee_schedule")
+    if not isinstance(fee_schedule, Mapping):
+        return None
+    rate = fee_schedule.get("rate")
+    if rate is None:
+        rate = fee_schedule.get("base_fee")
+    if rate is None:
+        rate = fee_schedule.get("baseFee")
+    if rate is None or isinstance(rate, bool):
+        return None
+    numeric = _decimal(rate)
+    if numeric is None or numeric < Decimal("0"):
+        return None
+    if numeric < Decimal("1"):
+        return int((numeric * Decimal("1000")).to_integral_value())
+    if numeric == numeric.to_integral_value():
+        return int(numeric)
+    return int((numeric * Decimal("1000")).to_integral_value())
+
+
 def _string_tuple(value: Any | None) -> tuple[str, ...]:
     if value is None:
         return ()
@@ -245,6 +270,7 @@ def _market_from_record(record: Mapping[str, Any]) -> Market | None:
         raw_market = record.get("market_data")
     if not isinstance(raw_market, Mapping):
         raw_market = {}
+    schedule_fee_rate_bps = _fee_rate_units_from_market_payload(raw_market)
     return Market(
         condition_id=condition_id,
         market_slug=market_slug,
@@ -264,9 +290,21 @@ def _market_from_record(record: Mapping[str, Any]) -> Market | None:
         neg_risk=_bool(record.get("neg_risk")),
         fees_enabled=None if record.get("fees_enabled") is None else _bool(record.get("fees_enabled")),
         maker_base_fee_bps=_int(record.get("maker_base_fee_bps")),
-        taker_base_fee_bps=_int(record.get("taker_base_fee_bps")),
-        fee_rate_bps=_int(record.get("fee_rate_bps")),
-        fee_rate_updated_at=_datetime(record.get("fee_rate_updated_at")),
+        taker_base_fee_bps=(
+            schedule_fee_rate_bps
+            if schedule_fee_rate_bps is not None
+            else _int(record.get("taker_base_fee_bps"))
+        ),
+        fee_rate_bps=(
+            schedule_fee_rate_bps
+            if schedule_fee_rate_bps is not None
+            else _int(record.get("fee_rate_bps"))
+        ),
+        fee_rate_updated_at=(
+            None
+            if schedule_fee_rate_bps is not None
+            else _datetime(record.get("fee_rate_updated_at"))
+        ),
         category=_text(record.get("category")),
         tags=_string_tuple(record.get("tags")),
         matched_keywords=_string_tuple(record.get("matched_keywords")),

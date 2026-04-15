@@ -23,7 +23,7 @@ export const currentStrategyExtension: StrategyExtension = {
         <SectionCard title="策略态势" subtitle="只解释当前策略如何看待这些市场。">
           <div className="stats-grid stats-grid--compact">
             <div className="stat-card">
-              <span>跟踪市场</span>
+              <span>策略跟踪</span>
               <strong>{tracked}</strong>
             </div>
             <div className="stat-card">

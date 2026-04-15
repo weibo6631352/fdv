@@ -739,7 +739,12 @@ class ReconcileWorker:
         failures: list[str] = []
         refreshed_market = await self._fetch_gamma_market(market, failures)
         market_for_orderbook = refreshed_market or market
-        fee_rate_bps = await self._fetch_fee_rate(market_for_orderbook, failures)
+        fee_rate_bps = None
+        if (
+            market_for_orderbook.fee_rate_bps is None
+            and market_for_orderbook.taker_base_fee_bps is None
+        ):
+            fee_rate_bps = await self._fetch_fee_rate(market_for_orderbook, failures)
         fee_rate_refreshed = fee_rate_bps is not None
         if fee_rate_bps is not None:
             market_for_orderbook = market_for_orderbook.with_fee_rate(

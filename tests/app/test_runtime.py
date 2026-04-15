@@ -8,15 +8,17 @@ from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from polymarket_trader.config import Settings
 from polymarket_trader.main import (
+    FullMarketDiscoveryState,
     _coalesce_reconcile_scope,
     _execute_discovery_query,
+    _handle_market_ws_message,
     _is_reconcile_trigger,
     _publish_reconcile_trigger,
     _run_market_discovery_scan,
     build_runtime,
 )
 from polymarket_trader.runtime.event_bus import EventBus
-from strategy_sdk.models import DiscoveryEndpoint, DiscoveryQuery, StrategyRuntimeProfile
+from strategy_sdk.models import DiscoveryEndpoint, DiscoveryQuery
 
 
 def test_build_runtime_wires_m2_components() -> None:
@@ -248,44 +250,106 @@ def test_execute_discovery_query_uses_keyset_cursor_pagination() -> None:
     asyncio.run(run())
 
 
-def test_run_market_discovery_scan_uses_strategy_queries() -> None:
-    class _StubStrategy:
-        @property
-        def runtime_profile(self):
-            return StrategyRuntimeProfile()
+def test_execute_discovery_query_uses_markets_keyset_cursor_pagination() -> None:
+    class _StubGammaClient:
+        def __init__(self) -> None:
+            self.calls = []
 
-        def build_discovery_queries(self):
+        async def list_markets_keyset_by_params(self, params, *, timeout_s=None):
+            self.calls.append((dict(params), timeout_s))
+            if len(self.calls) == 1:
+                return (
+                    (
+                        SimpleNamespace(raw={"conditionId": "condition-1", "slug": "sample-market-a"}),
+                    ),
+                    "cursor-2",
+                )
             return (
-                DiscoveryQuery(
-                    endpoint=DiscoveryEndpoint.EVENTS,
-                    params={"active": True, "closed": False, "title_search": "fdv", "limit": 50},
-                    max_pages=1,
+                (
+                    SimpleNamespace(raw={"conditionId": "condition-2", "slug": "sample-market-b"}),
                 ),
+                None,
             )
+
+    async def run() -> None:
+        gamma = _StubGammaClient()
+        payloads = await _execute_discovery_query(
+            gamma,
+            DiscoveryQuery(
+                endpoint=DiscoveryEndpoint.MARKETS_KEYSET,
+                params={"active": True, "closed": False, "limit": 100},
+                max_pages=2,
+            ),
+        )
+
+        assert [payload["slug"] for payload in payloads] == ["sample-market-a", "sample-market-b"]
+        assert gamma.calls[0][0]["limit"] == 100
+        assert "after_cursor" not in gamma.calls[0][0]
+        assert gamma.calls[1][0]["after_cursor"] == "cursor-2"
+
+    asyncio.run(run())
+
+
+def test_run_market_discovery_scan_advances_full_market_round_scan() -> None:
+    class _StubEventPage:
+        def __init__(self, payloads):
+            self._payloads = tuple(payloads)
+
+        def to_raw_market_events(self, *, source):
+            return tuple(SimpleNamespace(payload=payload) for payload in self._payloads)
 
     class _StubGammaClient:
         def __init__(self) -> None:
             self.calls = []
 
-        async def list_events_by_params(self, params, *, timeout_s=None):
+        async def list_events_keyset_by_params(self, params, *, timeout_s=None):
             self.calls.append(dict(params))
+            if len(self.calls) == 1:
+                return (
+                    (
+                        _StubEventPage(
+                            (
+                                {
+                                    "conditionId": "condition-1",
+                                    "slug": "sample-market-a",
+                                    "eventTitle": "Sample Event A",
+                                },
+                            )
+                        ),
+                    ),
+                    "cursor-2",
+                )
             return (
-                SimpleNamespace(
-                    to_raw_market_events=lambda **kwargs: (
-                        SimpleNamespace(payload={"condition_id": "condition-1", "market_slug": "sample-market-a"}),
-                    )
+                (
+                    _StubEventPage(
+                        (
+                            {
+                                "conditionId": "condition-2",
+                                "slug": "sample-market-b",
+                                "eventTitle": "Sample Event B",
+                            },
+                        )
+                    ),
                 ),
+                None,
             )
 
     class _StubDiscoveryWorker:
         def __init__(self) -> None:
             self.calls = []
+            self.last_failure = None
 
         async def ingest_source_page(self, payload, *, source, trace_id):
             self.calls.append((payload, source, trace_id))
 
         def record_failure(self, *, source, reason):
             self.calls.append(("failure", source, reason))
+
+        def should_retry(self):
+            return False
+
+        def mark_scan_success(self):
+            self.last_failure = None
 
     class _StubSupervisor:
         def heartbeat_worker(self, *args, **kwargs):
@@ -302,6 +366,12 @@ def test_run_market_discovery_scan_uses_strategy_queries() -> None:
             return None
 
         def set_gauge(self, *args, **kwargs):
+            return None
+
+        def inc_counter(self, *args, **kwargs):
+            return None
+
+        def mark_timestamp(self, *args, **kwargs):
             return None
 
     class _StubEventBus:
@@ -356,9 +426,9 @@ def test_run_market_discovery_scan_uses_strategy_queries() -> None:
         discovery_worker = _StubDiscoveryWorker()
         runtime = SimpleNamespace(
             supervisor=_StubSupervisor(),
-            strategy=_StubStrategy(),
             gamma_client=gamma,
             market_discovery_worker=discovery_worker,
+            market_discovery_scan=FullMarketDiscoveryState(),
             event_bus=_StubEventBus(),
             metrics=_StubMetrics(),
             market_ws_worker=_StubMarketWsWorker(),
@@ -369,12 +439,60 @@ def test_run_market_discovery_scan_uses_strategy_queries() -> None:
 
         await _run_market_discovery_scan(runtime)
 
-        assert gamma.calls[0]["title_search"] == "fdv"
-        assert len(discovery_worker.calls) == 1
+        assert gamma.calls[0]["active"] is True
+        assert gamma.calls[0]["closed"] is False
+        assert gamma.calls[0]["limit"] == 50
+        assert "after_cursor" not in gamma.calls[0]
+        assert gamma.calls[1]["after_cursor"] == "cursor-2"
+        assert len(discovery_worker.calls) == 2
         payload, source, trace_id = discovery_worker.calls[0]
-        assert payload["markets"][0]["market_slug"] == "sample-market-a"
-        assert source == "gamma.events"
-        assert trace_id.startswith("market-discovery-")
+        assert payload["markets"][0]["slug"] == "sample-market-a"
+        assert payload["markets"][0]["eventTitle"] == "Sample Event A"
+        assert source == "gamma.events_keyset"
+        assert trace_id.startswith("market-discovery-round-1-")
+        assert runtime.market_discovery_scan.after_cursor is None
+        assert runtime.market_discovery_scan.round_id == 2
+        assert runtime.market_discovery_scan.last_round_completed_at is not None
+        assert runtime.market_discovery_scan.last_completed_round_pages == 2
+        assert runtime.market_discovery_scan.last_completed_round_markets == 2
+
+    asyncio.run(run())
+
+
+def test_handle_market_ws_message_routes_new_market_through_discovery_before_ws_processing() -> None:
+    class _StubDiscoveryWorker:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def ingest_ws_new_market(self, payload, *, trace_id=None):
+            self.calls.append(("discovery", dict(payload), trace_id))
+            return []
+
+    class _StubMarketWsWorker:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def handle_message(self, payload, *, source="market_ws"):
+            self.calls.append(("ws", dict(payload), source))
+            return []
+
+    async def run() -> None:
+        runtime = SimpleNamespace(
+            market_discovery_worker=_StubDiscoveryWorker(),
+            market_ws_worker=_StubMarketWsWorker(),
+        )
+
+        await _handle_market_ws_message(
+            runtime,
+            {
+                "event_type": "new_market",
+                "asset_id": "no-token-1",
+                "market": "condition-1",
+            },
+        )
+
+        assert runtime.market_discovery_worker.calls[0][0] == "discovery"
+        assert runtime.market_ws_worker.calls[0][0] == "ws"
 
     asyncio.run(run())
 

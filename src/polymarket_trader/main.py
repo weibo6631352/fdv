@@ -4,6 +4,7 @@ import asyncio
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import logging
 from typing import Any, Mapping
 from uuid import uuid4
@@ -59,6 +60,72 @@ from polymarket_trader.workers.user_ws_worker import UserWsWorker
 
 logger = logging.getLogger(__name__)
 
+_MARKET_DISCOVERY_EVENT_PAGE_LIMIT = 50
+_MARKET_DISCOVERY_MARKET_BUDGET_PER_TICK = 1000
+_MARKET_DISCOVERY_REQUEST_BUDGET_PER_TICK = 2
+_MARKET_DISCOVERY_MAX_RUNTIME_MS = 200.0
+_MARKET_DISCOVERY_TICK_SECONDS = 0.5
+_MARKET_DISCOVERY_RETRY_BACKOFF_SECONDS = 5
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+@dataclass(slots=True)
+class FullMarketDiscoveryState:
+    after_cursor: str | None = None
+    round_id: int = 1
+    round_started_at: datetime | None = None
+    last_round_completed_at: datetime | None = None
+    last_completed_round_pages: int = 0
+    last_completed_round_markets: int = 0
+    last_page_size: int = 0
+    pages_scanned_in_round: int = 0
+    markets_seen_in_round: int = 0
+    last_tick_started_at: datetime | None = None
+    last_tick_completed_at: datetime | None = None
+    last_tick_requests: int = 0
+    last_tick_markets: int = 0
+    last_error: str | None = None
+    consecutive_failures: int = 0
+
+    def start_tick(self) -> None:
+        self.last_tick_started_at = _utc_now()
+        self.last_tick_completed_at = None
+        self.last_tick_requests = 0
+        self.last_tick_markets = 0
+        if self.round_started_at is None:
+            self.round_started_at = self.last_tick_started_at
+
+    def record_page(self, *, page_size: int, next_cursor: str | None) -> None:
+        self.last_page_size = max(0, int(page_size))
+        self.pages_scanned_in_round += 1
+        self.markets_seen_in_round += max(0, int(page_size))
+        self.last_tick_requests += 1
+        self.last_tick_markets += max(0, int(page_size))
+        self.after_cursor = next_cursor
+        self.last_error = None
+        self.consecutive_failures = 0
+
+    def finish_round(self) -> None:
+        self.after_cursor = None
+        self.last_completed_round_pages = self.pages_scanned_in_round
+        self.last_completed_round_markets = self.markets_seen_in_round
+        self.last_round_completed_at = _utc_now()
+        self.round_id += 1
+        self.round_started_at = None
+        self.pages_scanned_in_round = 0
+        self.markets_seen_in_round = 0
+
+    def finish_tick(self) -> None:
+        self.last_tick_completed_at = _utc_now()
+
+    def record_failure(self, reason: str) -> None:
+        self.last_error = reason
+        self.consecutive_failures += 1
+        self.finish_tick()
+
 
 @dataclass(slots=True)
 class RuntimeComponents:
@@ -83,6 +150,7 @@ class RuntimeComponents:
     user_ws_worker: UserWsWorker
     market_service: MarketService
     market_discovery_worker: MarketDiscoveryWorker
+    market_discovery_scan: FullMarketDiscoveryState
     strategy_service: StrategyService
     trading_service: TradingService
     strategy_worker: StrategyWorker
@@ -234,7 +302,9 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     market_discovery_worker = MarketDiscoveryWorker(
         market_service=market_service,
         event_bus=event_bus,
+        retry_delay_seconds=_MARKET_DISCOVERY_RETRY_BACKOFF_SECONDS,
     )
+    market_discovery_scan = FullMarketDiscoveryState()
     scheduler = Scheduler()
     supervisor = Supervisor(
         event_bus=event_bus,
@@ -273,6 +343,7 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         user_ws_worker=user_ws_worker,
         market_service=market_service,
         market_discovery_worker=market_discovery_worker,
+        market_discovery_scan=market_discovery_scan,
         strategy_service=strategy_service,
         trading_service=trading_service,
         strategy_worker=strategy_worker,
@@ -472,9 +543,10 @@ def _market_ws_subscription_token_ids(runtime: RuntimeComponents) -> tuple[str, 
     return tuple(
         sorted(
             {
-                market.no_token_id
+                token_id
                 for market in runtime.registry.snapshot().markets
-                if market.no_token_id
+                for token_id in (market.no_token_id, market.yes_token_id)
+                if token_id
             }
         )
     )
@@ -560,6 +632,30 @@ async def _stream_market_ws_messages(
     ):
         payload = message.payload if isinstance(message.payload, Mapping) else message.raw
         await queue.put(dict(payload))
+
+
+def _market_ws_message_type(message: Mapping[str, Any]) -> str:
+    value = (
+        message.get("event_type")
+        or message.get("message_type")
+        or message.get("channel_event")
+        or message.get("event")
+        or message.get("type")
+        or message.get("action")
+    )
+    return "" if value is None else str(value).strip().lower()
+
+
+async def _handle_market_ws_message(
+    runtime: RuntimeComponents,
+    message: Mapping[str, Any],
+) -> None:
+    if _market_ws_message_type(message) == "new_market":
+        await runtime.market_discovery_worker.ingest_ws_new_market(
+            message,
+            trace_id=f"market-ws-discovery-{uuid4().hex}",
+        )
+    await runtime.market_ws_worker.handle_message(message, source="market_ws")
 
 
 async def _stream_user_ws_messages(
@@ -675,7 +771,7 @@ async def _run_market_ws(runtime: RuntimeComponents) -> None:
             except TimeoutError:
                 continue
 
-            await runtime.market_ws_worker.handle_message(message, source="market_ws")
+            await _handle_market_ws_message(runtime, message)
             runtime.supervisor.heartbeat_worker(
                 "market_ws",
                 state=WorkerLifecycleState.RUNNING,
@@ -847,7 +943,7 @@ def _register_scheduler_jobs(runtime: RuntimeComponents) -> None:
         "market_discovery_scan",
         lambda: _run_market_discovery_scan(runtime),
         priority="P2",
-        interval_seconds=float(runtime.settings.market_sync_interval_seconds),
+        interval_seconds=_MARKET_DISCOVERY_TICK_SECONDS,
         tags=("market_discovery",),
         start=True,
         run_immediately=True,
@@ -895,33 +991,120 @@ async def _run_supervised_loop(
 
 
 async def _run_market_discovery_scan(runtime: RuntimeComponents) -> None:
-    runtime.supervisor.heartbeat_worker("market_discovery", detail="discovering")
-    try:
-        queries = runtime.strategy.build_discovery_queries()
-        total_payloads = 0
-        for query in queries:
-            market_payloads = await _execute_discovery_query(runtime.gamma_client, query)
-            total_payloads += len(market_payloads)
-            if not market_payloads:
-                continue
-            await runtime.market_discovery_worker.ingest_source_page(
-                {"markets": list(market_payloads)},
-                source=_discovery_source(query),
-                trace_id=f"market-discovery-{uuid4().hex}",
-            )
+    state = runtime.market_discovery_scan
+    if (
+        runtime.market_discovery_worker.last_failure is not None
+        and not runtime.market_discovery_worker.should_retry()
+    ):
+        retry_at = runtime.market_discovery_worker.last_failure.retry_at.isoformat()
         runtime.supervisor.heartbeat_worker(
             "market_discovery",
-            detail=f"queries={len(queries)} discovered={total_payloads}",
+            detail=f"retry_backoff until={retry_at}",
         )
         _sync_runtime_metrics(runtime)
+        return
+
+    state.start_tick()
+    runtime.supervisor.heartbeat_worker(
+        "market_discovery",
+        detail=(
+            f"round={state.round_id} cursor={'set' if state.after_cursor else 'start'} "
+            f"budget={_MARKET_DISCOVERY_REQUEST_BUDGET_PER_TICK}"
+        ),
+    )
+    started_at = asyncio.get_running_loop().time()
+    try:
+        round_completed = False
+        completed_round_id: int | None = None
+        completed_round_pages = 0
+        completed_round_markets = 0
+        while (
+            state.last_tick_requests < _MARKET_DISCOVERY_REQUEST_BUDGET_PER_TICK
+            and state.last_tick_markets < _MARKET_DISCOVERY_MARKET_BUDGET_PER_TICK
+        ):
+            elapsed_ms = (asyncio.get_running_loop().time() - started_at) * 1000.0
+            if elapsed_ms >= _MARKET_DISCOVERY_MAX_RUNTIME_MS:
+                break
+            page_markets, next_cursor = await _fetch_full_market_discovery_page(runtime)
+            runtime.market_discovery_worker.mark_scan_success()
+            market_payloads = tuple(raw_event.payload for raw_event in page_markets)
+            state.record_page(page_size=len(market_payloads), next_cursor=next_cursor)
+            if market_payloads:
+                runtime.metrics.inc_counter(
+                    "market_discovery_markets_scanned_total",
+                    float(len(market_payloads)),
+                )
+                runtime.metrics.inc_counter("market_discovery_requests_total", 1.0)
+                runtime.metrics.inc_counter("market_discovery_pages_scanned_total", 1.0)
+            else:
+                runtime.metrics.inc_counter("market_discovery_requests_total", 1.0)
+                runtime.metrics.inc_counter("market_discovery_pages_scanned_total", 1.0)
+
+            await runtime.market_discovery_worker.ingest_source_page(
+                {"markets": list(market_payloads)},
+                source="gamma.events_keyset",
+                trace_id=f"market-discovery-round-{state.round_id}-{uuid4().hex}",
+            )
+            if next_cursor is None:
+                round_completed = True
+                completed_round_id = state.round_id
+                completed_round_pages = state.pages_scanned_in_round
+                completed_round_markets = state.markets_seen_in_round
+                state.finish_round()
+                runtime.metrics.inc_counter("market_discovery_rounds_completed_total", 1.0)
+                break
+            if state.last_tick_markets >= _MARKET_DISCOVERY_MARKET_BUDGET_PER_TICK:
+                break
     except Exception as exc:  # pragma: no cover - depends on external gamma
-        runtime.market_discovery_worker.record_failure(source="gamma.events", reason=str(exc))
+        state.record_failure(str(exc))
+        runtime.market_discovery_worker.record_failure(
+            source="gamma.events_keyset",
+            reason=str(exc),
+            retry_after_seconds=_MARKET_DISCOVERY_RETRY_BACKOFF_SECONDS,
+        )
         runtime.supervisor.mark_worker_error(
             "market_discovery",
             detail="discover_failed",
             last_error=str(exc),
         )
         logger.warning("market discovery scan failed", extra={"reason": str(exc)})
+    else:
+        state.finish_tick()
+        if round_completed and completed_round_id is not None:
+            runtime.supervisor.heartbeat_worker(
+                "market_discovery",
+                detail=(
+                    f"round_completed={completed_round_id} "
+                    f"pages={completed_round_pages} markets={completed_round_markets}"
+                ),
+            )
+        else:
+            runtime.supervisor.heartbeat_worker(
+                "market_discovery",
+                detail=(
+                    f"round={state.round_id} reqs={state.last_tick_requests} "
+                    f"markets={state.last_tick_markets} cursor={'set' if state.after_cursor else 'start'}"
+                ),
+            )
+    finally:
+        _sync_runtime_metrics(runtime)
+
+
+async def _fetch_full_market_discovery_page(
+    runtime: RuntimeComponents,
+) -> tuple[tuple[Any, ...], str | None]:
+    params: dict[str, Any] = {
+        "active": True,
+        "closed": False,
+        "limit": _MARKET_DISCOVERY_EVENT_PAGE_LIMIT,
+    }
+    if runtime.market_discovery_scan.after_cursor is not None:
+        params["after_cursor"] = runtime.market_discovery_scan.after_cursor
+    events, next_cursor = await runtime.gamma_client.list_events_keyset_by_params(params)
+    raw_events: list[Any] = []
+    for event in events:
+        raw_events.extend(event.to_raw_market_events(source="gamma.events_keyset"))
+    return tuple(raw_events), next_cursor
 
 
 async def _publish_reconcile_trigger(
@@ -1044,6 +1227,8 @@ async def _execute_discovery_query(
         return await _execute_events_keyset_query(gamma_client, query)
     if query.endpoint is DiscoveryEndpoint.MARKETS:
         return await _execute_markets_query(gamma_client, query)
+    if query.endpoint is DiscoveryEndpoint.MARKETS_KEYSET:
+        return await _execute_markets_keyset_query(gamma_client, query)
     raise ValueError(f"unsupported discovery endpoint: {query.endpoint!r}")
 
 
@@ -1110,6 +1295,32 @@ async def _execute_markets_query(
         payloads.extend(market.raw for market in markets)
         if len(markets) < limit:
             break
+    return tuple(payloads)
+
+
+async def _execute_markets_keyset_query(
+    gamma_client: GammaClient,
+    query: DiscoveryQuery,
+) -> tuple[Mapping[str, Any], ...]:
+    params = _normalize_discovery_params(query.params)
+    if "offset" in params:
+        raise ValueError("markets_keyset discovery queries must not include offset")
+    limit = _normalize_page_limit(query)
+    after_cursor = params.get("after_cursor")
+    payloads: list[Mapping[str, Any]] = []
+    for _ in range(query.max_pages):
+        page_params = dict(params)
+        page_params["limit"] = limit
+        if after_cursor is not None:
+            page_params["after_cursor"] = after_cursor
+        markets, next_cursor = await gamma_client.list_markets_keyset_by_params(
+            page_params,
+            timeout_s=query.timeout_s,
+        )
+        payloads.extend(market.raw for market in markets)
+        if not markets or not next_cursor:
+            break
+        after_cursor = next_cursor
     return tuple(payloads)
 
 
@@ -1219,6 +1430,41 @@ def _sync_runtime_metrics(runtime: RuntimeComponents) -> None:
     reconcile = runtime.reconcile_worker.status_snapshot()
     if reconcile.last_completed_at is not None:
         runtime.metrics.mark_timestamp("last_reconcile_at", at=reconcile.last_completed_at)
+    discovery = runtime.market_discovery_scan
+    runtime.metrics.set_gauge("market_discovery_round_id", float(discovery.round_id))
+    runtime.metrics.set_gauge(
+        "market_discovery_pages_scanned_in_round",
+        float(discovery.pages_scanned_in_round),
+    )
+    runtime.metrics.set_gauge(
+        "market_discovery_markets_seen_in_round",
+        float(discovery.markets_seen_in_round),
+    )
+    runtime.metrics.set_gauge(
+        "market_discovery_last_page_size",
+        float(discovery.last_page_size),
+    )
+    runtime.metrics.set_gauge(
+        "market_discovery_after_cursor_present",
+        1.0 if discovery.after_cursor is not None else 0.0,
+    )
+    runtime.metrics.set_gauge(
+        "market_discovery_last_tick_requests",
+        float(discovery.last_tick_requests),
+    )
+    runtime.metrics.set_gauge(
+        "market_discovery_last_tick_markets",
+        float(discovery.last_tick_markets),
+    )
+    runtime.metrics.set_gauge(
+        "market_discovery_consecutive_failures",
+        float(discovery.consecutive_failures),
+    )
+    if discovery.last_round_completed_at is not None:
+        runtime.metrics.mark_timestamp(
+            "market_discovery_last_round_completed_at",
+            at=discovery.last_round_completed_at,
+        )
     persistence = runtime.persistence_worker.snapshot()
     runtime.metrics.set_gauge("outbox_depth", persistence.outbox_depth)
     runtime.metrics.set_gauge("outbox_retained_depth", persistence.outbox_retained_depth)

@@ -28,6 +28,7 @@ class DiscoveryEndpoint(StrEnum):
     EVENTS = "events"
     EVENTS_KEYSET = "events_keyset"
     MARKETS = "markets"
+    MARKETS_KEYSET = "markets_keyset"
 
 
 class AccountSnapshotView(Protocol):

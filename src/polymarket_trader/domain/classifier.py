@@ -9,6 +9,8 @@ from typing import Any, Mapping
 from polymarket_trader.domain.events import DomainEvent, DomainEventType
 from polymarket_trader.domain.market import Market, TradingStatus
 
+_FEE_RATE_DENOMINATOR = Decimal("1000")
+
 
 class ClassificationStatus(StrEnum):
     ACCEPTED = "accepted"
@@ -146,6 +148,7 @@ class ClassificationResult:
             fees_enabled=self.fees_enabled,
             maker_base_fee_bps=self.maker_base_fee_bps,
             taker_base_fee_bps=self.taker_base_fee_bps,
+            fee_rate_bps=self.taker_base_fee_bps,
             category=self.category,
             tags=self.tags,
             matched_keywords=self.matched_keywords,
@@ -325,19 +328,23 @@ class MarketClassifier:
                     "makerBaseFee",
                 )
             )
-            taker_base_fee_bps = self._parse_int(
-                self._first_value(
-                    raw_market,
-                    "takerBaseFee",
-                )
-            )
-            if taker_base_fee_bps is None and fee_schedule is not None:
-                taker_base_fee_bps = self._parse_int(
+            taker_base_fee_bps = (
+                self._parse_fee_rate_units(
                     self._first_value(
                         fee_schedule,
                         "rate",
                         "base_fee",
                         "baseFee",
+                    )
+                )
+                if fee_schedule is not None
+                else None
+            )
+            if taker_base_fee_bps is None:
+                taker_base_fee_bps = self._parse_int(
+                    self._first_value(
+                        raw_market,
+                        "takerBaseFee",
                     )
                 )
             category = self._parse_text(self._first_value(raw_market, "category"))
@@ -496,6 +503,19 @@ class MarketClassifier:
         if value is None or value == "":
             return None
         return int(Decimal(str(value)))
+
+    @staticmethod
+    def _parse_fee_rate_units(value: Any | None) -> int | None:
+        if isinstance(value, bool):
+            return None
+        numeric = MarketClassifier._parse_decimal(value)
+        if numeric is None or numeric < Decimal("0"):
+            return None
+        if numeric < Decimal("1"):
+            return int((numeric * _FEE_RATE_DENOMINATOR).to_integral_value())
+        if numeric == numeric.to_integral_value():
+            return int(numeric)
+        return int((numeric * _FEE_RATE_DENOMINATOR).to_integral_value())
 
     @staticmethod
     def _parse_text(value: Any | None) -> str | None:

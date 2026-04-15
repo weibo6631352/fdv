@@ -96,6 +96,8 @@ class StrategyWorker:
 
         event_name = str(event.event_type)
         snapshot = self._snapshot()
+        if event_name == DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value:
+            return await self._handle_orderbook_snapshot_updated(event, snapshot)
         if event_name == DomainEventType.ENTRY_PRICE_TOUCHED.value:
             return await self._handle_entry_price_touched(event, snapshot)
 
@@ -112,15 +114,11 @@ class StrategyWorker:
 
         return None
 
-    async def _handle_entry_price_touched(
+    async def _handle_orderbook_snapshot_updated(
         self,
         event: DomainEvent,
         snapshot: AccountSnapshot | None,
-    ) -> "StrategyWorkerResult":
-        positions = snapshot.positions if snapshot is not None else tuple(self._positions_provider())
-        open_orders = (
-            snapshot.open_orders if snapshot is not None else tuple(self._open_orders_provider())
-        )
+    ) -> "StrategyWorkerResult | None":
         plan = self._strategy_service.build_entry_plan(
             trace_id=event.trace_id,
             condition_id=event.condition_id,
@@ -133,8 +131,58 @@ class StrategyWorker:
             max_order_usdc=self._max_order_usdc,
             max_market_usdc=self._max_market_usdc,
             max_total_usdc=self._max_total_usdc,
-            positions=positions,
-            open_orders=open_orders,
+            positions=(snapshot.positions if snapshot is not None else tuple(self._positions_provider())),
+            open_orders=(
+                snapshot.open_orders if snapshot is not None else tuple(self._open_orders_provider())
+            ),
+        )
+        if plan.market is None or plan.orderbook is None or event.token_id != plan.market.no_token_id:
+            return None
+
+        state = self._state_for_market(plan.market)
+        if state is None:
+            self._transition_market(plan.market, MarketLifecycle.WATCHING_ORDERBOOK)
+        elif state != MarketLifecycle.WATCHING_ORDERBOOK:
+            return None
+
+        if not plan.orderbook.no_entry_touched(self._strategy_service.runtime_profile.entry_no_price_max):
+            return None
+        return await self._execute_entry_plan(event=event, snapshot=snapshot, plan=plan)
+
+    async def _handle_entry_price_touched(
+        self,
+        event: DomainEvent,
+        snapshot: AccountSnapshot | None,
+    ) -> "StrategyWorkerResult":
+        plan = self._strategy_service.build_entry_plan(
+            trace_id=event.trace_id,
+            condition_id=event.condition_id,
+            token_id=event.token_id,
+            account_snapshot=snapshot,
+            portfolio_budget_usdc=self._portfolio_budget_usdc,
+            available_usdc=(
+                self._available_usdc if self._available_usdc is not None else _snapshot_balance(snapshot)
+            ),
+            max_order_usdc=self._max_order_usdc,
+            max_market_usdc=self._max_market_usdc,
+            max_total_usdc=self._max_total_usdc,
+            positions=(snapshot.positions if snapshot is not None else tuple(self._positions_provider())),
+            open_orders=(
+                snapshot.open_orders if snapshot is not None else tuple(self._open_orders_provider())
+            ),
+        )
+        return await self._execute_entry_plan(event=event, snapshot=snapshot, plan=plan)
+
+    async def _execute_entry_plan(
+        self,
+        *,
+        event: DomainEvent,
+        snapshot: AccountSnapshot | None,
+        plan: StrategyEntryPlan,
+    ) -> "StrategyWorkerResult":
+        positions = snapshot.positions if snapshot is not None else tuple(self._positions_provider())
+        open_orders = (
+            snapshot.open_orders if snapshot is not None else tuple(self._open_orders_provider())
         )
         if snapshot is not None and not snapshot.allow_new_buys:
             skipped = await self._publish(

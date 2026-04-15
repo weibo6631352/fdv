@@ -71,11 +71,34 @@ const formatFeeValue = (value: string | number | null | undefined): string => {
   return feeFormatter.format(numericValue)
 }
 
-const formatFeePreviewInline = (preview: TakerFeePreview | null | undefined): string => {
+const resolveFeePerTradeDollar = (
+  preview: TakerFeePreview | null | undefined,
+  side: 'buy' | 'sell',
+): number | null => {
   if (!preview) {
-    return '手续费预估不可用'
+    return null
   }
-  return `${formatDecimal(preview.basis_size_shares)}股 买${formatFeeValue(preview.buy?.fee_usdc)} / 卖${formatFeeValue(preview.sell?.fee_usdc)}`
+  const quote = side === 'buy' ? preview.buy : preview.sell
+  if (!quote?.fee_usdc || !quote.price || !preview.basis_size_shares) {
+    return null
+  }
+  const feeUsdc = Number(quote.fee_usdc)
+  const price = Number(quote.price)
+  const basisSizeShares = Number(preview.basis_size_shares)
+  if (
+    Number.isNaN(feeUsdc) ||
+    Number.isNaN(price) ||
+    Number.isNaN(basisSizeShares) ||
+    price <= 0 ||
+    basisSizeShares <= 0
+  ) {
+    return null
+  }
+  const basisNotionalUsdc = basisSizeShares * price
+  if (basisNotionalUsdc <= 0) {
+    return null
+  }
+  return feeUsdc / basisNotionalUsdc
 }
 
 const formatFeePreviewDetail = (
@@ -89,10 +112,33 @@ const formatFeePreviewDetail = (
   if (!quote) {
     return '—'
   }
-  const chargedInLabel = quote.charged_in === 'shares' ? '份额' : 'USDC'
-  const chargedInValue = quote.charged_in === 'shares' ? formatFeeValue(quote.fee_shares) : formatFeeValue(quote.fee_usdc)
+  const feePerTradeDollar = resolveFeePerTradeDollar(preview, side)
   const priceSourceLabel = quote.price_source === 'best_ask' ? '卖一' : '买一'
-  return `${formatFeeValue(quote.fee_usdc)} USDC (${priceSourceLabel} ${formatDecimal(quote.price)}) / 实扣${chargedInLabel}${chargedInValue}`
+  return `${formatFeeValue(feePerTradeDollar)} USDC / $1 (${priceSourceLabel} ${formatDecimal(quote.price)})`
+}
+
+const formatOutcomeBuySell = (
+  buyPrice: string | number | null | undefined,
+  sellPrice: string | number | null | undefined,
+): string => `买${formatDecimal(buyPrice)} / 卖${formatDecimal(sellPrice)}`
+
+const formatFeePreviewSummary = (preview: TakerFeePreview | null | undefined): string =>
+  `买${formatFeeValue(resolveFeePerTradeDollar(preview, 'buy'))} / 卖${formatFeeValue(resolveFeePerTradeDollar(preview, 'sell'))}`
+
+const renderBinaryQuoteSummary = (row: MarketView) => {
+  const noBuyPrice = row.best_ask ?? row.orderbook?.best_ask ?? null
+  const noSellPrice = row.best_bid ?? row.orderbook?.best_bid ?? null
+  const yesBuyPrice = row.yes_best_ask ?? row.yes_orderbook?.best_ask ?? null
+  const yesSellPrice = row.yes_best_bid ?? row.yes_orderbook?.best_bid ?? null
+
+  return (
+    <div className="table-primary">
+      <div>{`YES ${formatOutcomeBuySell(yesBuyPrice, yesSellPrice)}`}</div>
+      <span>{`YES 手续费 ${formatFeePreviewSummary(row.yes_fee_preview)}`}</span>
+      <div>{`NO ${formatOutcomeBuySell(noBuyPrice, noSellPrice)}`}</div>
+      <span>{`NO 手续费 ${formatFeePreviewSummary(row.fee_preview)}`}</span>
+    </div>
+  )
 }
 
 export const MarketsPage = () => {
@@ -193,7 +239,8 @@ export const MarketsPage = () => {
       }),
     enabled: Boolean(activeTokenId),
   })
-  const selectedFeePreview = detailQuery.data?.fee_preview ?? selectedMarket?.fee_preview ?? null
+  const selectedNoFeePreview = detailQuery.data?.fee_preview ?? selectedMarket?.fee_preview ?? null
+  const selectedYesFeePreview = detailQuery.data?.yes_fee_preview ?? selectedMarket?.yes_fee_preview ?? null
 
   const columns: Array<DataColumn<MarketView>> = [
     {
@@ -264,15 +311,10 @@ export const MarketsPage = () => {
       cell: (row) => formatDecimal(row.spread),
     },
     {
-      key: 'fee',
-      header: '费率(BPS)',
+      key: 'quotes',
+      header: 'YES / NO 买卖价 / 手续费',
       align: 'right',
-      cell: (row) => (
-        <div className="table-primary">
-          <div>{formatDecimal(row.market.fees.fee_rate_bps)}</div>
-          <span>{formatFeePreviewInline(row.fee_preview)}</span>
-        </div>
-      ),
+      cell: (row) => renderBinaryQuoteSummary(row),
     },
     {
       key: 'position',
@@ -483,12 +525,20 @@ export const MarketsPage = () => {
                 <dd>{formatDecimal(selectedMarket.market.fees.fee_rate_bps)}</dd>
               </div>
               <div>
-                <dt>100股吃单手续费(买)</dt>
-                <dd>{formatFeePreviewDetail(selectedFeePreview, 'buy')}</dd>
+                <dt>YES 每1美元成交额手续费(买)</dt>
+                <dd>{formatFeePreviewDetail(selectedYesFeePreview, 'buy')}</dd>
               </div>
               <div>
-                <dt>100股吃单手续费(卖)</dt>
-                <dd>{formatFeePreviewDetail(selectedFeePreview, 'sell')}</dd>
+                <dt>YES 每1美元成交额手续费(卖)</dt>
+                <dd>{formatFeePreviewDetail(selectedYesFeePreview, 'sell')}</dd>
+              </div>
+              <div>
+                <dt>NO 每1美元成交额手续费(买)</dt>
+                <dd>{formatFeePreviewDetail(selectedNoFeePreview, 'buy')}</dd>
+              </div>
+              <div>
+                <dt>NO 每1美元成交额手续费(卖)</dt>
+                <dd>{formatFeePreviewDetail(selectedNoFeePreview, 'sell')}</dd>
               </div>
               <div>
                 <dt>费率更新时间</dt>

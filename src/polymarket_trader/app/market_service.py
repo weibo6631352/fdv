@@ -73,7 +73,11 @@ class MarketService:
                         else existing_market.taker_base_fee_bps
                     ),
                 )
-                if existing_market.fee_rate_bps is not None:
+                if (
+                    existing_market.fee_rate_bps is not None
+                    and candidate_market.fee_rate_bps is None
+                    and candidate_market.taker_base_fee_bps is None
+                ):
                     candidate_market = candidate_market.with_fee_rate(
                         existing_market.fee_rate_bps,
                         fee_rate_updated_at=existing_market.fee_rate_updated_at,
@@ -136,8 +140,15 @@ class MarketService:
             discovery_kind=discovery_kind,
             subscription_request=subscription_request,
             raw_market=raw_market,
+            existing_market=existing_market,
             tracked_market=tracked_market,
             tracking_retained=tracking_retained,
+            tracking_removed=(
+                classification.accepted
+                and market is None
+                and existing_market is not None
+                and not tracking_retained
+            ),
             universe_decision=universe_decision,
         )
 
@@ -261,13 +272,19 @@ class MarketDiscoveryOutcome:
     discovery_kind: str
     subscription_request: dict[str, Any] | None
     raw_market: Mapping[str, Any]
+    existing_market: Market | None = None
     tracked_market: Market | None = None
     tracking_retained: bool = False
+    tracking_removed: bool = False
     universe_decision: UniverseDecision | None = None
 
     @property
     def accepted(self) -> bool:
         return self.market is not None
+
+    @property
+    def should_publish_event(self) -> bool:
+        return self.accepted or self.tracking_retained or self.tracking_removed
 
 
 def _serialize_market(market: Market | None) -> dict[str, Any] | None:

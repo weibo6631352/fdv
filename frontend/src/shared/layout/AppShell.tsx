@@ -74,6 +74,10 @@ export const AppShell = ({ children }: AppShellProps) => {
   const accountAddress = walletAddress ?? funderAddress
   const accountLabel = formatAddressShort(accountAddress)
   const trackedMarketCount = runtimeQuery.data?.registry.market_count ?? marketsQuery.data?.total ?? 0
+  const fullScanMarketCount =
+    runtimeQuery.data?.market_discovery.last_completed_round_markets ||
+    runtimeQuery.data?.market_discovery.markets_seen_in_round ||
+    0
   const positionMarketCount =
     marketsQuery.data?.items.filter((item) => hasPositiveShares(item.position?.shares)).length ?? 0
 
@@ -128,8 +132,12 @@ export const AppShell = ({ children }: AppShellProps) => {
             </div>
             <div className="top-metric-list" aria-label="运行概览">
               <div className="top-metric">
-                <span>跟踪市场</span>
+                <span>策略跟踪</span>
                 <strong>{trackedMarketCount}</strong>
+              </div>
+              <div className="top-metric">
+                <span>上轮全量扫描</span>
+                <strong>{fullScanMarketCount}</strong>
               </div>
               <div className="top-metric">
                 <span>持仓市场</span>

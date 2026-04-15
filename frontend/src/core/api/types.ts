@@ -56,6 +56,7 @@ export interface RuntimePayload {
   }
   runtime: RuntimeStatus
   bootstrap_summary: JsonValue
+  market_discovery: MarketDiscoverySnapshot
   registry: {
     market_count: number
     markets: JsonValue[]
@@ -65,6 +66,24 @@ export interface RuntimePayload {
   persistence: JsonValue
   markets: MarketView[]
   portfolio: JsonObject
+}
+
+export interface MarketDiscoverySnapshot {
+  round_id: number
+  cursor_active: boolean
+  round_started_at: string | null
+  last_round_completed_at: string | null
+  pages_scanned_in_round: number
+  markets_seen_in_round: number
+  last_completed_round_pages: number
+  last_completed_round_markets: number
+  last_page_size: number
+  last_tick_started_at: string | null
+  last_tick_completed_at: string | null
+  last_tick_requests: number
+  last_tick_markets: number
+  last_error: string | null
+  consecutive_failures: number
 }
 
 export interface PortfolioSnapshot {
@@ -289,6 +308,7 @@ export interface MarketView {
   market: MarketSummary
   tracked: boolean
   orderbook: OrderbookSnapshot | null
+  yes_orderbook: OrderbookSnapshot | null
   position: PositionRecord | null
   open_orders: OrderRecord[]
   open_order_count: number
@@ -296,6 +316,10 @@ export interface MarketView {
   best_bid: string | null
   spread: string | null
   fee_preview: TakerFeePreview | null
+  yes_best_ask: string | null
+  yes_best_bid: string | null
+  yes_spread: string | null
+  yes_fee_preview: TakerFeePreview | null
   entry_price_touched: boolean
 }
 

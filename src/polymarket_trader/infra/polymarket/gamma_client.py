@@ -135,6 +135,25 @@ class GammaClient(PolymarketRestClientBase):
         )
         return tuple(normalize_gamma_market(item) for item in _iter_mappings(payload))
 
+    async def list_markets_keyset_by_params(
+        self,
+        params: Mapping[str, Any] | None = None,
+        *,
+        timeout_s: float | None = None,
+    ) -> tuple[tuple[GammaMarketDTO, ...], str | None]:
+        payload = await self.get_json(
+            f"{self._markets_path.rstrip('/')}/keyset",
+            params=_normalize_query_params(params),
+            timeout_s=timeout_s,
+            operation="gamma.list_markets_keyset",
+            unwrap=False,
+        )
+        if not isinstance(payload, Mapping):
+            raise TypeError("gamma keyset markets response is not a mapping")
+        markets = tuple(normalize_gamma_market(item) for item in _iter_mappings(payload))
+        next_cursor = payload.get("next_cursor")
+        return markets, None if next_cursor is None else str(next_cursor)
+
     async def list_events(
         self,
         *,

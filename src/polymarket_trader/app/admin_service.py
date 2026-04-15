@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -82,6 +83,9 @@ def _page_payload(page: RepositoryPage[Any], *, serializer: Callable[[Any], Any]
         "limit": page.limit,
         "offset": page.offset,
     }
+
+
+_MARKET_LIST_YES_ORDERBOOK_CONCURRENCY = 8
 
 
 def _market_status_allowed_for_manual_sell(market: Market) -> bool:
@@ -228,6 +232,7 @@ class AdminService:
         runtime_status = self._runtime_status_snapshot()
         account = self._account_snapshot()
         registry = self._registry_snapshot()
+        market_discovery = self._market_discovery_snapshot()
         event_bus = self._event_bus_snapshot()
         persistence = self._persistence_snapshot()
         markets = [self._serialize_market_view(market) for market in registry.markets]
@@ -239,6 +244,7 @@ class AdminService:
             "identity": self._identity_snapshot(),
             "runtime": runtime_status,
             "bootstrap_summary": _jsonable(getattr(self.runtime, "bootstrap_summary", {})),
+            "market_discovery": market_discovery,
             "registry": {
                 "market_count": len(registry.markets),
                 "markets": [_jsonable(market) for market in markets],
@@ -289,11 +295,13 @@ class AdminService:
                 sort_direction=sort_direction,
             )
             page = self._slice_sequence(markets, limit=limit, offset=offset)
+            yes_orderbooks = await self._resolve_yes_orderbooks(page.items)
             items = [
                 self._serialize_market_view(
                     market,
                     account_snapshot=account,
                     registry_snapshot=registry,
+                    yes_orderbook=yes_orderbooks.get(market.condition_id),
                 )
                 for market in page.items
             ]
@@ -321,11 +329,13 @@ class AdminService:
         page = await self._with_repositories(_query)
         registry = self._registry_snapshot()
         account = self._account_snapshot()
+        yes_orderbooks = await self._resolve_yes_orderbooks(page.items)
         items = [
             self._serialize_market_view(
                 market,
                 account_snapshot=account,
                 registry_snapshot=registry,
+                yes_orderbook=yes_orderbooks.get(market.condition_id),
             )
             for market in page.items
         ]
@@ -461,6 +471,9 @@ class AdminService:
                     market_by_token = await repos.market.get_by_no_token_id(token_id)
                     if market_by_token is not None:
                         return market_by_token
+                    market_by_yes_token = await repos.market.get_by_yes_token_id(token_id)
+                    if market_by_yes_token is not None:
+                        return market_by_yes_token
                 if market_slug is not None:
                     return await repos.market.get_by_market_slug(market_slug)
                 return None
@@ -468,7 +481,10 @@ class AdminService:
             market = await self._with_repositories(_query)
         if market is None:
             return None
-        return self._serialize_market_view(market)
+        return self._serialize_market_view(
+            market,
+            yes_orderbook=await self._resolve_yes_orderbook(market),
+        )
 
     async def get_market_orderbook(
         self,
@@ -969,6 +985,8 @@ class AdminService:
     ) -> list[dict[str, Any]]:
         blocking_issues = list(config_readiness.get("blocking_issues", []))
         has_config_blockers = bool(blocking_issues)
+        runtime_blocking_reason_list = tuple(str(reason) for reason in runtime_snapshot.get("blocking_reasons", ()))
+        runtime_blocking_reasons = set(runtime_blocking_reason_list)
         seen_issue_keys = {
             (str(issue.get("field", "")), str(issue.get("code", "")))
             for issue in blocking_issues
@@ -990,8 +1008,8 @@ class AdminService:
 
         # 首页阻塞栏只展示用户可以直接处理的根因。
         # Supervisor 的 blocking_reasons 保留在 runtime 快照里供排障，不再原样外泄到列表。
-        for reason in runtime_snapshot.get("blocking_reasons", ()):
-            issue = self._runtime_blocking_issue_from_reason(str(reason), has_config_blockers=has_config_blockers)
+        for reason in runtime_blocking_reason_list:
+            issue = self._runtime_blocking_issue_from_reason(reason, has_config_blockers=has_config_blockers)
             if issue is None:
                 continue
             append_issue(str(issue["field"]), str(issue["code"]), str(issue["message"]))
@@ -999,19 +1017,24 @@ class AdminService:
         user_ws_connected = bool(runtime_snapshot.get("user_ws_connected"))
         last_reconcile_at = runtime_snapshot.get("last_reconcile_at")
         allow_new_buys = bool(runtime_snapshot.get("allow_new_buys"))
-        if not user_ws_connected:
+        has_runtime_client_blocker = {
+            "trading_client_not_ready",
+            "trading_client_unavailable",
+        }.intersection(runtime_blocking_reasons)
+        expose_runtime_account_blockers = not has_config_blockers and not has_runtime_client_blocker
+        if expose_runtime_account_blockers and not user_ws_connected:
             append_issue(
                 "user_ws_connected",
                 "ws_disconnected",
                 "用户行情连接未连接，暂停自动下单",
             )
-        if last_reconcile_at is None:
+        if expose_runtime_account_blockers and last_reconcile_at is None:
             append_issue(
                 "last_reconcile_at",
                 "reconcile_pending",
                 "首次 reconcile 未完成，禁止自动下单",
             )
-        if not allow_new_buys and user_ws_connected and last_reconcile_at is not None:
+        if expose_runtime_account_blockers and not allow_new_buys and user_ws_connected and last_reconcile_at is not None:
             append_issue(
                 "allow_new_buys",
                 "buy_gate_closed",
@@ -1155,12 +1178,52 @@ class AdminService:
             "last_reconcile_at": _jsonable(account.last_reconcile_at),
         }
 
+    async def _resolve_yes_orderbooks(
+        self,
+        markets: Sequence[Market],
+    ) -> dict[str, OrderbookSnapshot | None]:
+        if not markets:
+            return {}
+
+        semaphore = asyncio.Semaphore(_MARKET_LIST_YES_ORDERBOOK_CONCURRENCY)
+
+        async def _fetch(market: Market) -> tuple[str, OrderbookSnapshot | None]:
+            async with semaphore:
+                return market.condition_id, await self._resolve_yes_orderbook(market)
+
+        return {
+            condition_id: orderbook
+            for condition_id, orderbook in await asyncio.gather(*(_fetch(market) for market in markets))
+        }
+
+    async def _resolve_yes_orderbook(self, market: Market) -> OrderbookSnapshot | None:
+        if not market.yes_token_id:
+            return None
+        snapshot = self._market_ws_snapshot(market.yes_token_id)
+        if snapshot is not None and (
+            snapshot.best_bid is not None
+            or snapshot.best_ask is not None
+            or bool(snapshot.bids)
+            or bool(snapshot.asks)
+        ):
+            return snapshot
+        try:
+            orderbook = await self._clob_client().get_orderbook(
+                market.yes_token_id,
+                market_slug=market.market_slug,
+                condition_id=market.condition_id,
+            )
+        except Exception:
+            return None
+        return orderbook.to_snapshot()
+
     def _serialize_market_view(
         self,
         market: Market,
         *,
         account_snapshot: AccountSnapshot | None = None,
         registry_snapshot: MarketRegistrySnapshot | None = None,
+        yes_orderbook: OrderbookSnapshot | None = None,
     ) -> dict[str, Any]:
         if account_snapshot is None:
             account_snapshot = self._account_snapshot()
@@ -1183,6 +1246,16 @@ class AdminService:
                 build_taker_fee_preview(
                     market=market,
                     orderbook=orderbook,
+                )
+            ),
+            "yes_orderbook": self._serialize_orderbook(yes_orderbook),
+            "yes_best_ask": _decimal_text(yes_orderbook.best_ask) if yes_orderbook is not None else None,
+            "yes_best_bid": _decimal_text(yes_orderbook.best_bid) if yes_orderbook is not None else None,
+            "yes_spread": _decimal_text(yes_orderbook.spread) if yes_orderbook is not None else None,
+            "yes_fee_preview": self._serialize_fee_preview(
+                build_taker_fee_preview(
+                    market=market,
+                    orderbook=yes_orderbook,
                 )
             ),
             "entry_price_touched": bool(
@@ -1554,6 +1627,44 @@ class AdminService:
         snapshot = worker.snapshot()
         return snapshot
 
+    def _market_discovery_snapshot(self) -> dict[str, Any]:
+        state = getattr(self.runtime, "market_discovery_scan", None)
+        if state is None:
+            return {
+                "round_id": 0,
+                "cursor_active": False,
+                "round_started_at": None,
+                "last_round_completed_at": None,
+                "pages_scanned_in_round": 0,
+                "markets_seen_in_round": 0,
+                "last_completed_round_pages": 0,
+                "last_completed_round_markets": 0,
+                "last_page_size": 0,
+                "last_tick_started_at": None,
+                "last_tick_completed_at": None,
+                "last_tick_requests": 0,
+                "last_tick_markets": 0,
+                "last_error": None,
+                "consecutive_failures": 0,
+            }
+        return {
+            "round_id": int(getattr(state, "round_id", 0)),
+            "cursor_active": getattr(state, "after_cursor", None) is not None,
+            "round_started_at": _jsonable(getattr(state, "round_started_at", None)),
+            "last_round_completed_at": _jsonable(getattr(state, "last_round_completed_at", None)),
+            "pages_scanned_in_round": int(getattr(state, "pages_scanned_in_round", 0)),
+            "markets_seen_in_round": int(getattr(state, "markets_seen_in_round", 0)),
+            "last_completed_round_pages": int(getattr(state, "last_completed_round_pages", 0)),
+            "last_completed_round_markets": int(getattr(state, "last_completed_round_markets", 0)),
+            "last_page_size": int(getattr(state, "last_page_size", 0)),
+            "last_tick_started_at": _jsonable(getattr(state, "last_tick_started_at", None)),
+            "last_tick_completed_at": _jsonable(getattr(state, "last_tick_completed_at", None)),
+            "last_tick_requests": int(getattr(state, "last_tick_requests", 0)),
+            "last_tick_markets": int(getattr(state, "last_tick_markets", 0)),
+            "last_error": getattr(state, "last_error", None),
+            "consecutive_failures": int(getattr(state, "consecutive_failures", 0)),
+        }
+
     def _has_db_session_factory(self) -> bool:
         return getattr(self.runtime, "db_session_factory", None) is not None
 
@@ -1604,6 +1715,11 @@ class AdminService:
                 market = registry.get_by_no_token_id(token_id)
                 if market is not None:
                     return market
+                if hasattr(registry, "snapshot"):
+                    snapshot = registry.snapshot()
+                    for candidate in snapshot.markets:
+                        if candidate.yes_token_id == token_id:
+                            return candidate
             if market_slug is not None:
                 market = registry.get_by_slug(market_slug)
                 if market is not None:

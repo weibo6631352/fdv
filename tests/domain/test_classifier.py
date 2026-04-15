@@ -42,6 +42,30 @@ def test_classifier_preserves_generic_text_fields() -> None:
     assert market.market_name == "Threshold market"
 
 
+def test_classifier_prefers_fee_schedule_rate_over_legacy_taker_base_fee() -> None:
+    result = MarketClassifier().classify(
+        {
+            "slug": "sample-market-fees",
+            "conditionId": "condition",
+            "clobTokenIds": ["yes", "no"],
+            "orderPriceMinTickSize": "0.01",
+            "orderMinSize": "1",
+            "takerBaseFee": 1000,
+            "feeSchedule": {
+                "rate": 0.072,
+                "takerOnly": True,
+            },
+        }
+    )
+
+    assert result.accepted
+    assert result.taker_base_fee_bps == 72
+
+    market = result.to_market()
+    assert market.taker_base_fee_bps == 72
+    assert market.fee_rate_bps == 72
+
+
 def test_classifier_rejects_missing_required_identifiers() -> None:
     result = MarketClassifier().classify(
         {

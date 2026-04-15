@@ -113,6 +113,11 @@ export const DashboardPage = () => {
   )
   const trackedPreview = trackedMarkets.slice(0, 6)
   const positionPreview = positionMarkets.slice(0, 6)
+  const trackedMarketCount = runtimeQuery.data?.registry.market_count ?? 0
+  const lastCompletedFullScanMarkets = runtimeQuery.data?.market_discovery.last_completed_round_markets ?? 0
+  const currentRoundScannedMarkets = runtimeQuery.data?.market_discovery.markets_seen_in_round ?? 0
+  const fullScanMarketCount = lastCompletedFullScanMarkets || currentRoundScannedMarkets
+  const fullScanCompletedAt = runtimeQuery.data?.market_discovery.last_round_completed_at ?? null
 
   return (
     <div className="page-stack">
@@ -141,9 +146,9 @@ export const DashboardPage = () => {
           <small>授权额度 {formatCompact(portfolioQuery.data?.allowance_usdc)}</small>
         </div>
         <div className="stat-card">
-          <span>跟踪市场</span>
-          <strong>{runtimeQuery.data?.registry.market_count ?? 0}</strong>
-          <small>运行中线程 {runningWorkerCount}</small>
+          <span>全量扫描面</span>
+          <strong>{fullScanMarketCount}</strong>
+          <small>策略跟踪 {trackedMarketCount} · 运行中线程 {runningWorkerCount}</small>
         </div>
       </section>
 
@@ -189,6 +194,13 @@ export const DashboardPage = () => {
               <dt>持仓 / 未完成订单</dt>
               <dd>
                 {portfolioQuery.data?.position_count ?? 0} / {portfolioQuery.data?.open_order_count ?? 0}
+              </dd>
+            </div>
+            <div>
+              <dt>上轮全量扫描</dt>
+              <dd>
+                {fullScanMarketCount} 个活跃市场
+                {fullScanCompletedAt ? ` · 完成于 ${formatDateTime(fullScanCompletedAt)}` : ''}
               </dd>
             </div>
           </div>
@@ -250,7 +262,7 @@ export const DashboardPage = () => {
       </SectionCard>
 
       <div className="content-grid content-grid--two">
-        <SectionCard title="跟踪市场" subtitle="通用跟踪清单，点击可直接打开官网市场页。">
+        <SectionCard title="策略跟踪市场" subtitle="这里只展示当前策略实际纳入并持续跟踪的市场。">
           {trackedPreview.length > 0 ? (
             <>
               <ul className="market-list">
@@ -289,11 +301,15 @@ export const DashboardPage = () => {
                 })}
               </ul>
               {trackedMarkets.length > trackedPreview.length ? (
-                <p className="muted">还有 {trackedMarkets.length - trackedPreview.length} 个跟踪市场未展开。</p>
+                <p className="muted">还有 {trackedMarkets.length - trackedPreview.length} 个策略跟踪市场未展开。</p>
               ) : null}
             </>
           ) : (
-            <p className="muted">当前没有可展示的跟踪市场。</p>
+            <p className="muted">
+              {fullScanMarketCount > 0
+                ? `上轮全量扫描 ${fullScanMarketCount} 个活跃市场，当前策略还没有纳入市场。`
+                : '当前还没有完成一轮全量扫描。'}
+            </p>
           )}
         </SectionCard>
 

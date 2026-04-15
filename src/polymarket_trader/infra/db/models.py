@@ -63,6 +63,31 @@ def _datetime_value(value: Any | None) -> datetime | None:
         return None
 
 
+def _fee_rate_units_from_payload(payload: JsonMapping | None) -> int | None:
+    if not isinstance(payload, Mapping):
+        return None
+    fee_schedule = payload.get("feeSchedule")
+    if not isinstance(fee_schedule, Mapping):
+        fee_schedule = payload.get("fee_schedule")
+    if not isinstance(fee_schedule, Mapping):
+        return None
+    rate = fee_schedule.get("rate")
+    if rate is None:
+        rate = fee_schedule.get("base_fee")
+    if rate is None:
+        rate = fee_schedule.get("baseFee")
+    if rate is None or isinstance(rate, bool):
+        return None
+    numeric = _decimal(rate)
+    if numeric is None or numeric < Decimal("0"):
+        return None
+    if numeric < Decimal("1"):
+        return int((numeric * Decimal("1000")).to_integral_value())
+    if numeric == numeric.to_integral_value():
+        return int(numeric)
+    return int((numeric * Decimal("1000")).to_integral_value())
+
+
 def _json_safe(value: Any) -> JsonValue:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -291,6 +316,7 @@ class MarketModel(Base, TimestampMixin):
 
     def to_domain(self) -> Market:
         raw_payload = self.raw_payload if isinstance(self.raw_payload, Mapping) else {}
+        schedule_fee_rate_bps = _fee_rate_units_from_payload(raw_payload)
         return Market(
             condition_id=self.condition_id,
             market_slug=self.market_slug,
@@ -308,11 +334,17 @@ class MarketModel(Base, TimestampMixin):
             neg_risk=bool(self.neg_risk),
             fees_enabled=self.fees_enabled,
             maker_base_fee_bps=self.maker_base_fee_bps,
-            taker_base_fee_bps=self.taker_base_fee_bps,
-            fee_rate_bps=self.fee_rate_bps,
+            taker_base_fee_bps=(
+                schedule_fee_rate_bps
+                if schedule_fee_rate_bps is not None
+                else self.taker_base_fee_bps
+            ),
+            fee_rate_bps=(
+                schedule_fee_rate_bps if schedule_fee_rate_bps is not None else self.fee_rate_bps
+            ),
             fee_rate_updated_at=(
                 None
-                if self.fee_rate_updated_at is None
+                if schedule_fee_rate_bps is not None or self.fee_rate_updated_at is None
                 else _ensure_aware(self.fee_rate_updated_at)
             ),
             category=self.category,

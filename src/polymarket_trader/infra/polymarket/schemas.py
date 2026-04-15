@@ -25,6 +25,8 @@ from polymarket_trader.domain.order import (
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
 
+_FEE_RATE_DENOMINATOR = Decimal("1000")
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -139,6 +141,19 @@ def _coerce_int(value: Any | None) -> int | None:
     with contextlib.suppress(ArithmeticError, ValueError):
         return int(number)
     return None
+
+
+def _coerce_fee_rate_units(value: Any | None) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    numeric = _coerce_decimal(value)
+    if numeric is None or numeric < Decimal("0"):
+        return None
+    if numeric < Decimal("1"):
+        return int((numeric * _FEE_RATE_DENOMINATOR).to_integral_value())
+    if numeric == numeric.to_integral_value():
+        return int(numeric)
+    return int((numeric * _FEE_RATE_DENOMINATOR).to_integral_value())
 
 
 def _coerce_bool(value: Any | None) -> bool | None:
@@ -681,14 +696,17 @@ class GammaMarketDTO:
         fee_schedule = _maybe_mapping(_first_value(self.raw, "fee_schedule", "feeSchedule"))
         token_ids = _token_id_tuple(_first_value(self.raw, "clobTokenIds"))
         raw_fees_enabled = _first_value(self.raw, "fees_enabled", "feesEnabled")
+        fee_schedule_rate_bps = (
+            _coerce_fee_rate_units(_first_value(fee_schedule, "rate", "base_fee", "baseFee"))
+            if fee_schedule is not None
+            else None
+        )
         raw_taker_base_fee = _first_value(
             self.raw,
             "taker_base_fee_bps",
             "takerBaseFee",
             "taker_base_fee",
         )
-        if raw_taker_base_fee is None and fee_schedule is not None:
-            raw_taker_base_fee = _first_value(fee_schedule, "rate", "base_fee", "baseFee")
         raw_tags = _first_value(self.raw, "tags")
         if raw_tags is None and event is not None:
             raw_tags = _first_value(event, "tags")
@@ -742,7 +760,11 @@ class GammaMarketDTO:
             "taker_base_fee_bps",
             self.taker_base_fee_bps
             if self.taker_base_fee_bps is not None
-            else _coerce_int(raw_taker_base_fee),
+            else (
+                fee_schedule_rate_bps
+                if fee_schedule_rate_bps is not None
+                else _coerce_int(raw_taker_base_fee)
+            ),
         )
         object.__setattr__(self, "category", self.category or _first_text(self.raw, "category", "cat") or _first_text(event or {}, "category"))
         object.__setattr__(self, "tags", self.tags or _string_tuple(raw_tags))
@@ -783,6 +805,7 @@ class GammaMarketDTO:
             fees_enabled=self.fees_enabled,
             maker_base_fee_bps=self.maker_base_fee_bps,
             taker_base_fee_bps=self.taker_base_fee_bps,
+            fee_rate_bps=self.taker_base_fee_bps,
             category=self.category,
             tags=self.tags,
             trading_status=status,

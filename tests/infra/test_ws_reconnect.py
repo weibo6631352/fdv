@@ -24,7 +24,7 @@ def _market() -> Market:
     )
 
 
-def test_market_ws_worker_emits_entry_touch_only_once() -> None:
+def test_market_ws_worker_emits_orderbook_updates_to_trading_lane() -> None:
     async def run() -> None:
         event_bus = EventBus()
         registry = MarketRegistry()
@@ -55,14 +55,17 @@ def test_market_ws_worker_emits_entry_touch_only_once() -> None:
 
         assert [str(event.event_type) for event in first_events] == [
             DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
-            DomainEventType.ENTRY_PRICE_TOUCHED.value,
         ]
         assert [str(event.event_type) for event in second_events] == [
             DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
         ]
+        assert worker.status_snapshot().tracked_token_ids == (
+            market.no_token_id,
+            market.yes_token_id,
+        )
 
-        entry_event = await event_bus.next_trading_event()
-        assert entry_event.event_type == DomainEventType.ENTRY_PRICE_TOUCHED
+        snapshot_event = await event_bus.next_trading_event()
+        assert snapshot_event.event_type == DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED
 
     asyncio.run(run())
 
@@ -77,6 +80,34 @@ def test_market_ws_worker_builds_official_subscription_payload() -> None:
         "type": "market",
         "custom_feature_enabled": True,
     }
+
+
+def test_market_ws_worker_updates_yes_side_snapshot() -> None:
+    async def run() -> None:
+        worker = MarketWsWorker()
+        market = _market()
+        worker.track_market(market)
+
+        events = await worker.handle_message(
+            {
+                "type": "best_bid_ask",
+                "token_id": market.yes_token_id,
+                "best_bid": "0.95",
+                "best_ask": "0.99",
+                "best_bid_size": "80",
+                "best_ask_size": "120",
+            }
+        )
+
+        snapshot = worker.snapshot(market.yes_token_id)
+        assert snapshot is not None
+        assert snapshot.best_bid == Decimal("0.95")
+        assert snapshot.best_ask == Decimal("0.99")
+        assert [str(event.event_type) for event in events] == [
+            DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
+        ]
+
+    asyncio.run(run())
 
 
 def test_market_ws_worker_updates_tick_size_in_registry() -> None:
@@ -131,7 +162,6 @@ def test_market_ws_worker_handles_official_price_change_batch_payload() -> None:
         assert snapshot.best_ask == Decimal("0.59")
         assert [str(event.event_type) for event in events] == [
             DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
-            DomainEventType.ENTRY_PRICE_TOUCHED.value,
         ]
 
     asyncio.run(run())
@@ -155,7 +185,10 @@ def test_market_ws_worker_handles_official_market_resolved_payload_with_assets_i
         assert [str(event.event_type) for event in events] == [
             DomainEventType.MARKET_RESOLVED_OR_DISABLED.value,
         ]
-        assert worker.status_snapshot().resolved_token_ids == (market.no_token_id,)
+        assert worker.status_snapshot().resolved_token_ids == (
+            market.no_token_id,
+            market.yes_token_id,
+        )
         updated = registry.get_by_condition_id(market.condition_id)
         assert updated is not None
         assert updated.trading_status == TradingStatus.RESOLVED
@@ -186,7 +219,7 @@ def test_market_ws_worker_writes_market_fee_schedule_from_new_market_message() -
         updated = registry.get_by_condition_id(market.condition_id)
         assert updated is not None
         assert updated.fees_enabled is True
-        assert updated.taker_base_fee_bps == 200
+        assert updated.taker_base_fee_bps == 20
         assert [str(event.event_type) for event in events] == [
             DomainEventType.MARKET_UPDATED.value,
             DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
@@ -194,7 +227,41 @@ def test_market_ws_worker_writes_market_fee_schedule_from_new_market_message() -
 
         published = await event_bus.next_maintenance_event()
         assert published.event_type == DomainEventType.MARKET_UPDATED
-        assert published.payload["market"]["fees"]["taker_base_fee_bps"] == 200
+        assert published.payload["market"]["fees"]["taker_base_fee_bps"] == 20
+
+    asyncio.run(run())
+
+
+def test_market_ws_worker_does_not_overwrite_fee_schedule_with_last_trade_fee_rate() -> None:
+    async def run() -> None:
+        event_bus = EventBus()
+        registry = MarketRegistry()
+        worker = MarketWsWorker(event_bus=event_bus, registry=registry)
+        market = _market().with_fee_schedule(fees_enabled=True, taker_base_fee_bps=72).with_fee_rate(72)
+        worker.track_market(market)
+
+        events = await worker.handle_message(
+            {
+                "event_type": "last_trade_price",
+                "market": market.condition_id,
+                "asset_id": market.no_token_id,
+                "last_trade_price": "0.58",
+                "fee_rate_bps": "1000",
+                "timestamp": "1757908892351",
+            }
+        )
+
+        updated = registry.get_by_condition_id(market.condition_id)
+        snapshot = worker.snapshot(market.no_token_id)
+        assert updated is not None
+        assert updated.taker_base_fee_bps == 72
+        assert updated.fee_rate_bps == 72
+        assert snapshot is not None
+        assert snapshot.last_trade_price == Decimal("0.58")
+        assert [str(event.event_type) for event in events] == [
+            DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
+        ]
+        assert event_bus.snapshot().maintenance_queue_depth == 0
 
     asyncio.run(run())
 
@@ -237,7 +304,7 @@ def test_market_ws_worker_writes_fee_rate_from_last_trade_price_message() -> Non
     asyncio.run(run())
 
 
-def test_market_ws_worker_waits_for_entry_threshold_then_overwrites_latest_snapshot() -> None:
+def test_market_ws_worker_overwrites_latest_snapshot() -> None:
     async def run() -> None:
         event_bus = EventBus()
         registry = MarketRegistry()
@@ -281,7 +348,6 @@ def test_market_ws_worker_waits_for_entry_threshold_then_overwrites_latest_snaps
         ]
         assert [str(event.event_type) for event in trigger_events] == [
             DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
-            DomainEventType.ENTRY_PRICE_TOUCHED.value,
         ]
         assert [str(event.event_type) for event in followup_events] == [
             DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
@@ -291,15 +357,12 @@ def test_market_ws_worker_waits_for_entry_threshold_then_overwrites_latest_snaps
         assert snapshot is not None
         assert snapshot.best_bid == Decimal("0.55")
         assert snapshot.best_ask == Decimal("0.59")
-        assert worker.status_snapshot().entry_price_touched_token_ids == (market.no_token_id,)
-
-        entry_event = await event_bus.next_trading_event()
-        assert entry_event.event_type == DomainEventType.ENTRY_PRICE_TOUCHED
+        assert worker.status_snapshot().entry_price_touched_token_ids == ()
 
     asyncio.run(run())
 
 
-def test_market_ws_worker_does_not_trigger_entry_touch_above_threshold() -> None:
+def test_market_ws_worker_routes_orderbook_updates_to_trading_queue() -> None:
     async def run() -> None:
         event_bus = EventBus()
         registry = MarketRegistry()
@@ -322,7 +385,7 @@ def test_market_ws_worker_does_not_trigger_entry_touch_above_threshold() -> None
             DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
         ]
         assert worker.status_snapshot().entry_price_touched_token_ids == ()
-        assert event_bus.trading_queue_depth() == 0
-        assert event_bus.maintenance_queue_depth() == 1
+        assert event_bus.trading_queue_depth() == 1
+        assert event_bus.maintenance_queue_depth() == 0
 
     asyncio.run(run())
