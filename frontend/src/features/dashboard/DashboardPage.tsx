@@ -101,7 +101,7 @@ export const DashboardPage = () => {
   const warnings = readyQuery.data?.warnings ?? []
   const recentAllocations = portfolioQuery.data?.recent_allocations ?? []
   const workers = workersQuery.data?.workers ?? []
-  const marketItems = marketsQuery.data?.items ?? []
+  const marketItems = useMemo(() => marketsQuery.data?.items ?? [], [marketsQuery.data?.items])
   const runningWorkerCount = workers.filter((worker) => (worker.state ?? worker.status) === 'running').length
   const trackedMarkets = useMemo(
     () => sortByEndDate(marketItems.filter((item) => item.tracked)),

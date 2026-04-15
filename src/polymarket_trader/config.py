@@ -151,6 +151,7 @@ class Settings(BaseSettings):
         "polymarket_funder_address",
         "database_password",
         "database_url_override",
+        "strategy_config_path",
         mode="before",
     )
     @classmethod

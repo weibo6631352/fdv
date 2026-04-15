@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useSearchParams } from 'react-router-dom'
@@ -103,7 +103,6 @@ export const MarketsPage = () => {
   const [sortBy, setSortBy] = useState('fee_rate_updated_at')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
   const [offset, setOffset] = useState(0)
-  const [selectedTokenId, setSelectedTokenId] = useState<string | null>(() => searchParams.get('token_id'))
 
   const runtimeQuery = useQuery({
     queryKey: ['runtime', 'markets'],
@@ -148,35 +147,26 @@ export const MarketsPage = () => {
 
   const selectedTokenParam = searchParams.get('token_id')
 
-  const selectMarket = (tokenId: string, replace = false) => {
-    setSelectedTokenId(tokenId)
+  const selectMarket = useCallback((tokenId: string, replace = false) => {
     if (selectedTokenParam === tokenId) {
       return
     }
     const nextParams = new URLSearchParams(searchParams)
     nextParams.set('token_id', tokenId)
     setSearchParams(nextParams, { replace })
-  }
+  }, [searchParams, selectedTokenParam, setSearchParams])
 
-  useEffect(() => {
-    if (selectedTokenParam && selectedTokenParam !== selectedTokenId) {
-      setSelectedTokenId(selectedTokenParam)
+  const activeTokenId = useMemo(() => {
+    if (selectedTokenParam) {
+      return filteredMarkets.some((item) => item.market.no_token_id === selectedTokenParam)
+        ? selectedTokenParam
+        : null
     }
-  }, [selectedTokenId, selectedTokenParam])
-
-  useEffect(() => {
-    if (!selectedTokenParam && !selectedTokenId && filteredMarkets[0]) {
-      selectMarket(filteredMarkets[0].market.no_token_id, true)
-    }
-  }, [filteredMarkets, searchParams, selectedTokenId, selectedTokenParam])
-
-  const activeTokenId =
-    selectedTokenId && filteredMarkets.some((item) => item.market.no_token_id === selectedTokenId)
-      ? selectedTokenId
-      : null
+    return filteredMarkets[0]?.market.no_token_id ?? null
+  }, [filteredMarkets, selectedTokenParam])
 
   const selectedMarket = filteredMarkets.find((item) => item.market.no_token_id === activeTokenId) ?? null
-  const selectionMissing = Boolean(selectedTokenId) && !selectedMarket
+  const selectionMissing = Boolean(selectedTokenParam) && !selectedMarket
 
   const detailQuery = useQuery({
     queryKey: ['market-detail', activeTokenId],
