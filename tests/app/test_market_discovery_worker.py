@@ -79,6 +79,46 @@ class _AcceptingStrategy:
         return candidate_market
 
 
+class _SwitchingStrategy:
+    def __init__(self, *, selected: bool, keep_tracking: bool = False) -> None:
+        self.selected = selected
+        self.keep_tracking = keep_tracking
+
+    @property
+    def spec(self):
+        return StrategySpec(name="switching")
+
+    @property
+    def runtime_profile(self):
+        return StrategyRuntimeProfile()
+
+    def build_discovery_queries(self):
+        return ()
+
+    def select_market(self, market):
+        if self.selected:
+            return UniverseDecision.include(reason="accepted")
+        return UniverseDecision.exclude(reason="strategy_filtered_out")
+
+    def size_entry(self, context):
+        raise AssertionError("not used")
+
+    def decide_entry(self, context):
+        raise AssertionError("not used")
+
+    def decide_exit(self, context):
+        raise AssertionError("not used")
+
+    def decide_recovery(self, context):
+        raise AssertionError("not used")
+
+    def should_keep_tracking(self, market, account_snapshot):
+        return self.keep_tracking
+
+    def build_filtered_tracking_market(self, candidate_market, *, existing_market, reason):
+        return candidate_market
+
+
 def test_market_discovery_worker_skips_untracked_filtered_out_markets() -> None:
     async def run() -> None:
         event_bus = EventBus()
@@ -159,5 +199,114 @@ def test_market_discovery_worker_skips_duplicate_market_payloads() -> None:
         assert first[0].event_type == DomainEventType.MARKET_DISCOVERED
         assert second == []
         assert event_bus.snapshot().maintenance_queue_depth == 1
+
+    asyncio.run(run())
+
+
+def test_market_discovery_worker_replays_duplicate_payload_when_tracking_state_changes() -> None:
+    async def run() -> None:
+        event_bus = EventBus()
+        registry = MarketRegistry()
+        strategy = _SwitchingStrategy(selected=True, keep_tracking=False)
+        worker = MarketDiscoveryWorker(
+            market_service=MarketService(
+                strategy_module=strategy,
+                registry=registry,
+            ),
+            event_bus=event_bus,
+        )
+        payload = {
+            "markets": [
+                {
+                    "conditionId": "condition-1",
+                    "slug": "sample-market-a",
+                    "eventTitle": "Sample FDV Event",
+                    "question": "Will this project hit $500M FDV?",
+                    "tags": [{"label": "Crypto", "slug": "crypto"}],
+                    "clobTokenIds": ["yes-1", "no-1"],
+                    "orderPriceMinTickSize": "0.01",
+                    "orderMinSize": "1",
+                    "active": True,
+                    "closed": False,
+                }
+            ]
+        }
+
+        first = await worker.ingest_source_page(payload, source="gamma.markets_keyset", trace_id="trace-1")
+        strategy.selected = False
+        second = await worker.ingest_source_page(payload, source="gamma.markets_keyset", trace_id="trace-2")
+
+        assert len(first) == 1
+        assert first[0].event_type == DomainEventType.MARKET_DISCOVERED
+        assert len(second) == 1
+        assert second[0].event_type == DomainEventType.MARKET_FILTERED_OUT
+        assert registry.get_by_condition_id("condition-1") is None
+
+    asyncio.run(run())
+
+
+def test_market_discovery_worker_treats_fee_schedule_change_as_market_update() -> None:
+    async def run() -> None:
+        event_bus = EventBus()
+        registry = MarketRegistry()
+        worker = MarketDiscoveryWorker(
+            market_service=MarketService(
+                strategy_module=_AcceptingStrategy(),
+                registry=registry,
+            ),
+            event_bus=event_bus,
+        )
+        first_payload = {
+            "markets": [
+                {
+                    "conditionId": "condition-1",
+                    "slug": "sample-market-a",
+                    "eventTitle": "Sample FDV Event",
+                    "question": "Will this project hit $500M FDV?",
+                    "tags": [{"label": "Crypto", "slug": "crypto"}],
+                    "clobTokenIds": ["yes-1", "no-1"],
+                    "orderPriceMinTickSize": "0.01",
+                    "orderMinSize": "1",
+                    "active": True,
+                    "closed": False,
+                    "takerBaseFee": 1000,
+                    "feeSchedule": {
+                        "rate": "0.072",
+                    },
+                }
+            ]
+        }
+        second_payload = {
+            "markets": [
+                {
+                    "conditionId": "condition-1",
+                    "slug": "sample-market-a",
+                    "eventTitle": "Sample FDV Event",
+                    "question": "Will this project hit $500M FDV?",
+                    "tags": [{"label": "Crypto", "slug": "crypto"}],
+                    "clobTokenIds": ["yes-1", "no-1"],
+                    "orderPriceMinTickSize": "0.01",
+                    "orderMinSize": "1",
+                    "active": True,
+                    "closed": False,
+                    "takerBaseFee": 1000,
+                    "feeSchedule": {
+                        "rate": "0.050",
+                    },
+                }
+            ]
+        }
+
+        first = await worker.ingest_source_page(first_payload, source="gamma.markets_keyset", trace_id="trace-1")
+        second = await worker.ingest_source_page(second_payload, source="gamma.markets_keyset", trace_id="trace-2")
+
+        assert len(first) == 1
+        assert first[0].event_type == DomainEventType.MARKET_DISCOVERED
+        assert len(second) == 1
+        assert second[0].event_type == DomainEventType.MARKET_UPDATED
+        market = registry.get_by_condition_id("condition-1")
+        assert market is not None
+        assert market.taker_base_fee_bps == 50
+        assert market.fee_rate_bps == 50
 
     asyncio.run(run())

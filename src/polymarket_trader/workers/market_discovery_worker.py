@@ -90,6 +90,19 @@ def _normalize_token_ids(value: Any) -> tuple[str, ...]:
     return (text,) if text else ()
 
 
+def _normalize_fee_schedule(value: Any) -> Mapping[str, Any] | None:
+    schedule = _maybe_mapping(value)
+    if schedule is None:
+        return None
+    return {
+        "enabled": _first_value(schedule, "enabled", "feesEnabled"),
+        "rate": _first_value(schedule, "rate", "base_fee", "baseFee"),
+        "exponent": _first_value(schedule, "exponent"),
+        "taker_only": _first_value(schedule, "takerOnly", "taker_only"),
+        "rebate_rate": _first_value(schedule, "rebateRate", "rebate_rate"),
+    }
+
+
 def _payload_signature(payload: Mapping[str, Any]) -> str:
     stable = {
         "condition_id": _first_text(payload, "condition_id", "conditionId", "condition"),
@@ -126,6 +139,9 @@ def _payload_signature(payload: Mapping[str, Any]) -> str:
             "taker_base_fee_bps",
             "takerBaseFee",
             "taker_base_fee",
+        ),
+        "fee_schedule": _normalize_fee_schedule(
+            _first_value(payload, "feeSchedule", "fee_schedule")
         ),
         "end_date": _first_text(payload, "endDate", "end_date", "endDateIso"),
         "icon_url": _first_text(payload, "icon"),
@@ -278,10 +294,9 @@ class MarketDiscoveryWorker:
 
     async def _classify_and_emit(self, raw_event: RawMarketEvent) -> DomainEvent | None:
         previous = self._lookup_seen(raw_event)
-        if previous is not None and _payload_signature(previous.payload) == _payload_signature(raw_event.payload):
-            self._remember_seen(raw_event)
-            self._last_failure = None
-            return None
+        previous_signature = _payload_signature(previous.payload) if previous is not None else None
+        current_signature = _payload_signature(raw_event.payload)
+        unchanged_payload = previous_signature == current_signature if previous_signature is not None else False
         outcome: MarketDiscoveryOutcome = self._market_service.ingest_raw_market(
             raw_event.payload,
             source=raw_event.source,
@@ -295,6 +310,10 @@ class MarketDiscoveryWorker:
         else:
             self._last_failure = None
         if not outcome.should_publish_event:
+            return None
+        previous_market = outcome.existing_market
+        current_market = outcome.tracked_market or outcome.market
+        if unchanged_payload and previous_market == current_market:
             return None
 
         event = MarketDiscoveryEvent(

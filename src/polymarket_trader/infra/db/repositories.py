@@ -94,6 +94,78 @@ def _row_dict(model: Any) -> dict[str, Any]:
     return {key: value for key, value in vars(model).items() if not key.startswith("_sa_")}
 
 
+def _market_matches_snapshot_filters(
+    market: Market,
+    *,
+    fee_rate_bps_min: int | None = None,
+    fee_rate_bps_max: int | None = None,
+    maker_base_fee_bps_min: int | None = None,
+    maker_base_fee_bps_max: int | None = None,
+    taker_base_fee_bps_min: int | None = None,
+    taker_base_fee_bps_max: int | None = None,
+) -> bool:
+    if fee_rate_bps_min is not None and (market.fee_rate_bps is None or market.fee_rate_bps < fee_rate_bps_min):
+        return False
+    if fee_rate_bps_max is not None and (market.fee_rate_bps is None or market.fee_rate_bps > fee_rate_bps_max):
+        return False
+    if maker_base_fee_bps_min is not None and (
+        market.maker_base_fee_bps is None or market.maker_base_fee_bps < maker_base_fee_bps_min
+    ):
+        return False
+    if maker_base_fee_bps_max is not None and (
+        market.maker_base_fee_bps is None or market.maker_base_fee_bps > maker_base_fee_bps_max
+    ):
+        return False
+    if taker_base_fee_bps_min is not None and (
+        market.taker_base_fee_bps is None or market.taker_base_fee_bps < taker_base_fee_bps_min
+    ):
+        return False
+    if taker_base_fee_bps_max is not None and (
+        market.taker_base_fee_bps is None or market.taker_base_fee_bps > taker_base_fee_bps_max
+    ):
+        return False
+    return True
+
+
+def _market_snapshot_sort_value(market: Market, sort_by: str) -> object | None:
+    return {
+        "market_slug": market.market_slug,
+        "fee_rate_bps": market.fee_rate_bps,
+        "fee_rate_updated_at": market.fee_rate_updated_at,
+        "maker_base_fee_bps": market.maker_base_fee_bps,
+        "taker_base_fee_bps": market.taker_base_fee_bps,
+    }[sort_by]
+
+
+def _sort_market_snapshots(
+    markets: Sequence[Market],
+    *,
+    sort_by: str | None = None,
+    sort_direction: str = "desc",
+) -> tuple[Market, ...]:
+    if sort_by is None:
+        return tuple(markets)
+    supported = {
+        "market_slug",
+        "fee_rate_bps",
+        "fee_rate_updated_at",
+        "maker_base_fee_bps",
+        "taker_base_fee_bps",
+    }
+    if sort_by not in supported:
+        return tuple(markets)
+    if sort_by == "market_slug":
+        return tuple(sorted(markets, key=lambda market: market.market_slug, reverse=sort_direction == "desc"))
+    present = [market for market in markets if _market_snapshot_sort_value(market, sort_by) is not None]
+    missing = [market for market in markets if _market_snapshot_sort_value(market, sort_by) is None]
+    present.sort(key=lambda market: market.market_slug)
+    present.sort(
+        key=lambda market: _market_snapshot_sort_value(market, sort_by),
+        reverse=sort_direction == "desc",
+    )
+    return tuple(present + missing)
+
+
 class MarketRepository(BaseRepository):
     """市场快照仓储。"""
 
@@ -147,6 +219,11 @@ class MarketRepository(BaseRepository):
                 "tick_size",
                 "min_order_size",
                 "neg_risk",
+                "fees_enabled",
+                "maker_base_fee_bps",
+                "taker_base_fee_bps",
+                "fee_rate_bps",
+                "fee_rate_updated_at",
                 "category",
                 "tags",
                 "matched_keywords",
@@ -195,6 +272,53 @@ class MarketRepository(BaseRepository):
             stmt = stmt.where(MarketModel.trading_status == trading_status)
         if fees_enabled is not None:
             stmt = stmt.where(MarketModel.fees_enabled.is_(fees_enabled))
+
+        needs_domain_fee_view = any(
+            value is not None
+            for value in (
+                fee_rate_bps_min,
+                fee_rate_bps_max,
+                maker_base_fee_bps_min,
+                maker_base_fee_bps_max,
+                taker_base_fee_bps_min,
+                taker_base_fee_bps_max,
+            )
+        ) or sort_by in {
+            "fee_rate_bps",
+            "fee_rate_updated_at",
+            "maker_base_fee_bps",
+            "taker_base_fee_bps",
+        }
+        if needs_domain_fee_view:
+            stmt = stmt.order_by(MarketModel.updated_at.desc(), MarketModel.id.desc())
+            rows = list((await self._session.scalars(stmt)).all())
+            markets = tuple(row.to_domain() for row in rows)
+            filtered = tuple(
+                market
+                for market in markets
+                if _market_matches_snapshot_filters(
+                    market,
+                    fee_rate_bps_min=fee_rate_bps_min,
+                    fee_rate_bps_max=fee_rate_bps_max,
+                    maker_base_fee_bps_min=maker_base_fee_bps_min,
+                    maker_base_fee_bps_max=maker_base_fee_bps_max,
+                    taker_base_fee_bps_min=taker_base_fee_bps_min,
+                    taker_base_fee_bps_max=taker_base_fee_bps_max,
+                )
+            )
+            sorted_items = _sort_market_snapshots(
+                filtered,
+                sort_by=sort_by,
+                sort_direction=sort_direction,
+            )
+            page_items = sorted_items[offset : offset + limit]
+            return RepositoryPage(
+                items=tuple(page_items),
+                total=len(filtered),
+                limit=limit,
+                offset=offset,
+            )
+
         if fee_rate_bps_min is not None:
             stmt = stmt.where(MarketModel.fee_rate_bps >= fee_rate_bps_min)
         if fee_rate_bps_max is not None:
