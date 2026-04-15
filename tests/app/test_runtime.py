@@ -7,7 +7,15 @@ from types import SimpleNamespace
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from polymarket_trader.config import Settings
-from polymarket_trader.main import _execute_discovery_query, _run_market_discovery_scan, build_runtime
+from polymarket_trader.main import (
+    _coalesce_reconcile_scope,
+    _execute_discovery_query,
+    _is_reconcile_trigger,
+    _publish_reconcile_trigger,
+    _run_market_discovery_scan,
+    build_runtime,
+)
+from polymarket_trader.runtime.event_bus import EventBus
 from strategy_sdk.models import DiscoveryEndpoint, DiscoveryQuery, StrategyRuntimeProfile
 
 
@@ -369,3 +377,92 @@ def test_run_market_discovery_scan_uses_strategy_queries() -> None:
         assert trace_id.startswith("market-discovery-")
 
     asyncio.run(run())
+
+
+def test_publish_reconcile_trigger_enqueues_maintenance_event(monkeypatch) -> None:
+    async def run() -> None:
+        event_bus = EventBus()
+        runtime = SimpleNamespace(event_bus=event_bus)
+        monkeypatch.setattr("polymarket_trader.main._sync_runtime_metrics", lambda _runtime: None)
+
+        await _publish_reconcile_trigger(runtime, source="scheduled")
+
+        published = await asyncio.wait_for(event_bus.next_maintenance_event(), timeout=0.1)
+        assert published.event_type == "reconcile_scheduled"
+        assert published.reason == "scheduled"
+        assert published.payload["source"] == "scheduled"
+        assert published.condition_id is None
+
+    asyncio.run(run())
+
+
+def test_coalesce_reconcile_scope_merges_condition_ids_for_market_events() -> None:
+    first = DomainEvent(
+        trace_id="trace-market-1",
+        event_type=DomainEventType.MARKET_DISCOVERED,
+        event_id="event-market-1",
+        condition_id="condition-1",
+        reason="discovered",
+    )
+    second = DomainEvent(
+        trace_id="trace-market-2",
+        event_type=DomainEventType.MARKET_UPDATED,
+        event_id="event-market-2",
+        condition_id="condition-2",
+        reason="updated",
+    )
+
+    source, trigger, condition_ids = _coalesce_reconcile_scope((first, second))
+
+    assert source == "event-batch:2"
+    assert trigger is second
+    assert condition_ids == ("condition-1", "condition-2")
+
+
+def test_coalesce_reconcile_scope_falls_back_to_full_reconcile_when_any_trigger_lacks_condition_id() -> None:
+    market_event = DomainEvent(
+        trace_id="trace-market-1",
+        event_type=DomainEventType.MARKET_UPDATED,
+        event_id="event-market-1",
+        condition_id="condition-1",
+        reason="updated",
+    )
+    scheduled_trigger = DomainEvent(
+        trace_id="trace-scheduled",
+        event_type="reconcile_scheduled",
+        event_id="event-scheduled",
+        reason="scheduled",
+    )
+
+    source, trigger, condition_ids = _coalesce_reconcile_scope((market_event, scheduled_trigger))
+
+    assert source == "event-batch:2"
+    assert trigger is scheduled_trigger
+    assert condition_ids is None
+
+
+def test_is_reconcile_trigger_ignores_orderbook_snapshots_and_accepts_market_events() -> None:
+    orderbook_event = DomainEvent(
+        trace_id="trace-orderbook",
+        event_type=DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED,
+        event_id="event-orderbook",
+        condition_id="condition-1",
+        reason="snapshot",
+    )
+    market_event = DomainEvent(
+        trace_id="trace-market",
+        event_type=DomainEventType.MARKET_UPDATED,
+        event_id="event-market",
+        condition_id="condition-1",
+        reason="market_update",
+    )
+    scheduled_trigger = DomainEvent(
+        trace_id="trace-scheduled",
+        event_type="reconcile_scheduled",
+        event_id="event-scheduled",
+        reason="scheduled",
+    )
+
+    assert _is_reconcile_trigger(orderbook_event) is False
+    assert _is_reconcile_trigger(market_event) is True
+    assert _is_reconcile_trigger(scheduled_trigger) is True

@@ -265,7 +265,7 @@ class ReconcileWorker:
             condition_ids=condition_ids,
         )
         await self._publish(
-            OutboxPriority.P2,
+            OutboxPriority.P3,
             DomainEvent(
                 trace_id=trace_id,
                 event_type=DomainEventType.RECONCILE_STARTED,
@@ -324,7 +324,7 @@ class ReconcileWorker:
 
             if market_plan.has_changes:
                 await self._publish(
-                    OutboxPriority.P2,
+                    OutboxPriority.P3,
                     DomainEvent(
                         trace_id=trace_id,
                         event_type=DomainEventType.RECONCILE_APPLIED,
@@ -599,7 +599,7 @@ class ReconcileWorker:
 
     async def _publish_diff(self, trace_id: str, market: Market, action: ReconcileAction) -> None:
         await self._publish(
-            OutboxPriority.P2,
+            OutboxPriority.P3,
             DomainEvent(
                 trace_id=trace_id,
                 event_type=DomainEventType.RECONCILE_DIFF_DETECTED,

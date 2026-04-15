@@ -95,8 +95,13 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _normalize_datetime(value: datetime | None) -> datetime:
+def _normalize_datetime(value: datetime | str | None) -> datetime:
     value = value or _utc_now()
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return _utc_now()
+        value = datetime.fromisoformat(text.replace("Z", "+00:00"))
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)

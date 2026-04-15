@@ -8,12 +8,14 @@
 - 改策略规则：看 [需求文档](./需求文档.md) 和 [设计文档](./设计文档.md)
 - 看运行配置：看 [config.md](./config.md)
 - 看接口：看 [api.md](./api.md)
+- 看前端边界和模块拆分：看 [frontend-开发清单.md](./frontend-开发清单.md)
 - 看运行与故障处理：看 [runbook.md](./runbook.md)
 
 ## 文档索引
 
 - [api.md](./api.md)：Admin API
 - [config.md](./config.md)：配置说明
+- [frontend-开发清单.md](./frontend-开发清单.md)：前端边界、开发清单和模块拆分
 - [需求文档.md](./需求文档.md)：框架需求边界
 - [设计文档.md](./设计文档.md)：运行时结构与调用链
 - [runbook.md](./runbook.md)：故障处理

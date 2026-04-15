@@ -145,3 +145,26 @@ def test_event_bus_mirrors_supported_domain_events_and_trims_user_payloads() -> 
             raise AssertionError("unsupported events should not be mirrored into the outbox")
 
     asyncio.run(run())
+
+
+def test_event_bus_bypasses_persistence_lane_when_outbox_sink_is_bound() -> None:
+    async def run() -> None:
+        bus = EventBus()
+        outbox = LocalOutbox(max_size=8)
+        bus.bind_persistence_sink(build_domain_event_outbox_sink(outbox))
+
+        event = _event(
+            trace_id="trace-persistence-only",
+            event_id="event-persistence-only",
+            event_type=DomainEventType.MARKET_FILTERED_OUT,
+            reason="filtered_out",
+        )
+
+        await bus.publish(OutboxPriority.P3, event)
+
+        queued = await outbox.get()
+        assert queued.event_id == "event-persistence-only"
+        assert queued.priority == 3
+        assert bus.snapshot().persistence_queue_depth == 0
+
+    asyncio.run(run())

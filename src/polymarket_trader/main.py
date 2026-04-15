@@ -18,6 +18,7 @@ from polymarket_trader.app.strategy_host import load_strategy
 from polymarket_trader.app.strategy_service import StrategyService
 from polymarket_trader.app.trading_service import TradingService
 from polymarket_trader.config import Settings, StartupReadiness, load_settings
+from polymarket_trader.domain.events import DomainEvent, OutboxPriority
 from polymarket_trader.infra.db import (
     AccountSnapshotRepository,
     DatabasePersistenceRepository,
@@ -823,6 +824,14 @@ def _start_background_tasks(runtime: RuntimeComponents) -> None:
         ),
         name="trader:strategy",
     )
+    runtime.background_tasks["reconcile"] = asyncio.create_task(
+        _run_supervised_loop(
+            runtime,
+            name="reconcile",
+            runner=lambda: _run_reconcile(runtime),
+        ),
+        name="trader:reconcile",
+    )
     runtime.background_tasks["persistence"] = asyncio.create_task(
         _run_supervised_loop(
             runtime,
@@ -845,7 +854,7 @@ def _register_scheduler_jobs(runtime: RuntimeComponents) -> None:
     )
     runtime.scheduler.register_job(
         "periodic_reconcile",
-        lambda: _run_reconcile_once(runtime, source="scheduled"),
+        lambda: _publish_reconcile_trigger(runtime, source="scheduled"),
         priority="P2",
         interval_seconds=float(runtime.settings.market_sync_interval_seconds),
         tags=("reconcile",),
@@ -913,6 +922,85 @@ async def _run_market_discovery_scan(runtime: RuntimeComponents) -> None:
             last_error=str(exc),
         )
         logger.warning("market discovery scan failed", extra={"reason": str(exc)})
+
+
+async def _publish_reconcile_trigger(
+    runtime: RuntimeComponents,
+    *,
+    source: str,
+) -> None:
+    await runtime.event_bus.publish(
+        OutboxPriority.P2,
+        DomainEvent(
+            trace_id=f"reconcile-trigger-{source}-{uuid4().hex}",
+            event_type=f"reconcile_{source}",
+            event_id=uuid4().hex,
+            reason=source,
+            payload={"source": source},
+        ),
+    )
+    _sync_runtime_metrics(runtime)
+
+
+def _is_reconcile_trigger(event: DomainEvent) -> bool:
+    event_type = str(event.event_type)
+    if event_type.startswith("reconcile_"):
+        return True
+    return event_type in {
+        "market_discovered",
+        "market_updated",
+        "market_filtered_in",
+        "market_filtered_out",
+        "market_resolved_or_disabled",
+    }
+
+
+def _coalesce_reconcile_scope(
+    events: tuple[DomainEvent, ...],
+) -> tuple[str, DomainEvent, tuple[str, ...] | None]:
+    trigger = events[-1]
+    source_event_types = {str(event.event_type) for event in events}
+    if len(source_event_types) == 1:
+        source = f"event:{next(iter(source_event_types))}"
+    else:
+        source = f"event-batch:{len(events)}"
+
+    condition_ids: list[str] = []
+    seen_condition_ids: set[str] = set()
+    for event in events:
+        condition_id = getattr(event, "condition_id", None)
+        if not condition_id:
+            return source, trigger, None
+        if condition_id in seen_condition_ids:
+            continue
+        seen_condition_ids.add(condition_id)
+        condition_ids.append(condition_id)
+    return source, trigger, tuple(condition_ids)
+
+
+async def _run_reconcile(runtime: RuntimeComponents) -> None:
+    max_batch_size = max(1, min(runtime.settings.maintenance_event_queue_max_size, 256))
+    while True:
+        first_trigger = await runtime.event_bus.next_maintenance_event()
+        pending_events: list[DomainEvent] = [first_trigger]
+        while (
+            runtime.event_bus.maintenance_queue_depth() > 0
+            and len(pending_events) < max_batch_size
+        ):
+            pending_events.append(await runtime.event_bus.next_maintenance_event())
+
+        actionable_events = tuple(event for event in pending_events if _is_reconcile_trigger(event))
+        if not actionable_events:
+            _sync_runtime_metrics(runtime)
+            continue
+
+        source, trigger, condition_ids = _coalesce_reconcile_scope(actionable_events)
+        await _run_reconcile_once(
+            runtime,
+            source=source,
+            trigger_event=trigger,
+            condition_ids=condition_ids,
+        )
 
 
 def _discovery_source(query: DiscoveryQuery) -> str:
@@ -1029,12 +1117,16 @@ async def _run_reconcile_once(
     runtime: RuntimeComponents,
     *,
     source: str,
+    trigger_event: DomainEvent | None = None,
+    condition_ids: tuple[str, ...] | None = None,
 ) -> Any:
     runtime.supervisor.heartbeat_worker("reconcile", detail=source)
     started_at = asyncio.get_running_loop().time()
     try:
         result = await runtime.reconcile_worker.reconcile_once(
             trace_id=f"reconcile-{source}-{uuid4().hex}",
+            trigger_event=trigger_event,
+            condition_ids=condition_ids,
         )
     except Exception as exc:
         duration_ms = (asyncio.get_running_loop().time() - started_at) * 1000.0

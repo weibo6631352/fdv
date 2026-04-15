@@ -124,6 +124,14 @@ class LocalOutbox:
     def get_dead_letters(self) -> tuple[OutboxEvent, ...]:
         return tuple(self._dead_letters)
 
+    def pending_events(self) -> tuple[OutboxEvent, ...]:
+        return tuple(
+            sorted(
+                self._events_by_id.values(),
+                key=lambda event: (event.priority, event.created_at, event.event_id),
+            )
+        )
+
     def put_nowait(self, event: OutboxEvent) -> bool:
         """同步快路径的轻量入口；只是把事件放进 outbox，不做持久化。"""
 

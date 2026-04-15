@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -8,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from json import loads
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
@@ -72,6 +74,34 @@ def _iter_mappings(payload: Any, *keys: str) -> tuple[Mapping[str, Any], ...]:
         if maybe is not None:
             mappings.append(maybe)
     return tuple(mappings)
+
+
+def _normalize_http_proxy_url(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    scheme = urlparse(text).scheme.lower()
+    if scheme not in {"http", "https"}:
+        return None
+    return text
+
+
+def _resolve_proxy_url(base_url: str) -> str | None:
+    scheme = urlparse(base_url).scheme.lower()
+    candidates: list[str | None] = []
+    if scheme == "https":
+        candidates.extend((os.environ.get("HTTPS_PROXY"), os.environ.get("https_proxy")))
+    if scheme in {"http", "https"}:
+        candidates.extend((os.environ.get("HTTP_PROXY"), os.environ.get("http_proxy")))
+    candidates.extend((os.environ.get("ALL_PROXY"), os.environ.get("all_proxy")))
+
+    for candidate in candidates:
+        normalized = _normalize_http_proxy_url(candidate)
+        if normalized is not None:
+            return normalized
+    return None
 
 
 def _unwrap_mapping(payload: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -174,6 +204,33 @@ def _string_tuple(value: Any | None) -> tuple[str, ...]:
     if isinstance(value, str):
         text = value.strip()
         return (text,) if text else ()
+    if isinstance(value, Mapping):
+        items: list[str] = []
+        for key in ("label", "slug", "name"):
+            text = _first_text(value, key)
+            if text:
+                items.append(text)
+        return tuple(items)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        items: list[str] = []
+        for item in value:
+            items.extend(_string_tuple(item))
+        return tuple(items)
+    text = str(value).strip()
+    return (text,) if text else ()
+
+
+def _token_id_tuple(value: Any | None) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ()
+        with contextlib.suppress(TypeError, ValueError):
+            parsed = loads(text)
+            return _token_id_tuple(parsed)
+        return (text,)
     if isinstance(value, (list, tuple, set, frozenset)):
         items: list[str] = []
         for item in value:
@@ -389,12 +446,17 @@ class PolymarketRestClientBase:
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._owns_client = client is None
-        self._client = client or httpx.AsyncClient(
-            base_url=self._base_url,
-            timeout=timeout_s,
-            headers=dict(headers or {}),
-            trust_env=False,
-        )
+        proxy = _resolve_proxy_url(self._base_url)
+        client_kwargs: dict[str, Any] = {
+            "base_url": self._base_url,
+            "timeout": timeout_s,
+            "headers": dict(headers or {}),
+            "trust_env": False,
+        }
+        # 只接收 http/https 代理，避免把 socks 类型的 ALL_PROXY 直接交给 httpx 后导致启动异常。
+        if proxy is not None:
+            client_kwargs["proxy"] = proxy
+        self._client = client or httpx.AsyncClient(**client_kwargs)
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -613,7 +675,9 @@ class GammaMarketDTO:
     raw_summary: str = ""
 
     def __post_init__(self) -> None:
+        event = next(iter(_iter_mappings(self.raw, "events")), None)
         fee_schedule = _maybe_mapping(_first_value(self.raw, "fee_schedule", "feeSchedule"))
+        token_ids = _token_id_tuple(_first_value(self.raw, "clobTokenIds"))
         raw_fees_enabled = _first_value(self.raw, "fees_enabled", "feesEnabled")
         raw_taker_base_fee = _first_value(
             self.raw,
@@ -623,17 +687,20 @@ class GammaMarketDTO:
         )
         if raw_taker_base_fee is None and fee_schedule is not None:
             raw_taker_base_fee = _first_value(fee_schedule, "rate", "base_fee", "baseFee")
+        raw_tags = _first_value(self.raw, "tags")
+        if raw_tags is None and event is not None:
+            raw_tags = _first_value(event, "tags")
         object.__setattr__(self, "condition_id", self.condition_id or _first_text(self.raw, "condition_id", "conditionId", "condition"))
         object.__setattr__(self, "market_slug", self.market_slug or _first_text(self.raw, "market_slug", "marketSlug", "slug"))
         object.__setattr__(self, "question", self.question or _first_text(self.raw, "question", "prompt", "market_question"))
         object.__setattr__(self, "title", self.title or _first_text(self.raw, "title", "name"))
-        object.__setattr__(self, "event_id", self.event_id or _first_text(self.raw, "event_id", "eventId", "id"))
-        object.__setattr__(self, "event_title", self.event_title or _first_text(self.raw, "event_title", "eventTitle"))
-        object.__setattr__(self, "event_slug", self.event_slug or _first_text(self.raw, "event_slug", "eventSlug"))
-        object.__setattr__(self, "yes_token_id", self.yes_token_id or _first_text(self.raw, "yes_token_id", "yesTokenId"))
-        object.__setattr__(self, "no_token_id", self.no_token_id or _first_text(self.raw, "no_token_id", "noTokenId"))
-        object.__setattr__(self, "tick_size", self.tick_size if self.tick_size is not None else _coerce_decimal(_first_value(self.raw, "tick_size", "tickSize")))
-        object.__setattr__(self, "min_order_size", self.min_order_size if self.min_order_size is not None else _coerce_decimal(_first_value(self.raw, "min_order_size", "minOrderSize")))
+        object.__setattr__(self, "event_id", self.event_id or _first_text(self.raw, "event_id", "eventId", "id") or _first_text(event or {}, "id"))
+        object.__setattr__(self, "event_title", self.event_title or _first_text(self.raw, "event_title", "eventTitle") or _first_text(event or {}, "title", "name"))
+        object.__setattr__(self, "event_slug", self.event_slug or _first_text(self.raw, "event_slug", "eventSlug") or _first_text(event or {}, "slug"))
+        object.__setattr__(self, "yes_token_id", self.yes_token_id or (token_ids[0] if len(token_ids) >= 1 else None))
+        object.__setattr__(self, "no_token_id", self.no_token_id or (token_ids[1] if len(token_ids) >= 2 else None))
+        object.__setattr__(self, "tick_size", self.tick_size if self.tick_size is not None else _coerce_decimal(_first_value(self.raw, "orderPriceMinTickSize", "tick_size", "tickSize")))
+        object.__setattr__(self, "min_order_size", self.min_order_size if self.min_order_size is not None else _coerce_decimal(_first_value(self.raw, "orderMinSize", "min_order_size", "minOrderSize")))
         object.__setattr__(self, "neg_risk", self.neg_risk or bool(_coerce_bool(_first_value(self.raw, "neg_risk", "negRisk"))))
         object.__setattr__(
             self,
@@ -664,8 +731,8 @@ class GammaMarketDTO:
             if self.taker_base_fee_bps is not None
             else _coerce_int(raw_taker_base_fee),
         )
-        object.__setattr__(self, "category", self.category or _first_text(self.raw, "category", "cat"))
-        object.__setattr__(self, "tags", self.tags or _string_tuple(_first_value(self.raw, "tags")))
+        object.__setattr__(self, "category", self.category or _first_text(self.raw, "category", "cat") or _first_text(event or {}, "category"))
+        object.__setattr__(self, "tags", self.tags or _string_tuple(raw_tags))
         object.__setattr__(self, "active", self.active if self.active is not None else _coerce_bool(_first_value(self.raw, "active", "is_active")))
         object.__setattr__(self, "closed", self.closed if self.closed is not None else _coerce_bool(_first_value(self.raw, "closed", "is_closed")))
         object.__setattr__(self, "archived", self.archived if self.archived is not None else _coerce_bool(_first_value(self.raw, "archived", "is_archived")))
@@ -690,7 +757,7 @@ class GammaMarketDTO:
             market_slug=self.market_slug,
             no_token_id=self.no_token_id,
             yes_token_id=self.yes_token_id,
-            market_name=self.name,
+            market_name=self.title,
             market_question=self.question,
             event_id=self.event_id,
             event_title=self.event_title,
@@ -764,7 +831,32 @@ class GammaEventDTO:
                     summary=self.raw_summary,
                 ),
             )
-        return tuple(market.to_raw_market_event(source=source, trace_id=trace_id) for market in markets)
+        raw_tags = _first_value(self.raw, "tags")
+        raw_category = _first_value(self.raw, "category")
+        raw_events: list[RawMarketEvent] = []
+        for market in markets:
+            payload = dict(market.raw)
+            if _first_value(payload, "eventId") is None and self.event_id is not None:
+                payload["eventId"] = self.event_id
+            if _first_value(payload, "eventSlug") is None and self.event_slug is not None:
+                payload["eventSlug"] = self.event_slug
+            if _first_value(payload, "eventTitle") is None and self.event_title is not None:
+                payload["eventTitle"] = self.event_title
+            if _first_value(payload, "tags") is None and raw_tags is not None:
+                payload["tags"] = raw_tags
+            if _first_value(payload, "category") is None and raw_category is not None:
+                payload["category"] = raw_category
+            raw_events.append(
+                RawMarketEvent(
+                    source=source,
+                    payload=payload,
+                    trace_id=trace_id or "",
+                    condition_id=market.condition_id,
+                    market_slug=market.market_slug,
+                    summary=market.raw_summary,
+                )
+            )
+        return tuple(raw_events)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1445,29 +1537,54 @@ def parse_ws_message(
     *,
     channel_hint: str | None = None,
 ) -> WebSocketMessage:
-    if isinstance(payload, (bytes, bytearray)):
-        payload = payload.decode("utf-8", errors="replace")
-    if isinstance(payload, str):
-        payload = loads(payload)
-    if not isinstance(payload, Mapping):
+    messages = parse_ws_messages(payload, channel_hint=channel_hint)
+    if len(messages) != 1:
         raise PolymarketWebSocketError(
-            "websocket message is not a mapping",
+            "websocket frame contains multiple messages",
             operation="parse_ws_message",
             raw_response_summary=_summary(payload),
             raw_response=payload,
         )
+    return messages[0]
 
-    message_type = _first_text(
-        payload,
-        "event_type",
-        "message_type",
-        "channel_event",
-        "event",
-        "type",
-        "action",
-    )
-    if message_type is None:
-        message_type = "message"
+
+def parse_ws_messages(
+    payload: Any,
+    *,
+    channel_hint: str | None = None,
+) -> tuple[WebSocketMessage, ...]:
+    if isinstance(payload, (bytes, bytearray)):
+        payload = payload.decode("utf-8", errors="replace")
+    if isinstance(payload, str):
+        payload = loads(payload)
+    if isinstance(payload, list):
+        messages: list[WebSocketMessage] = []
+        for item in payload:
+            if not isinstance(item, Mapping):
+                raise PolymarketWebSocketError(
+                    "websocket message is not a mapping",
+                    operation="parse_ws_messages",
+                    raw_response_summary=_summary(item),
+                    raw_response=item,
+                )
+            messages.append(_parse_ws_mapping(item, channel_hint=channel_hint))
+        return tuple(messages)
+    if not isinstance(payload, Mapping):
+        raise PolymarketWebSocketError(
+            "websocket message is not a mapping",
+            operation="parse_ws_messages",
+            raw_response_summary=_summary(payload),
+            raw_response=payload,
+        )
+    return (_parse_ws_mapping(payload, channel_hint=channel_hint),)
+
+
+def _parse_ws_mapping(
+    payload: Mapping[str, Any],
+    *,
+    channel_hint: str | None = None,
+) -> WebSocketMessage:
+    message_type = _infer_ws_message_type(payload)
     channel = channel_hint or _first_text(payload, "channel", "channel_type") or "market"
 
     nested_payload = _first_value(payload, "payload", "data", "message")
@@ -1498,6 +1615,27 @@ def parse_ws_message(
         market_slug=_first_text(payload, "market_slug", "marketSlug", "slug"),
         sequence=sequence_value,
     )
+
+
+def _infer_ws_message_type(payload: Mapping[str, Any]) -> str:
+    explicit = _first_text(
+        payload,
+        "event_type",
+        "message_type",
+        "channel_event",
+        "event",
+        "type",
+        "action",
+    )
+    if explicit is not None:
+        return explicit
+    if isinstance(payload.get("price_changes"), list):
+        return "price_change"
+    if isinstance(payload.get("bids"), list) or isinstance(payload.get("asks"), list):
+        return "book"
+    if _first_value(payload, "best_bid", "bestBid", "best_ask", "bestAsk", "bid", "ask") is not None:
+        return "best_bid_ask"
+    return "message"
 
 
 def _coerce_order_status(value: str) -> OrderStatus:

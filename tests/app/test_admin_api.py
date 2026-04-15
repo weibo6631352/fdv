@@ -33,6 +33,7 @@ from polymarket_trader.domain.order import (
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
 from polymarket_trader.infra.db import RepositoryPage
+from polymarket_trader.infra.outbox.local_queue import LocalOutbox
 from polymarket_trader.infra.polymarket.schemas import (
     normalize_orderbook_payload,
     normalize_position_payload,
@@ -820,6 +821,21 @@ def test_admin_ready_route_reports_blockers_when_runtime_is_not_ready() -> None:
 
 def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypatch) -> None:
     runtime = _build_runtime(ready=True)
+    runtime.outbox = LocalOutbox(max_size=8)
+    runtime.outbox.put_nowait(
+        OutboxEvent(
+            trace_id="trace-outbox",
+            event_type="order_submitted",
+            idempotency_key="outbox-1",
+            event_id="outbox-event-1",
+            market_slug="sample-market-a",
+            condition_id="condition-500m",
+            token_id="no-token-500m",
+            reason="submit",
+            priority="P1",
+            payload={"order_id": "buy-1"},
+        )
+    )
     runtime.db_session_factory = object()
 
     audit_events = (
@@ -849,21 +865,6 @@ def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypa
             idempotency_key="alloc-1",
         ),
     )
-    outbox_events = (
-        OutboxEvent(
-            trace_id="trace-outbox",
-            event_type="order_submitted",
-            idempotency_key="outbox-1",
-            event_id="outbox-event-1",
-            market_slug="sample-market-a",
-            condition_id="condition-500m",
-            token_id="no-token-500m",
-            reason="submit",
-            priority="P1",
-            payload={"order_id": "buy-1"},
-        ),
-    )
-
     async def _list_audit_events_snapshot(
         *,
         limit: int = 100,
@@ -898,24 +899,11 @@ def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypa
         ]
         return RepositoryPage(items=tuple(items[offset : offset + limit]), total=len(items), limit=limit, offset=offset)
 
-    async def _list_pending_snapshot(
-        *,
-        limit: int = 100,
-        offset: int = 0,
-        trace_id: str | None = None,
-    ) -> RepositoryPage[OutboxEvent]:
-        items = [
-            event
-            for event in outbox_events
-            if trace_id is None or event.trace_id == trace_id
-        ]
-        return RepositoryPage(items=tuple(items[offset : offset + limit]), total=len(items), limit=limit, offset=offset)
-
     async def _fake_with_repositories(self, callback):
         repositories = SimpleNamespace(
             audit=SimpleNamespace(list_audit_events_snapshot=_list_audit_events_snapshot),
             allocation=SimpleNamespace(list_allocations_snapshot=_list_allocations_snapshot),
-            outbox=SimpleNamespace(list_pending_snapshot=_list_pending_snapshot),
+            outbox=None,
             market=SimpleNamespace(
                 get_by_condition_id=lambda condition_id: None,
                 get_by_market_slug=lambda market_slug: None,
@@ -969,3 +957,32 @@ def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypa
 
         assert filtered_orders["total"] == 1
         assert filtered_orders["items"][0]["order_id"] == "buy-1"
+
+
+def test_admin_api_outbox_pending_prefers_live_runtime_queue() -> None:
+    runtime = _build_runtime(ready=True)
+    runtime.outbox = LocalOutbox(max_size=8)
+    runtime.outbox.put_nowait(
+        OutboxEvent(
+            trace_id="trace-live",
+            event_type="market_discovered",
+            idempotency_key="live-outbox-1",
+            event_id="live-outbox-event-1",
+            market_slug="sample-market-a",
+            condition_id="condition-500m",
+            token_id="no-token-500m",
+            reason="live",
+            priority="P2",
+            payload={"source": "runtime"},
+        )
+    )
+    runtime.db_session_factory = object()
+
+    app = create_app(runtime=runtime, admin_service=AdminService())
+
+    with TestClient(app) as client:
+        payload = client.get("/outbox/pending", params={"trace_id": "trace-live"}).json()
+
+    assert payload["total"] == 1
+    assert payload["items"][0]["event_id"] == "live-outbox-event-1"
+    assert payload["items"][0]["idempotency_key"] == "live-outbox-1"

@@ -115,6 +115,11 @@ class EventBus:
     async def publish(self, priority: EventPriority | int | str, event: Any) -> None:
         outbox_priority = _normalize_outbox_priority(priority)
         lane = _normalize_priority(priority)
+        if lane == QueueLane.PERSISTENCE and self._persistence_sink is not None:
+            # P3 只需要镜像到 outbox；运行时没有独立的 persistence lane consumer，
+            # 继续把这类事件塞进队列只会制造永远不会被消费的积压。
+            self._mirror_to_outbox(outbox_priority, event)
+            return
         if lane == QueueLane.TRADING:
             await self._trading_queue.put((next(self._sequence), event))
             self._mirror_to_outbox(outbox_priority, event)

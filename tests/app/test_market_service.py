@@ -35,14 +35,13 @@ class _Tracker:
 def _raw_market(*, condition_id: str = "condition", market_slug: str = "sample-market-a") -> dict[str, str]:
     return {
         "category": "Crypto",
-        "event_title": "Will this market reach a threshold?",
+        "eventTitle": "Will this market reach a threshold?",
         "question": "Will this market hit a threshold?",
-        "market_slug": market_slug,
-        "condition_id": condition_id,
-        "yes_token_id": "yes-token",
-        "no_token_id": f"no-{condition_id}",
-        "tick_size": "0.01",
-        "min_order_size": "1",
+        "slug": market_slug,
+        "conditionId": condition_id,
+        "clobTokenIds": [f"yes-{condition_id}", f"no-{condition_id}"],
+        "orderPriceMinTickSize": "0.01",
+        "orderMinSize": "1",
     }
 
 

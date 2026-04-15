@@ -221,11 +221,15 @@ def _audit_event_from_record(record: Mapping[str, Any]) -> AuditEvent | None:
     if trace_id is None or event_title is None:
         _log_skip("audit", record, "missing trace_id or event_title")
         return None
+    created_at = _datetime(record.get("created_at"), _utc_now())
+    payload = dict(record)
+    payload["created_at"] = created_at
+    payload["updated_at"] = _datetime(record.get("updated_at"), created_at) or created_at
     return AuditEvent(
         event_title=event_title,
         trace_id=trace_id,
-        created_at=_datetime(record.get("created_at"), _utc_now()),
-        payload=dict(record),
+        created_at=created_at,
+        payload=payload,
     )
 
 

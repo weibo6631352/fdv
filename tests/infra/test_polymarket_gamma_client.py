@@ -30,10 +30,9 @@ async def test_gamma_client_list_events_by_params_passes_through_official_query_
                             "eventSlug": "sample-event-a",
                             "eventTitle": "Sample Event A",
                             "question": "Sample question?",
-                            "yesTokenId": "yes-1",
-                            "noTokenId": "no-1",
-                            "tickSize": "0.01",
-                            "minOrderSize": "1",
+                            "clobTokenIds": "[\"yes-1\",\"no-1\"]",
+                            "orderPriceMinTickSize": "0.01",
+                            "orderMinSize": "1",
                         }
                     ],
                 }
@@ -130,10 +129,9 @@ async def test_gamma_client_list_markets_by_params_passes_through_query_params()
                     "eventSlug": "sample-event-a",
                     "eventTitle": "Sample Event A",
                     "question": "Sample question?",
-                    "yesTokenId": "yes-1",
-                    "noTokenId": "no-1",
-                    "tickSize": "0.01",
-                    "minOrderSize": "1",
+                    "clobTokenIds": ["yes-1", "no-1"],
+                    "orderPriceMinTickSize": "0.01",
+                    "orderMinSize": "1",
                 }
             ],
         )

@@ -7,14 +7,13 @@ def test_classifier_accepts_market_with_required_trading_fields() -> None:
     result = MarketClassifier().classify(
         {
             "category": "Sports",
-            "event_title": "Any event title is acceptable at parser level",
+            "eventTitle": "Any event title is acceptable at parser level",
             "question": "Any market question is acceptable at parser level",
-            "market_slug": "sample-market-a",
-            "condition_id": "condition",
-            "yes_token_id": "yes",
-            "no_token_id": "no",
-            "tick_size": "0.01",
-            "min_order_size": "1",
+            "slug": "sample-market-a",
+            "conditionId": "condition",
+            "clobTokenIds": ["yes", "no"],
+            "orderPriceMinTickSize": "0.01",
+            "orderMinSize": "1",
         }
     )
 
@@ -25,15 +24,14 @@ def test_classifier_preserves_generic_text_fields() -> None:
     result = MarketClassifier().classify(
         {
             "category": "Crypto",
-            "event_title": "Will this market reach a threshold?",
+            "eventTitle": "Will this market reach a threshold?",
             "question": "Will this market hit a threshold?",
             "name": "Threshold market",
-            "market_slug": "sample-threshold-market",
-            "condition_id": "condition",
-            "yes_token_id": "yes",
-            "no_token_id": "no",
-            "tick_size": "0.01",
-            "min_order_size": "1",
+            "slug": "sample-threshold-market",
+            "conditionId": "condition",
+            "clobTokenIds": "[\"yes\",\"no\"]",
+            "orderPriceMinTickSize": "0.01",
+            "orderMinSize": "1",
         }
     )
 
@@ -48,13 +46,13 @@ def test_classifier_rejects_missing_required_identifiers() -> None:
     result = MarketClassifier().classify(
         {
             "category": "Sports",
-            "event_title": "Title",
+            "eventTitle": "Title",
             "question": "Question",
-            "market_slug": "sample-market-a",
-            "condition_id": "condition",
-            "no_token_id": "no",
-            "tick_size": "0.01",
-            "min_order_size": "1",
+            "slug": "sample-market-a",
+            "conditionId": "condition",
+            "clobTokenIds": ["no"],
+            "orderPriceMinTickSize": "0.01",
+            "orderMinSize": "1",
         }
     )
 
@@ -66,12 +64,11 @@ def test_classifier_rejects_missing_tick_and_min_order_size() -> None:
     result = MarketClassifier().classify(
         {
             "category": "Crypto",
-            "event_title": "Title",
+            "eventTitle": "Title",
             "question": "Question",
-            "market_slug": "token-market",
-            "condition_id": "condition",
-            "yes_token_id": "yes",
-            "no_token_id": "no",
+            "slug": "token-market",
+            "conditionId": "condition",
+            "clobTokenIds": ["yes", "no"],
         }
     )
 

@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+from json import loads
 from typing import Any, Mapping
 
 from polymarket_trader.domain.events import DomainEvent, DomainEventType
@@ -282,37 +283,27 @@ class MarketClassifier:
 
     def _parse_market_fields(self, raw_market: Mapping[str, Any]) -> dict[str, Any]:
         try:
-            condition_id = self._first_value(raw_market, "condition_id", "conditionId")
-            yes_token_id = self._first_value(
-                raw_market,
-                "yes_token_id",
-                "yesTokenId",
-                "yes_token",
-                "yesToken",
-            )
-            no_token_id = self._first_value(
-                raw_market,
-                "no_token_id",
-                "noTokenId",
-                "no_token",
-                "noToken",
-            )
+            event = self._first_event(raw_market)
+            token_ids = self._parse_token_ids(self._first_value(raw_market, "clobTokenIds"))
+            condition_id = self._parse_text(self._first_value(raw_market, "conditionId"))
+            yes_token_id = token_ids[0] if len(token_ids) >= 1 else None
+            no_token_id = token_ids[1] if len(token_ids) >= 2 else None
             tick_size = self._parse_decimal(
-                self._first_value(raw_market, "tick_size", "tickSize", "tick")
+                self._first_value(raw_market, "orderPriceMinTickSize", "tickSize", "tick")
             )
             min_order_size = self._parse_decimal(
                 self._first_value(
                     raw_market,
-                    "min_order_size",
+                    "orderMinSize",
                     "minOrderSize",
                     "min_size",
                     "minSize",
                 )
             )
-            neg_risk = self._parse_bool(self._first_value(raw_market, "neg_risk", "negRisk"))
-            fee_schedule = self._as_mapping(self._first_value(raw_market, "fee_schedule", "feeSchedule"))
+            neg_risk = self._parse_bool(self._first_value(raw_market, "negRisk"))
+            fee_schedule = self._as_mapping(self._first_value(raw_market, "feeSchedule"))
             fees_enabled = self._parse_nullable_bool(
-                self._first_value(raw_market, "fees_enabled", "feesEnabled")
+                self._first_value(raw_market, "feesEnabled")
             )
             if fees_enabled is None and fee_schedule is not None:
                 fees_enabled = self._parse_nullable_bool(
@@ -321,17 +312,13 @@ class MarketClassifier:
             maker_base_fee_bps = self._parse_int(
                 self._first_value(
                     raw_market,
-                    "maker_base_fee_bps",
                     "makerBaseFee",
-                    "maker_base_fee",
                 )
             )
             taker_base_fee_bps = self._parse_int(
                 self._first_value(
                     raw_market,
-                    "taker_base_fee_bps",
                     "takerBaseFee",
-                    "taker_base_fee",
                 )
             )
             if taker_base_fee_bps is None and fee_schedule is not None:
@@ -343,26 +330,35 @@ class MarketClassifier:
                         "baseFee",
                     )
                 )
-            category = self._first_value(raw_market, "category")
+            category = self._parse_text(self._first_value(raw_market, "category"))
+            if category is None and event is not None:
+                category = self._parse_text(self._first_value(event, "category"))
             tags = self._parse_tags(self._first_value(raw_market, "tags"))
-            market_name = self._first_value(raw_market, "name", "market_name", "marketName")
-            market_question = self._first_value(
-                raw_market,
-                "question",
-                "market_question",
-                "prompt",
+            if not tags and event is not None:
+                tags = self._parse_tags(self._first_value(event, "tags"))
+            market_name = self._parse_text(self._first_value(raw_market, "name", "marketName"))
+            market_question = self._parse_text(
+                self._first_value(
+                    raw_market,
+                    "question",
+                    "prompt",
+                )
             )
-            market_slug = self._first_value(raw_market, "market_slug", "slug")
-            event_title = self._first_value(
-                raw_market,
-                "event_title",
-                "eventTitle",
-                "title",
-                "event_name",
-                "eventName",
+            market_slug = self._parse_text(self._first_value(raw_market, "slug"))
+            event_title = self._parse_text(
+                self._first_value(
+                    raw_market,
+                    "eventTitle",
+                )
             )
-            event_slug = self._first_value(raw_market, "event_slug", "eventSlug")
-            event_id = self._first_value(raw_market, "event_id", "eventId")
+            if event_title is None and event is not None:
+                event_title = self._parse_text(self._first_value(event, "title", "name"))
+            event_slug = self._parse_text(self._first_value(raw_market, "eventSlug"))
+            if event_slug is None and event is not None:
+                event_slug = self._parse_text(self._first_value(event, "slug"))
+            event_id = self._parse_text(self._first_value(raw_market, "eventId"))
+            if event_id is None and event is not None:
+                event_id = self._parse_text(self._first_value(event, "id"))
         except (TypeError, ValueError) as exc:
             return {
                 "condition_id": None,
@@ -468,9 +464,25 @@ class MarketClassifier:
         return int(Decimal(str(value)))
 
     @staticmethod
+    def _parse_text(value: Any | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @staticmethod
     def _as_mapping(value: Any | None) -> Mapping[str, Any] | None:
         if isinstance(value, Mapping):
             return value
+        return None
+
+    @staticmethod
+    def _first_event(raw_market: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        events = raw_market.get("events")
+        if isinstance(events, list):
+            for item in events:
+                if isinstance(item, Mapping):
+                    return item
         return None
 
     @staticmethod
@@ -479,9 +491,42 @@ class MarketClassifier:
             return tuple()
         if isinstance(value, str):
             return tuple(tag.strip() for tag in value.split(",") if tag.strip())
+        if isinstance(value, Mapping):
+            tags: list[str] = []
+            for key in ("label", "slug", "name"):
+                text = MarketClassifier._parse_text(value.get(key))
+                if text is not None:
+                    tags.append(text)
+            return tuple(tags)
         if isinstance(value, (list, tuple, set)):
-            return tuple(str(tag).strip() for tag in value if str(tag).strip())
+            tags: list[str] = []
+            for tag in value:
+                tags.extend(MarketClassifier._parse_tags(tag))
+            return tuple(tags)
         return (str(value).strip(),)
+
+    @staticmethod
+    def _parse_token_ids(value: Any | None) -> tuple[str, ...]:
+        if value is None:
+            return tuple()
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return tuple()
+            try:
+                parsed = loads(text)
+            except ValueError:
+                return (text,)
+            return MarketClassifier._parse_token_ids(parsed)
+        if isinstance(value, (list, tuple, set)):
+            token_ids: list[str] = []
+            for item in value:
+                text = MarketClassifier._parse_text(item)
+                if text is not None:
+                    token_ids.append(text)
+            return tuple(token_ids)
+        text = MarketClassifier._parse_text(value)
+        return tuple() if text is None else (text,)
 
     @staticmethod
     def _matched_signals(

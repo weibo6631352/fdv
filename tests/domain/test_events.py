@@ -34,6 +34,29 @@ def test_audit_event_normalizes_utc_and_redacts_sensitive_fields() -> None:
     assert "[REDACTED]" in event.raw_response
 
 
+def test_audit_event_accepts_iso_timestamp_strings() -> None:
+    event = AuditEvent(
+        event_title="order_submitted",
+        trace_id="trace",
+        created_at="2026-01-01T12:00:00Z",
+        updated_at="2026-01-01T12:00:01+00:00",
+    )
+
+    assert event.created_at == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    assert event.updated_at == datetime(2026, 1, 1, 12, 0, 1, tzinfo=timezone.utc)
+
+
+def test_outbox_event_accepts_iso_timestamp_string() -> None:
+    event = OutboxEvent(
+        trace_id="trace",
+        event_type="market_discovered",
+        idempotency_key="idem-1",
+        created_at="2026-01-01T12:00:00Z",
+    )
+
+    assert event.created_at == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
 def test_audit_event_rejects_legacy_event_type_name() -> None:
     with pytest.raises(ValueError, match="event_title"):
         AuditEvent(event_type="order_submitted", trace_id="trace")

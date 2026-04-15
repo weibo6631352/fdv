@@ -618,18 +618,20 @@ class AdminService:
         offset: int = 0,
         trace_id: str | None = None,
     ) -> dict[str, Any]:
-        if not self._has_db_session_factory():
-            page = RepositoryPage(items=tuple(), total=0, limit=limit, offset=offset)
-            return _page_payload(page, serializer=self._serialize_outbox_event)
-
-        async def _query(repos: _RepositoryGroup) -> RepositoryPage[Any]:
-            return await repos.outbox.list_pending_snapshot(
+        runtime_outbox = getattr(self.runtime, "outbox", None)
+        if runtime_outbox is not None and hasattr(runtime_outbox, "pending_events"):
+            events = runtime_outbox.pending_events()
+            if trace_id is not None:
+                events = tuple(event for event in events if event.trace_id == trace_id)
+            page = RepositoryPage(
+                items=tuple(events[offset : offset + limit]),
+                total=len(events),
                 limit=limit,
                 offset=offset,
-                trace_id=trace_id,
             )
+            return _page_payload(page, serializer=self._serialize_outbox_event)
 
-        page = await self._with_repositories(_query)
+        page = RepositoryPage(items=tuple(), total=0, limit=limit, offset=offset)
         return _page_payload(page, serializer=self._serialize_outbox_event)
 
     async def portfolio_snapshot(self) -> dict[str, Any]:

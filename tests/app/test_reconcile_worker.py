@@ -21,7 +21,9 @@ from polymarket_trader.domain.order import (
 )
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
+from polymarket_trader.infra.outbox import LocalOutbox, build_domain_event_outbox_sink
 from polymarket_trader.runtime.account_state import AccountStateStore
+from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
 from strategy_sdk.models import (
     RecoveryDecision,
@@ -474,5 +476,43 @@ def test_reconcile_worker_prunes_strategy_filtered_market_after_flattening() -> 
 
         assert registry.get_by_condition_id("condition") is None
         assert market_ws_worker.status_snapshot().tracked_token_ids == ()
+
+    asyncio.run(run())
+
+
+def test_reconcile_worker_emits_observe_events_without_requeueing_maintenance() -> None:
+    async def run() -> None:
+        registry = MarketRegistry()
+        market = Market(
+            condition_id="condition",
+            market_slug="token-500m-fdv",
+            no_token_id="token",
+            yes_token_id="yes-token",
+            tick_size=Decimal("0.01"),
+            min_order_size=Decimal("1"),
+            event_title="Will token FDV reach a threshold?",
+            market_question="Will this project hit $500M FDV?",
+            category="Crypto",
+            trading_status=TradingStatus.ELIGIBLE,
+        )
+        registry.upsert(market)
+        account_state_store = AccountStateStore()
+        event_bus = EventBus()
+        outbox = LocalOutbox(max_size=16)
+        event_bus.bind_persistence_sink(build_domain_event_outbox_sink(outbox))
+
+        worker = ReconcileWorker(
+            event_bus=event_bus,
+            reconcile_service=ReconcileService(strategy_module=build_strategy()),
+            registry_snapshot_provider=registry.snapshot,
+            account_state_store=account_state_store,
+            registry=registry,
+        )
+
+        await worker.reconcile_once(trace_id="trace-reconcile-observe-only")
+
+        assert event_bus.snapshot().maintenance_queue_depth == 0
+        assert event_bus.snapshot().persistence_queue_depth == 0
+        assert len(outbox.pending_events()) == 0
 
     asyncio.run(run())

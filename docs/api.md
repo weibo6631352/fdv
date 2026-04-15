@@ -595,7 +595,7 @@
 
 用途：
 
-- 分页查询当前待处理 outbox 事件。
+- 分页查询运行时中尚未 `ack` / `dead-letter` 的 outbox 事件。
 
 查询参数：
 
@@ -624,8 +624,8 @@
 
 说明：
 
-- 有 DB session factory 时返回待处理 outbox 事件。
-- 没有 DB session factory 时返回空分页结果。
+- 运行时存在本地 outbox 时，返回真实待处理队列快照。
+- 运行时 outbox 不可用时返回空分页结果，不使用历史表冒充 pending 队列。
 
 ## 4. 受控操作接口
 

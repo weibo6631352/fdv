@@ -5,3 +5,14 @@ __pycache__/
 
 # Local runtime configuration
 .env
+
+# Frontend artifacts
+frontend/node_modules/
+frontend/dist/
+
+# Local dev runtime
+.dev-runtime/
+.playwright-cli/
+
+# Local build packages
+.dist-packages/

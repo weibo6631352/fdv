@@ -205,7 +205,12 @@ class MarketDiscoveryWorker:
             },
         )
         if self._event_bus is not None:
-            await self._event_bus.publish(OutboxPriority.P2, event)
+            await self._event_bus.publish(
+                OutboxPriority.P3
+                if event.event_type == DomainEventType.MARKET_FILTERED_OUT
+                else OutboxPriority.P2,
+                event,
+            )
         return event
 
     def _remember(self, raw_event: RawMarketEvent) -> None:

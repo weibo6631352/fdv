@@ -16,6 +16,7 @@ from polymarket_trader.infra.polymarket.schemas import (
     build_market_subscription_request,
     build_user_subscription_request,
     parse_ws_message,
+    parse_ws_messages,
 )
 
 
@@ -159,7 +160,8 @@ class PolymarketWebSocketClient:
                         await _maybe_await(on_connect(attempt))
                     await websocket.send(dumps(subscription_payload, ensure_ascii=False))
                     async for raw_message in websocket:
-                        yield self.parse_message(raw_message, channel_hint=channel_hint)
+                        for message in parse_ws_messages(raw_message, channel_hint=channel_hint):
+                            yield message
                     if on_disconnect is not None:
                         await _maybe_await(on_disconnect(attempt))
                     return

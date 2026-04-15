@@ -20,6 +20,9 @@
 - 跑回归：`pytest -q`
 - 跑静态检查：`ruff check .`
 - 验证 PostgreSQL 链路：`pytest tests/infra/test_postgres_integration.py -q`
+- 启动前端管理台：`npm --prefix frontend install && npm --prefix frontend run dev`
+- 一键启动全部服务并打开前端：`./start_all.sh`
+- 构建前端 dist：`./build_dist.sh`
 
 ## 核心规则
 
@@ -42,6 +45,7 @@
 | Infrastructure | [infra](./src/polymarket_trader/infra/README.md) | Polymarket、数据库、outbox 和外部 I/O 适配 |
 | Observability | [observability](./src/polymarket_trader/observability/README.md) | 审计、trace、指标 |
 | Runtime | [runtime](./src/polymarket_trader/runtime/README.md) | 事件总线、状态注册表、调度、supervisor |
+| Frontend | [frontend](./frontend/README.md) | 管理台前端、通用 UI 与策略展示扩展槽 |
 | Strategy SDK | [strategy_sdk](./src/strategy_sdk) | 策略契约、上下文对象、运行时 profile、配置加载 |
 | Strategies | [strategies](./src/strategies) | 顶层策略实现包 |
 | Workers | [workers](./src/polymarket_trader/workers/README.md) | 常驻后台任务 |
@@ -53,6 +57,7 @@
 - [当前策略设计文档](./docs/设计文档.md)：运行时装配和关键流程。
 - [配置文档](./docs/config.md)：`.env`、策略模块加载和策略侧配置文件。
 - [API 文档](./docs/api.md)：Admin API。
+- [前端开发清单](./docs/frontend-开发清单.md)：前端边界、模块拆分和二次开发入口。
 - [故障处理](./docs/runbook.md)：启动检查、异常排查顺序和人工恢复路径。
 
 ## 策略与测试入口
