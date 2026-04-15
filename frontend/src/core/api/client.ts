@@ -12,6 +12,10 @@ export class ApiError extends Error {
   }
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null
+}
+
 const buildUrl = (path: string): string => `${appEnv.apiBaseUrl}${path}`
 
 export const buildSearch = (params: Record<string, unknown>): string => {
@@ -36,6 +40,35 @@ const parseErrorDetail = async (response: Response): Promise<unknown> => {
     return response.json()
   }
   return response.text()
+}
+
+export const formatApiError = (error: unknown): string => {
+  if (error instanceof ApiError) {
+    if (isRecord(error.detail)) {
+      const nestedDetail = error.detail.detail
+      if (typeof nestedDetail === 'string' && nestedDetail.trim() !== '') {
+        return nestedDetail
+      }
+      if (Array.isArray(nestedDetail)) {
+        const messages = nestedDetail
+          .map((item) => {
+            if (isRecord(item) && typeof item.msg === 'string') {
+              return item.msg
+            }
+            return null
+          })
+          .filter((message): message is string => Boolean(message))
+        if (messages.length > 0) {
+          return messages.join('；')
+        }
+      }
+    }
+    return `${error.message} (${error.status})`
+  }
+  if (error instanceof Error) {
+    return error.message
+  }
+  return '请求失败，请检查服务端日志。'
 }
 
 export const apiClient = {

@@ -2,10 +2,12 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../core/api/resources'
 import type { OrderRecord } from '../../core/api/types'
+import { formatApiError } from '../../core/api/client'
 import { SectionCard } from '../../shared/ui/SectionCard'
 import { DataTable, type DataColumn } from '../../shared/ui/DataTable'
+import { JsonPanel } from '../../shared/ui/JsonPanel'
 import { StatusPill } from '../../shared/ui/StatusPill'
-import { formatDateTime, formatDecimal, formatJson } from '../../shared/utils/format'
+import { formatDateTime, formatDecimal } from '../../shared/utils/format'
 
 const orderTone = (status: string): 'neutral' | 'success' | 'warning' | 'danger' => {
   if (status === 'matched' || status === 'partially_filled') {
@@ -32,6 +34,7 @@ export const OrdersPage = () => {
   const [manualTokenId, setManualTokenId] = useState('')
   const [newPrice, setNewPrice] = useState('0.62')
   const [operator, setOperator] = useState('manual')
+  const [formError, setFormError] = useState<string | null>(null)
 
   const ordersQuery = useQuery({
     queryKey: ['orders', { openOnly, conditionId, tokenId, traceId, offset }],
@@ -48,14 +51,10 @@ export const OrdersPage = () => {
   })
 
   const cancelReplaceMutation = useMutation({
-    mutationFn: () =>
-      adminApi.cancelReplaceSell({
-        market_slug: marketSlug || undefined,
-        token_id: manualTokenId || undefined,
-        new_price: newPrice,
-        operator,
-      }),
+    mutationFn: (payload: { market_slug?: string; token_id?: string; new_price: string; operator: string }) =>
+      adminApi.cancelReplaceSell(payload),
     onSuccess: async () => {
+      setFormError(null)
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['orders'] }),
         queryClient.invalidateQueries({ queryKey: ['markets'] }),
@@ -115,6 +114,39 @@ export const OrdersPage = () => {
     ],
     [],
   )
+
+  const requestError = cancelReplaceMutation.error ? formatApiError(cancelReplaceMutation.error) : null
+
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    cancelReplaceMutation.reset()
+
+    const normalizedMarketSlug = marketSlug.trim()
+    const normalizedTokenId = manualTokenId.trim()
+    const normalizedOperator = operator.trim()
+    const numericPrice = Number(newPrice)
+
+    if (!normalizedMarketSlug && !normalizedTokenId) {
+      setFormError('market_slug 和 token_id 至少要提供一个，才能定位要修复的卖单。')
+      return
+    }
+    if (!Number.isFinite(numericPrice) || numericPrice <= 0 || numericPrice >= 1) {
+      setFormError('new_price 必须是 0 到 1 之间的数字。')
+      return
+    }
+    if (!normalizedOperator) {
+      setFormError('operator 不能为空。')
+      return
+    }
+
+    setFormError(null)
+    cancelReplaceMutation.mutate({
+      market_slug: normalizedMarketSlug || undefined,
+      token_id: normalizedTokenId || undefined,
+      new_price: newPrice.trim(),
+      operator: normalizedOperator,
+    })
+  }
 
   return (
     <div className="page-stack">
@@ -186,13 +218,7 @@ export const OrdersPage = () => {
 
         <div className="detail-stack">
           <SectionCard title="人工 cancel / replace sell" subtitle="适合已经有持仓且需要重挂 SELL 的场景。">
-            <form
-              className="form-grid"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void cancelReplaceMutation.mutateAsync()
-              }}
-            >
+            <form className="form-grid" onSubmit={handleSubmit}>
               <label>
                 <span>market_slug</span>
                 <input value={marketSlug} onChange={(event) => setMarketSlug(event.target.value)} />
@@ -213,14 +239,61 @@ export const OrdersPage = () => {
                 {cancelReplaceMutation.isPending ? '提交中...' : '提交 SELL 修复'}
               </button>
             </form>
+            {formError ? (
+              <ul className="message-list form-feedback">
+                <li>
+                  <strong>表单校验</strong>
+                  <span>{formError}</span>
+                </li>
+              </ul>
+            ) : null}
+            {requestError ? (
+              <ul className="message-list form-feedback">
+                <li>
+                  <strong>请求失败</strong>
+                  <span>{requestError}</span>
+                </li>
+              </ul>
+            ) : null}
           </SectionCard>
 
           <SectionCard title="当前选中订单" subtitle="点击左侧订单可快速带入 market_slug 和 token_id。">
-            <pre className="json-block">{formatJson(selectedOrder ?? {})}</pre>
+            <JsonPanel
+              value={selectedOrder}
+              emptyLabel="尚未选择订单。"
+              detailsLabel="查看订单原始 JSON"
+              defaultOpen={Boolean(selectedOrder)}
+            />
           </SectionCard>
 
           <SectionCard title="操作结果" subtitle="服务端返回 review、取消结果和重挂结果。">
-            <pre className="json-block">{formatJson(cancelReplaceMutation.data ?? {})}</pre>
+            <JsonPanel
+              value={cancelReplaceMutation.data}
+              emptyLabel="尚未执行 SELL 修复。"
+              detailsLabel="查看操作结果原始 JSON"
+              summary={
+                cancelReplaceMutation.data ? (
+                  <div className="detail-list">
+                    <div>
+                      <dt>status</dt>
+                      <dd>{cancelReplaceMutation.data.status}</dd>
+                    </div>
+                    <div>
+                      <dt>trace_id</dt>
+                      <dd>{cancelReplaceMutation.data.trace_id}</dd>
+                    </div>
+                    <div>
+                      <dt>operator</dt>
+                      <dd>{cancelReplaceMutation.data.operator ?? '—'}</dd>
+                    </div>
+                    <div>
+                      <dt>reason</dt>
+                      <dd>{cancelReplaceMutation.data.reason ?? '—'}</dd>
+                    </div>
+                  </div>
+                ) : null
+              }
+            />
           </SectionCard>
         </div>
       </div>

@@ -49,7 +49,12 @@ export const DataTable = <T,>({
             return (
               <tr
                 key={key}
-                className={selectedRowKey === key ? 'is-selected' : undefined}
+                className={[
+                  selectedRowKey === key ? 'is-selected' : null,
+                  onRowClick ? 'is-clickable' : null,
+                ]
+                  .filter(Boolean)
+                  .join(' ') || undefined}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
               >
                 {columns.map((column) => (

@@ -7,27 +7,30 @@ import { DataTable, type DataColumn } from '../../shared/ui/DataTable'
 import { formatDateTime } from '../../shared/utils/format'
 
 export const AuditPage = () => {
+  const pageSize = 100
   const [traceId, setTraceId] = useState('')
   const [eventTitle, setEventTitle] = useState('')
   const [outboxTraceId, setOutboxTraceId] = useState('')
+  const [auditOffset, setAuditOffset] = useState(0)
+  const [outboxOffset, setOutboxOffset] = useState(0)
 
   const auditQuery = useQuery({
-    queryKey: ['audit-events', { traceId, eventTitle }],
+    queryKey: ['audit-events', { traceId, eventTitle, auditOffset }],
     queryFn: () =>
       adminApi.listAuditEvents({
-        limit: 100,
-        offset: 0,
+        limit: pageSize,
+        offset: auditOffset,
         trace_id: traceId || undefined,
         event_title: eventTitle || undefined,
       }),
   })
 
   const outboxQuery = useQuery({
-    queryKey: ['outbox-pending', { outboxTraceId }],
+    queryKey: ['outbox-pending', { outboxTraceId, outboxOffset }],
     queryFn: () =>
       adminApi.listOutboxPending({
-        limit: 100,
-        offset: 0,
+        limit: pageSize,
+        offset: outboxOffset,
         trace_id: outboxTraceId || undefined,
       }),
   })
@@ -80,20 +83,55 @@ export const AuditPage = () => {
         <div className="form-grid form-grid--filters">
           <label>
             <span>audit trace_id</span>
-            <input value={traceId} onChange={(event) => setTraceId(event.target.value)} />
+            <input
+              value={traceId}
+              onChange={(event) => {
+                setTraceId(event.target.value)
+                setAuditOffset(0)
+              }}
+            />
           </label>
           <label>
             <span>event_title</span>
-            <input value={eventTitle} onChange={(event) => setEventTitle(event.target.value)} />
+            <input
+              value={eventTitle}
+              onChange={(event) => {
+                setEventTitle(event.target.value)
+                setAuditOffset(0)
+              }}
+            />
           </label>
           <label>
             <span>outbox trace_id</span>
-            <input value={outboxTraceId} onChange={(event) => setOutboxTraceId(event.target.value)} />
+            <input
+              value={outboxTraceId}
+              onChange={(event) => {
+                setOutboxTraceId(event.target.value)
+                setOutboxOffset(0)
+              }}
+            />
           </label>
         </div>
       </SectionCard>
 
-      <SectionCard title="audit-events" subtitle={`当前 ${auditQuery.data?.total ?? 0} 条。`}>
+      <SectionCard
+        title="audit-events"
+        subtitle={`当前 ${auditQuery.data?.total ?? 0} 条，offset ${auditOffset}。`}
+        actions={
+          <div className="inline-actions">
+            <button type="button" onClick={() => setAuditOffset((current) => Math.max(0, current - pageSize))} disabled={auditOffset === 0}>
+              上一页
+            </button>
+            <button
+              type="button"
+              onClick={() => setAuditOffset((current) => current + pageSize)}
+              disabled={(auditQuery.data?.items.length ?? 0) < pageSize}
+            >
+              下一页
+            </button>
+          </div>
+        }
+      >
         <DataTable
           columns={auditColumns}
           rows={auditQuery.data?.items ?? []}
@@ -103,7 +141,28 @@ export const AuditPage = () => {
         />
       </SectionCard>
 
-      <SectionCard title="outbox pending" subtitle={`当前 ${outboxQuery.data?.total ?? 0} 条。`}>
+      <SectionCard
+        title="outbox pending"
+        subtitle={`当前 ${outboxQuery.data?.total ?? 0} 条，offset ${outboxOffset}。`}
+        actions={
+          <div className="inline-actions">
+            <button
+              type="button"
+              onClick={() => setOutboxOffset((current) => Math.max(0, current - pageSize))}
+              disabled={outboxOffset === 0}
+            >
+              上一页
+            </button>
+            <button
+              type="button"
+              onClick={() => setOutboxOffset((current) => current + pageSize)}
+              disabled={(outboxQuery.data?.items.length ?? 0) < pageSize}
+            >
+              下一页
+            </button>
+          </div>
+        }
+      >
         <DataTable
           columns={outboxColumns}
           rows={outboxQuery.data?.items ?? []}

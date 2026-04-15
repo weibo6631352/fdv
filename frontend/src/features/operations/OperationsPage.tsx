@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { formatApiError } from '../../core/api/client'
 import { adminApi } from '../../core/api/resources'
 import type { AllocationRecord } from '../../core/api/types'
 import { SectionCard } from '../../shared/ui/SectionCard'
 import { DataTable, type DataColumn } from '../../shared/ui/DataTable'
-import { formatDecimal, formatJson } from '../../shared/utils/format'
+import { JsonPanel } from '../../shared/ui/JsonPanel'
+import { formatDecimal } from '../../shared/utils/format'
 
 export const OperationsPage = () => {
   const queryClient = useQueryClient()
@@ -21,14 +23,7 @@ export const OperationsPage = () => {
   })
 
   const reconcileMutation = useMutation({
-    mutationFn: () =>
-      adminApi.reconcile({
-        trace_id: traceId || undefined,
-        condition_ids: conditionIdsInput
-          .split(',')
-          .map((item) => item.trim())
-          .filter(Boolean),
-      }),
+    mutationFn: (payload: { trace_id?: string; condition_ids: string[] }) => adminApi.reconcile(payload),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['portfolio'] }),
@@ -37,6 +32,20 @@ export const OperationsPage = () => {
       ])
     },
   })
+
+  const requestError = reconcileMutation.error ? formatApiError(reconcileMutation.error) : null
+
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    reconcileMutation.reset()
+    reconcileMutation.mutate({
+      trace_id: traceId.trim() || undefined,
+      condition_ids: conditionIdsInput
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
+    })
+  }
 
   const allocationColumns: Array<DataColumn<AllocationRecord>> = [
     {
@@ -72,13 +81,7 @@ export const OperationsPage = () => {
 
       <div className="content-grid content-grid--two">
         <SectionCard title="手工 reconcile" subtitle="支持可选 trace_id 和 condition_ids 过滤。">
-          <form
-            className="form-grid"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void reconcileMutation.mutateAsync()
-            }}
-          >
+          <form className="form-grid" onSubmit={handleSubmit}>
             <label>
               <span>trace_id</span>
               <input value={traceId} onChange={(event) => setTraceId(event.target.value)} />
@@ -96,10 +99,40 @@ export const OperationsPage = () => {
               {reconcileMutation.isPending ? '执行中...' : '执行 reconcile'}
             </button>
           </form>
+          {requestError ? (
+            <ul className="message-list form-feedback">
+              <li>
+                <strong>请求失败</strong>
+                <span>{requestError}</span>
+              </li>
+            </ul>
+          ) : null}
         </SectionCard>
 
         <SectionCard title="reconcile 结果" subtitle="保留原始返回，方便人工复核。">
-          <pre className="json-block">{formatJson(reconcileMutation.data ?? {})}</pre>
+          <JsonPanel
+            value={reconcileMutation.data}
+            emptyLabel="尚未执行 reconcile。"
+            detailsLabel="查看 reconcile 原始 JSON"
+            summary={
+              reconcileMutation.data ? (
+                <div className="detail-list">
+                  <div>
+                    <dt>status</dt>
+                    <dd>{reconcileMutation.data.status}</dd>
+                  </div>
+                  <div>
+                    <dt>trace_id</dt>
+                    <dd>{reconcileMutation.data.trace_id}</dd>
+                  </div>
+                  <div>
+                    <dt>reason</dt>
+                    <dd>{reconcileMutation.data.reason ?? '—'}</dd>
+                  </div>
+                </div>
+              ) : null
+            }
+          />
         </SectionCard>
       </div>
 

@@ -2,11 +2,28 @@ import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { adminApi } from '../../core/api/resources'
 import { SectionCard } from '../../shared/ui/SectionCard'
+import { JsonPanel } from '../../shared/ui/JsonPanel'
 import { StatusPill } from '../../shared/ui/StatusPill'
-import { formatCompact, formatDateTime, formatDecimal, formatJson, getString } from '../../shared/utils/format'
+import { formatCompact, formatDateTime, formatDecimal, getString } from '../../shared/utils/format'
 import { resolveStrategyExtension } from '../../strategy/registry'
 
 const boolTone = (value: boolean): 'success' | 'danger' => (value ? 'success' : 'danger')
+
+const getWorkerTone = (
+  state: string | undefined,
+  healthy: boolean | undefined,
+): 'neutral' | 'success' | 'warning' | 'danger' => {
+  if (healthy === false) {
+    return 'danger'
+  }
+  if (state === 'running') {
+    return 'success'
+  }
+  if (state === 'paused') {
+    return 'warning'
+  }
+  return 'neutral'
+}
 
 export const DashboardPage = () => {
   const readyQuery = useQuery({
@@ -171,19 +188,28 @@ export const DashboardPage = () => {
           </div>
           {workers.length > 0 ? (
             <div className="inline-badge-list">
-              {workers.map((worker, index) => (
+              {workers.map((worker, index) => {
+                const workerName = worker.name ?? worker.worker_name ?? `worker-${index + 1}`
+                const workerState = worker.state ?? worker.status ?? 'unknown'
+
+                return (
                 <StatusPill
-                  key={`${worker.name ?? worker.worker_name ?? 'worker'}-${index}`}
-                  label={`${worker.name ?? worker.worker_name ?? `worker-${index + 1}`}: ${worker.status ?? 'unknown'}`}
-                  tone={worker.status === 'healthy' ? 'success' : 'warning'}
+                  key={`${workerName}-${index}`}
+                  label={`${workerName}: ${workerState}`}
+                  tone={getWorkerTone(workerState, worker.healthy)}
                 />
-              ))}
+                )
+              })}
             </div>
           ) : null}
         </SectionCard>
 
         <SectionCard title="指标与队列" subtitle="先看快照，不在前端重写指标语义。">
-          <pre className="json-block">{formatJson(metricsQuery.data?.metrics ?? metricsQuery.data?.queue_depths)}</pre>
+          <JsonPanel
+            value={metricsQuery.data?.metrics ?? metricsQuery.data?.queue_depths}
+            emptyLabel="暂无指标快照。"
+            detailsLabel="查看指标原始 JSON"
+          />
         </SectionCard>
       </div>
 
@@ -214,7 +240,11 @@ export const DashboardPage = () => {
         </SectionCard>
 
         <SectionCard title="配置摘要" subtitle="这里只显示已脱敏 settings。">
-          <pre className="json-block">{formatJson(runtimeQuery.data?.settings ?? {})}</pre>
+          <JsonPanel
+            value={runtimeQuery.data?.settings}
+            emptyLabel="暂无配置摘要。"
+            detailsLabel="查看 settings 原始 JSON"
+          />
         </SectionCard>
       </div>
     </div>

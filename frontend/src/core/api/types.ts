@@ -81,8 +81,12 @@ export interface WorkerSnapshot {
   name?: string
   worker_name?: string
   status?: string
+  state?: string
+  healthy?: boolean
+  priority?: string
   detail?: string
   last_heartbeat_at?: string | null
+  last_error?: string | null
 }
 
 export interface WorkersPayload {
