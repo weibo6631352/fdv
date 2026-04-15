@@ -12,6 +12,7 @@ from polymarket_trader.app.strategy_service import StrategyService
 from polymarket_trader.app.trading_service import TradingReviewResult, TradingService
 from polymarket_trader.domain.allocation import Allocation
 from polymarket_trader.domain.events import AuditEvent, Fill, OutboxEvent
+from polymarket_trader.domain.fees import FeeQuote, TakerFeePreview, build_taker_fee_preview
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.order import (
     Order,
@@ -235,6 +236,7 @@ class AdminService:
             "ready_to_trade": runtime_status["ready_to_trade"],
             "readiness": self._readiness_summary(),
             "settings": self._settings_snapshot(),
+            "identity": self._identity_snapshot(),
             "runtime": runtime_status,
             "bootstrap_summary": _jsonable(getattr(self.runtime, "bootstrap_summary", {})),
             "registry": {
@@ -966,41 +968,116 @@ class AdminService:
         runtime_snapshot: dict[str, Any],
     ) -> list[dict[str, Any]]:
         blocking_issues = list(config_readiness.get("blocking_issues", []))
-        blocking_reasons = runtime_snapshot.get("blocking_reasons", ())
-        if blocking_reasons:
-            blocking_issues.extend(
-                {
-                    "field": "runtime",
-                    "code": "runtime_blocked",
-                    "message": str(reason),
-                }
-                for reason in blocking_reasons
-            )
-        if not runtime_snapshot["user_ws_connected"]:
+        has_config_blockers = bool(blocking_issues)
+        seen_issue_keys = {
+            (str(issue.get("field", "")), str(issue.get("code", "")))
+            for issue in blocking_issues
+            if isinstance(issue, Mapping)
+        }
+
+        def append_issue(field: str, code: str, message: str) -> None:
+            issue_key = (field, code)
+            if issue_key in seen_issue_keys:
+                return
+            seen_issue_keys.add(issue_key)
             blocking_issues.append(
                 {
-                    "field": "user_ws_connected",
-                    "code": "ws_disconnected",
-                    "message": "User WS 未连接，暂停自动下单",
+                    "field": field,
+                    "code": code,
+                    "message": message,
                 }
             )
-        if not runtime_snapshot["allow_new_buys"]:
-            blocking_issues.append(
-                {
-                    "field": "allow_new_buys",
-                    "code": "buy_gate_closed",
-                    "message": "自动买入闸门关闭",
-                }
+
+        # 首页阻塞栏只展示用户可以直接处理的根因。
+        # Supervisor 的 blocking_reasons 保留在 runtime 快照里供排障，不再原样外泄到列表。
+        for reason in runtime_snapshot.get("blocking_reasons", ()):
+            issue = self._runtime_blocking_issue_from_reason(str(reason), has_config_blockers=has_config_blockers)
+            if issue is None:
+                continue
+            append_issue(str(issue["field"]), str(issue["code"]), str(issue["message"]))
+
+        user_ws_connected = bool(runtime_snapshot.get("user_ws_connected"))
+        last_reconcile_at = runtime_snapshot.get("last_reconcile_at")
+        allow_new_buys = bool(runtime_snapshot.get("allow_new_buys"))
+        if not user_ws_connected:
+            append_issue(
+                "user_ws_connected",
+                "ws_disconnected",
+                "用户行情连接未连接，暂停自动下单",
             )
-        if runtime_snapshot["last_reconcile_at"] is None:
-            blocking_issues.append(
-                {
-                    "field": "last_reconcile_at",
-                    "code": "reconcile_pending",
-                    "message": "首次 reconcile 未完成，禁止自动下单",
-                }
+        if last_reconcile_at is None:
+            append_issue(
+                "last_reconcile_at",
+                "reconcile_pending",
+                "首次 reconcile 未完成，禁止自动下单",
+            )
+        if not allow_new_buys and user_ws_connected and last_reconcile_at is not None:
+            append_issue(
+                "allow_new_buys",
+                "buy_gate_closed",
+                "自动买入闸门关闭",
             )
         return blocking_issues
+
+    def _runtime_blocking_issue_from_reason(
+        self,
+        reason: str,
+        *,
+        has_config_blockers: bool,
+    ) -> dict[str, str] | None:
+        if reason in {
+            "config_not_ready",
+            "user_ws_not_connected",
+            "reconcile_not_fresh",
+        }:
+            return None
+        if reason.startswith("phase="):
+            return None
+        if reason == "db_not_ready" or reason == "database_unavailable":
+            return {
+                "field": "database",
+                "code": "database_unavailable",
+                "message": "数据库连接未就绪，暂停自动下单",
+            }
+        if reason == "market_ws_not_connected":
+            return {
+                "field": "market_ws_connected",
+                "code": "ws_disconnected",
+                "message": "市场行情连接未连接，暂停自动下单",
+            }
+        if reason == "outbox_backlog_high":
+            return {
+                "field": "outbox_depth",
+                "code": "backlog_high",
+                "message": "外发队列积压过高，暂停自动下单",
+            }
+        if reason == "trading_client_not_ready":
+            if has_config_blockers:
+                return None
+            return {
+                "field": "trading_client",
+                "code": "client_not_ready",
+                "message": "交易客户端未就绪，暂停自动下单",
+            }
+        if reason == "trading_client_unavailable":
+            if has_config_blockers:
+                return None
+            return {
+                "field": "trading_client",
+                "code": "client_unavailable",
+                "message": "交易客户端不可用，暂停自动下单",
+            }
+        if reason.startswith("startup_reconcile_failed:"):
+            detail = reason.split(":", 1)[1].strip()
+            message = "启动对账失败，暂停自动下单"
+            if detail:
+                message = f"{message}：{detail}"
+            return {
+                "field": "startup_reconcile",
+                "code": "startup_reconcile_failed",
+                "message": message,
+            }
+        return None
 
     def _readiness_summary(self) -> dict[str, Any]:
         supervisor = getattr(self.runtime, "supervisor", None)
@@ -1026,6 +1103,29 @@ class AdminService:
         if hasattr(settings, "sanitized_dump"):
             return settings.sanitized_dump()
         return _jsonable(settings)
+
+    def _identity_snapshot(self) -> dict[str, Any]:
+        settings = self._settings()
+        wallet_address = None
+        for component_name in ("clob_client", "data_client"):
+            component = getattr(self.runtime, component_name, None)
+            if component is None:
+                continue
+            candidate = getattr(component, "default_wallet_address", None)
+            if callable(candidate):
+                candidate = candidate()
+            if candidate:
+                wallet_address = str(candidate)
+                break
+        return {
+            "wallet_address": wallet_address,
+            "funder_address": (
+                getattr(settings, "polymarket_funder_address", None) if settings is not None else None
+            ),
+            "signature_type": (
+                getattr(settings, "polymarket_signature_type", None) if settings is not None else None
+            ),
+        }
 
     def _portfolio_snapshot(self, account: AccountSnapshot) -> dict[str, Any]:
         return {
@@ -1079,6 +1179,12 @@ class AdminService:
             "best_ask": _decimal_text(orderbook.best_ask) if orderbook is not None else None,
             "best_bid": _decimal_text(orderbook.best_bid) if orderbook is not None else None,
             "spread": _decimal_text(orderbook.spread) if orderbook is not None else None,
+            "fee_preview": self._serialize_fee_preview(
+                build_taker_fee_preview(
+                    market=market,
+                    orderbook=orderbook,
+                )
+            ),
             "entry_price_touched": bool(
                 orderbook is not None and orderbook.no_entry_touched(Decimal("0.60"))
             ),
@@ -1093,6 +1199,8 @@ class AdminService:
             "event_title": market.event_title,
             "no_token_id": market.no_token_id,
             "yes_token_id": market.yes_token_id,
+            "icon_url": market.icon_url,
+            "end_date": _jsonable(market.end_date),
             "tick_size": _decimal_text(market.tick_size),
             "min_order_size": _decimal_text(market.min_order_size),
             "neg_risk": market.neg_risk,
@@ -1108,6 +1216,27 @@ class AdminService:
             "matched_keywords": list(market.matched_keywords),
             "trading_status": market.trading_status.value,
             "reject_reason": market.reject_reason,
+        }
+
+    def _serialize_fee_preview(self, preview: TakerFeePreview | None) -> dict[str, Any] | None:
+        if preview is None:
+            return None
+        return {
+            "basis_size_shares": _decimal_text(preview.basis_size_shares),
+            "fee_rate_bps": preview.fee_rate_bps,
+            "buy": self._serialize_fee_quote(preview.buy),
+            "sell": self._serialize_fee_quote(preview.sell),
+        }
+
+    def _serialize_fee_quote(self, quote: FeeQuote | None) -> dict[str, Any] | None:
+        if quote is None:
+            return None
+        return {
+            "price": _decimal_text(quote.price),
+            "price_source": quote.price_source,
+            "fee_usdc": _decimal_text(quote.fee_usdc),
+            "fee_shares": _decimal_text(quote.fee_shares),
+            "charged_in": quote.charged_in,
         }
 
     def _serialize_market_orderbook(
@@ -1432,7 +1561,10 @@ class AdminService:
         worker = getattr(self.runtime, "market_ws_worker", None)
         if worker is None:
             return None
-        return worker.snapshot(token_id)
+        snapshot = getattr(worker, "snapshot", None)
+        if not callable(snapshot):
+            return None
+        return snapshot(token_id)
 
     def _settings(self) -> Any | None:
         return getattr(self.runtime, "settings", None)

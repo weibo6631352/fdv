@@ -25,7 +25,7 @@ const isEmptyValue = (value: unknown): boolean => {
 export const JsonPanel = ({
   value,
   emptyLabel = '暂无数据。',
-  detailsLabel = '查看原始 JSON',
+  detailsLabel = '查看原始数据',
   defaultOpen = false,
   summary,
 }: JsonPanelProps) => {

@@ -834,6 +834,8 @@ class ReconcileWorker:
             event_id=refreshed.event_id,
             event_title=refreshed.event_title,
             event_slug=refreshed.event_slug,
+            icon_url=refreshed.icon_url,
+            end_date=refreshed.end_date,
             category=refreshed.category,
             tags=refreshed.tags,
             matched_keywords=current.matched_keywords,

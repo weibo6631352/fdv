@@ -658,6 +658,8 @@ class GammaMarketDTO:
     event_id: str | None = None
     event_title: str | None = None
     event_slug: str | None = None
+    icon_url: str | None = None
+    end_date: datetime | None = None
     yes_token_id: str | None = None
     no_token_id: str | None = None
     tick_size: Decimal | None = None
@@ -697,6 +699,17 @@ class GammaMarketDTO:
         object.__setattr__(self, "event_id", self.event_id or _first_text(self.raw, "event_id", "eventId", "id") or _first_text(event or {}, "id"))
         object.__setattr__(self, "event_title", self.event_title or _first_text(self.raw, "event_title", "eventTitle") or _first_text(event or {}, "title", "name"))
         object.__setattr__(self, "event_slug", self.event_slug or _first_text(self.raw, "event_slug", "eventSlug") or _first_text(event or {}, "slug"))
+        object.__setattr__(self, "icon_url", self.icon_url or _first_text(self.raw, "icon") or _first_text(event or {}, "icon"))
+        object.__setattr__(
+            self,
+            "end_date",
+            self.end_date
+            if self.end_date is not None
+            else _coerce_datetime(
+                _first_value(self.raw, "endDate", "end_date")
+                or _first_value(event or {}, "endDate", "end_date")
+            ),
+        )
         object.__setattr__(self, "yes_token_id", self.yes_token_id or (token_ids[0] if len(token_ids) >= 1 else None))
         object.__setattr__(self, "no_token_id", self.no_token_id or (token_ids[1] if len(token_ids) >= 2 else None))
         object.__setattr__(self, "tick_size", self.tick_size if self.tick_size is not None else _coerce_decimal(_first_value(self.raw, "orderPriceMinTickSize", "tick_size", "tickSize")))
@@ -762,6 +775,8 @@ class GammaMarketDTO:
             event_id=self.event_id,
             event_title=self.event_title,
             event_slug=self.event_slug,
+            icon_url=self.icon_url,
+            end_date=self.end_date,
             tick_size=tick_size,
             min_order_size=min_order_size,
             neg_risk=self.neg_risk,

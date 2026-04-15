@@ -4,8 +4,10 @@ import { adminApi } from '../../core/api/resources'
 import type { FillRecord, PositionRecord } from '../../core/api/types'
 import { SectionCard } from '../../shared/ui/SectionCard'
 import { DataTable, type DataColumn } from '../../shared/ui/DataTable'
+import { MarketExternalLink } from '../../shared/ui/MarketExternalLink'
 import { StatusPill } from '../../shared/ui/StatusPill'
 import { formatDateTime, formatDecimal } from '../../shared/utils/format'
+import { formatConfirmationStatusLabel, formatOrderSideLabel } from '../../shared/utils/labels'
 
 export const PositionsPage = () => {
   const [conditionId, setConditionId] = useState('')
@@ -41,25 +43,31 @@ export const PositionsPage = () => {
       header: '市场',
       cell: (row) => (
         <div className="table-primary">
-          <strong>{row.market_slug ?? row.condition_id}</strong>
+          {row.market_slug ? (
+            <MarketExternalLink className="market-list__title" marketSlug={row.market_slug}>
+              {row.market_slug}
+            </MarketExternalLink>
+          ) : (
+            <strong>{row.condition_id}</strong>
+          )}
           <span>{row.token_id}</span>
         </div>
       ),
     },
-    { key: 'shares', header: 'shares', align: 'right', cell: (row) => formatDecimal(row.shares) },
-    { key: 'cost', header: 'cost_usdc', align: 'right', cell: (row) => formatDecimal(row.cost_usdc) },
+    { key: 'shares', header: '持仓份额', align: 'right', cell: (row) => formatDecimal(row.shares) },
+    { key: 'cost', header: '持仓成本', align: 'right', cell: (row) => formatDecimal(row.cost_usdc) },
     {
       key: 'confirmed',
-      header: 'confirmed',
+      header: '已确认份额',
       align: 'right',
       cell: (row) => formatDecimal(row.confirmed_shares),
     },
     {
       key: 'status',
       header: '确认状态',
-      cell: (row) => <StatusPill label={row.confirmation_status ?? 'unknown'} tone="neutral" />,
+      cell: (row) => <StatusPill label={formatConfirmationStatusLabel(row.confirmation_status)} tone="neutral" />,
     },
-    { key: 'updated', header: 'updated_at', cell: (row) => formatDateTime(row.updated_at) },
+    { key: 'updated', header: '更新时间', cell: (row) => formatDateTime(row.updated_at) },
   ]
 
   const fillColumns: Array<DataColumn<FillRecord>> = [
@@ -68,7 +76,13 @@ export const PositionsPage = () => {
       header: '市场',
       cell: (row) => (
         <div className="table-primary">
-          <strong>{row.market_slug ?? row.condition_id}</strong>
+          {row.market_slug ? (
+            <MarketExternalLink className="market-list__title" marketSlug={row.market_slug}>
+              {row.market_slug}
+            </MarketExternalLink>
+          ) : (
+            <strong>{row.condition_id}</strong>
+          )}
           <span>{row.trade_id ?? row.order_id ?? '—'}</span>
         </div>
       ),
@@ -76,12 +90,14 @@ export const PositionsPage = () => {
     {
       key: 'side',
       header: '方向',
-      cell: (row) => <StatusPill label={row.side ?? 'unknown'} tone={row.side === 'sell' ? 'warning' : 'neutral'} />,
+      cell: (row) => (
+        <StatusPill label={formatOrderSideLabel(row.side)} tone={row.side === 'sell' ? 'warning' : 'neutral'} />
+      ),
     },
     { key: 'price', header: '价格', align: 'right', cell: (row) => formatDecimal(row.price) },
     { key: 'size', header: '数量', align: 'right', cell: (row) => formatDecimal(row.size) },
     { key: 'notional', header: '名义金额', align: 'right', cell: (row) => formatDecimal(row.notional_usdc) },
-    { key: 'created', header: 'created_at', cell: (row) => formatDateTime(row.created_at) },
+    { key: 'created', header: '创建时间', cell: (row) => formatDateTime(row.created_at) },
   ]
 
   return (
@@ -89,23 +105,23 @@ export const PositionsPage = () => {
       <header className="page-header">
         <div>
           <p className="eyebrow">持仓</p>
-          <h1>持仓与成交</h1>
-          <p>持仓和 fills 仍然是通用模型，前端只负责检索和聚合展示。</p>
+          <h1>持仓与成交记录</h1>
+          <p>这里统一查看持仓快照和成交记录，便于核对仓位变化。</p>
         </div>
       </header>
 
-      <SectionCard title="过滤条件" subtitle="positions 和 fills 分开查询。">
+      <SectionCard title="过滤条件" subtitle="持仓和成交记录分别查询。">
         <div className="form-grid form-grid--filters">
           <label>
-            <span>condition_id</span>
+            <span>条件 ID</span>
             <input value={conditionId} onChange={(event) => setConditionId(event.target.value)} />
           </label>
           <label>
-            <span>token_id</span>
+            <span>代币 ID</span>
             <input value={tokenId} onChange={(event) => setTokenId(event.target.value)} />
           </label>
           <label>
-            <span>fills.trace_id</span>
+            <span>成交追踪 ID</span>
             <input value={fillTraceId} onChange={(event) => setFillTraceId(event.target.value)} />
           </label>
         </div>
@@ -117,17 +133,17 @@ export const PositionsPage = () => {
           rows={positionsQuery.data?.items ?? []}
           rowKey={(row) => `${row.condition_id}-${row.token_id}`}
           emptyTitle="没有持仓"
-          emptyDescription="当前没有匹配的 position。"
+          emptyDescription="当前没有匹配的持仓记录。"
         />
       </SectionCard>
 
-      <SectionCard title="fills" subtitle={`当前 ${fillsQuery.data?.total ?? 0} 条。`}>
+      <SectionCard title="成交记录" subtitle={`当前 ${fillsQuery.data?.total ?? 0} 条。`}>
         <DataTable
           columns={fillColumns}
           rows={fillsQuery.data?.items ?? []}
           rowKey={(row) => row.event_id ?? `${row.order_id}-${row.trade_id}-${row.created_at ?? 'unknown'}`}
-          emptyTitle="没有 fills"
-          emptyDescription="当前没有匹配的 fill。"
+          emptyTitle="没有成交记录"
+          emptyDescription="当前没有匹配的成交记录。"
         />
       </SectionCard>
     </div>

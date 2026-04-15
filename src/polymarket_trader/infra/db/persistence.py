@@ -240,6 +240,11 @@ def _market_from_record(record: Mapping[str, Any]) -> Market | None:
     if condition_id is None or market_slug is None or no_token_id is None:
         _log_skip("market", record, "missing condition_id/market_slug/no_token_id")
         return None
+    raw_market = record.get("raw_payload")
+    if not isinstance(raw_market, Mapping):
+        raw_market = record.get("market_data")
+    if not isinstance(raw_market, Mapping):
+        raw_market = {}
     return Market(
         condition_id=condition_id,
         market_slug=market_slug,
@@ -248,6 +253,12 @@ def _market_from_record(record: Mapping[str, Any]) -> Market | None:
         event_id=_text(record.get("event_id")) or _text(record.get("source_event_id")),
         event_title=_text(record.get("event_title")),
         event_slug=_text(record.get("event_slug")),
+        icon_url=_text(record.get("icon_url")) or _text(raw_market.get("icon_url")) or _text(raw_market.get("icon")),
+        end_date=(
+            _datetime(record.get("end_date"))
+            or _datetime(raw_market.get("end_date"))
+            or _datetime(raw_market.get("endDate"))
+        ),
         tick_size=_decimal(record.get("tick_size"), Decimal("0.01")) or Decimal("0.01"),
         min_order_size=_decimal(record.get("min_order_size"), Decimal("1")) or Decimal("1"),
         neg_risk=_bool(record.get("neg_risk")),

@@ -210,12 +210,14 @@
 - `best_ask`
 - `best_bid`
 - `spread`
+- `fee_preview`
 - `entry_price_touched`
 
 说明：
 
 - 当前不会在 handler 内现场请求外部费率接口。
 - 费率查询只使用本地缓存字段。
+- `fee_preview` 是热态派生视图，默认按 `100 shares` 结合 `best_ask` / `best_bid` 预估 taker 手续费。
 
 ### 3.5 `GET /markets/detail`
 

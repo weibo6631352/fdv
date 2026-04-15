@@ -6,6 +6,7 @@ import type { AllocationRecord } from '../../core/api/types'
 import { SectionCard } from '../../shared/ui/SectionCard'
 import { DataTable, type DataColumn } from '../../shared/ui/DataTable'
 import { JsonPanel } from '../../shared/ui/JsonPanel'
+import { MarketExternalLink } from '../../shared/ui/MarketExternalLink'
 import { formatDecimal } from '../../shared/utils/format'
 
 export const OperationsPage = () => {
@@ -53,20 +54,26 @@ export const OperationsPage = () => {
       header: '市场',
       cell: (row) => (
         <div className="table-primary">
-          <strong>{row.market_slug ?? row.condition_id}</strong>
-          <span>{row.token_id ?? '—'}</span>
+          {row.market_slug ? (
+            <MarketExternalLink className="market-list__title" marketSlug={row.market_slug}>
+              {row.market_slug}
+            </MarketExternalLink>
+          ) : (
+            <strong>{row.condition_id}</strong>
+          )}
+          <span>{row.token_id ? `代币 ${row.token_id}` : '—'}</span>
         </div>
       ),
     },
-    { key: 'target', header: 'target_budget', align: 'right', cell: (row) => formatDecimal(row.target_budget_usdc) },
-    { key: 'buy', header: 'buy_budget', align: 'right', cell: (row) => formatDecimal(row.buy_budget_usdc) },
+    { key: 'target', header: '目标预算', align: 'right', cell: (row) => formatDecimal(row.target_budget_usdc) },
+    { key: 'buy', header: '买入预算', align: 'right', cell: (row) => formatDecimal(row.buy_budget_usdc) },
     {
       key: 'exposure',
-      header: 'current_exposure',
+      header: '当前敞口',
       align: 'right',
       cell: (row) => formatDecimal(row.current_exposure_usdc),
     },
-    { key: 'reason', header: 'reason', cell: (row) => row.reason ?? '—' },
+    { key: 'reason', header: '说明', cell: (row) => row.reason ?? '—' },
   ]
 
   return (
@@ -74,29 +81,29 @@ export const OperationsPage = () => {
       <header className="page-header">
         <div>
           <p className="eyebrow">操作</p>
-          <h1>人工 reconcile 与分配观察</h1>
-          <p>前端只提交受控操作，不直接执行交易动作。</p>
+          <h1>人工对账与预算分配</h1>
+          <p>这里执行受控对账操作，并观察当前预算分配结果。</p>
         </div>
       </header>
 
       <div className="content-grid content-grid--two">
-        <SectionCard title="手工 reconcile" subtitle="支持可选 trace_id 和 condition_ids 过滤。">
+        <SectionCard title="执行对账" subtitle="支持按追踪 ID 或条件 ID 限定本次对账范围。">
           <form className="form-grid" onSubmit={handleSubmit}>
             <label>
-              <span>trace_id</span>
+              <span>追踪 ID</span>
               <input value={traceId} onChange={(event) => setTraceId(event.target.value)} />
             </label>
             <label>
-              <span>condition_ids</span>
+              <span>条件 ID 列表</span>
               <textarea
                 value={conditionIdsInput}
                 onChange={(event) => setConditionIdsInput(event.target.value)}
                 rows={4}
-                placeholder="用逗号分隔多个 condition_id"
+                placeholder="用逗号分隔多个条件 ID"
               />
             </label>
             <button type="submit" disabled={reconcileMutation.isPending}>
-              {reconcileMutation.isPending ? '执行中...' : '执行 reconcile'}
+              {reconcileMutation.isPending ? '执行中...' : '开始对账'}
             </button>
           </form>
           {requestError ? (
@@ -109,24 +116,24 @@ export const OperationsPage = () => {
           ) : null}
         </SectionCard>
 
-        <SectionCard title="reconcile 结果" subtitle="保留原始返回，方便人工复核。">
+        <SectionCard title="对账结果" subtitle="先看摘要，排障时再展开原始返回。">
           <JsonPanel
             value={reconcileMutation.data}
-            emptyLabel="尚未执行 reconcile。"
-            detailsLabel="查看 reconcile 原始 JSON"
+            emptyLabel="尚未执行对账。"
+            detailsLabel="查看对账原始数据"
             summary={
               reconcileMutation.data ? (
                 <div className="detail-list">
                   <div>
-                    <dt>status</dt>
-                    <dd>{reconcileMutation.data.status}</dd>
+                    <dt>处理状态</dt>
+                    <dd>{reconcileMutation.data.status === 'ok' ? '完成' : reconcileMutation.data.status}</dd>
                   </div>
                   <div>
-                    <dt>trace_id</dt>
+                    <dt>追踪 ID</dt>
                     <dd>{reconcileMutation.data.trace_id}</dd>
                   </div>
                   <div>
-                    <dt>reason</dt>
+                    <dt>结果说明</dt>
                     <dd>{reconcileMutation.data.reason ?? '—'}</dd>
                   </div>
                 </div>
@@ -136,13 +143,13 @@ export const OperationsPage = () => {
         </SectionCard>
       </div>
 
-      <SectionCard title="allocations" subtitle={`当前 ${allocationsQuery.data?.total ?? 0} 条。`}>
+      <SectionCard title="预算分配" subtitle={`当前 ${allocationsQuery.data?.total ?? 0} 条。`}>
         <DataTable
           columns={allocationColumns}
           rows={allocationsQuery.data?.items ?? []}
           rowKey={(row) => row.idempotency_key ?? `${row.condition_id}-${row.token_id ?? 'unknown'}`}
-          emptyTitle="没有 allocations"
-          emptyDescription="当前没有可展示的分配记录。"
+          emptyTitle="没有分配记录"
+          emptyDescription="当前没有可展示的预算分配记录。"
         />
       </SectionCard>
     </div>

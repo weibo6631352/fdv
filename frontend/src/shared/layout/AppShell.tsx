@@ -3,8 +3,12 @@ import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { NavLink } from 'react-router-dom'
 import { adminApi } from '../../core/api/resources'
-import { getString } from '../utils/format'
+import { resolveStrategyExtension } from '../../strategy/registry'
+import { EntityAvatar } from '../ui/EntityAvatar'
+import { formatAddressShort, formatCompact, getString } from '../utils/format'
+import { formatPhaseLabel, formatSignatureTypeLabel } from '../utils/labels'
 import { StatusPill } from '../ui/StatusPill'
+import { hasPositiveShares } from '../utils/markets'
 
 interface AppShellProps {
   children: ReactNode
@@ -43,25 +47,47 @@ export const AppShell = ({ children }: AppShellProps) => {
     queryFn: adminApi.getRuntime,
     refetchInterval: 20_000,
   })
+  const portfolioQuery = useQuery({
+    queryKey: ['portfolio', 'shell'],
+    queryFn: adminApi.getPortfolio,
+    refetchInterval: 10_000,
+  })
+  const marketsQuery = useQuery({
+    queryKey: ['markets', 'shell-summary'],
+    queryFn: () => adminApi.listMarkets({ limit: 200, offset: 0 }),
+    refetchInterval: 20_000,
+  })
 
   const strategyModule = useMemo(
-    () => getString(runtimeQuery.data?.settings?.strategy_module) ?? 'unknown',
+    () => getString(runtimeQuery.data?.settings?.strategy_module) ?? '未配置',
     [runtimeQuery.data],
+  )
+  const strategyDisplayName = useMemo(
+    () => resolveStrategyExtension(strategyModule).displayName,
+    [strategyModule],
   )
 
   const ready = readyQuery.data?.ready_to_trade ?? false
   const phase = readyQuery.data?.phase ?? runtimeQuery.data?.phase ?? 'starting'
+  const walletAddress = runtimeQuery.data?.identity.wallet_address ?? null
+  const funderAddress = runtimeQuery.data?.identity.funder_address ?? null
+  const accountAddress = walletAddress ?? funderAddress
+  const accountLabel = formatAddressShort(accountAddress)
+  const trackedMarketCount = runtimeQuery.data?.registry.market_count ?? marketsQuery.data?.total ?? 0
+  const positionMarketCount =
+    marketsQuery.data?.items.filter((item) => hasPositiveShares(item.position?.shares)).length ?? 0
 
   return (
     <div className="app-shell">
       <aside className="app-sidebar">
         <div className="brand-block">
-          <p className="eyebrow">Polymarket Trader</p>
+          <p className="eyebrow">交易控制台</p>
           <h1>运行台</h1>
           <div className="brand-block__meta">
             <StatusPill label={ready ? '允许自动交易' : '自动交易未就绪'} tone={statusTone(ready, phase)} />
-            <span>{strategyModule}</span>
+            <StatusPill label={`当前阶段：${formatPhaseLabel(phase)}`} tone="neutral" />
           </div>
+          <p className="brand-block__hint">当前策略：{strategyDisplayName}</p>
         </div>
 
         <nav className="nav-list" aria-label="主导航">
@@ -78,20 +104,45 @@ export const AppShell = ({ children }: AppShellProps) => {
         </nav>
 
         <div className="sidebar-footer">
-          <p>所有动作先过后端应用服务。</p>
-          <p>策略展示通过扩展注册表挂接。</p>
+          <p>所有写操作都先经过应用服务。</p>
+          <p>通用模块与策略解释分层展示。</p>
         </div>
       </aside>
 
       <div className="app-content">
-        <header className="top-banner">
-          <div className="top-banner__overlay" />
-          <div className="top-banner__content">
-            <p className="eyebrow">同一套通用壳体，分开承载策略扩展</p>
-            <h2>运行态、市场、订单和修复操作统一收口</h2>
-            <div className="top-banner__meta">
-              <StatusPill label={`phase: ${phase}`} tone={statusTone(ready, phase)} />
-              <span>readiness 每 10 秒刷新</span>
+        <header className="top-status-bar">
+          <div className="top-status-bar__meta">
+            <StatusPill label={ready ? '自动交易已就绪' : '自动交易未就绪'} tone={statusTone(ready, phase)} />
+            <span>当前阶段：{formatPhaseLabel(phase)}</span>
+          </div>
+          <div className="top-status-bar__summary">
+            <div className="top-account">
+              <EntityAvatar label={accountAddress ? accountLabel : '账户'} size="sm" />
+              <div className="top-account__text">
+                <strong>{accountAddress ? accountLabel : '未解析到账户地址'}</strong>
+                <span>
+                  钱包 {formatAddressShort(walletAddress)} · 出资 {formatAddressShort(funderAddress)} ·{' '}
+                  {formatSignatureTypeLabel(runtimeQuery.data?.identity.signature_type)}
+                </span>
+              </div>
+            </div>
+            <div className="top-metric-list" aria-label="运行概览">
+              <div className="top-metric">
+                <span>跟踪市场</span>
+                <strong>{trackedMarketCount}</strong>
+              </div>
+              <div className="top-metric">
+                <span>持仓市场</span>
+                <strong>{positionMarketCount}</strong>
+              </div>
+              <div className="top-metric">
+                <span>组合余额</span>
+                <strong>{formatCompact(portfolioQuery.data?.balance_usdc)}</strong>
+              </div>
+              <div className="top-metric">
+                <span>授权额度</span>
+                <strong>{formatCompact(portfolioQuery.data?.allowance_usdc)}</strong>
+              </div>
             </div>
           </div>
         </header>

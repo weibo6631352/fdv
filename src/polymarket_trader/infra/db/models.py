@@ -42,6 +42,27 @@ def _decimal(value: Any | None) -> Decimal | None:
     return Decimal(text_value)
 
 
+def _text(value: Any | None) -> str | None:
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    return text_value or None
+
+
+def _datetime_value(value: Any | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return _ensure_aware(value)
+    text_value = str(value).strip()
+    if not text_value:
+        return None
+    try:
+        return _ensure_aware(datetime.fromisoformat(text_value.replace("Z", "+00:00")))
+    except ValueError:
+        return None
+
+
 def _json_safe(value: Any) -> JsonValue:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -224,6 +245,8 @@ class MarketModel(Base, TimestampMixin):
             "event_id": market.event_id,
             "event_title": market.event_title,
             "event_slug": market.event_slug,
+            "icon_url": market.icon_url,
+            "end_date": _json_safe(market.end_date),
             "tick_size": str(market.tick_size),
             "min_order_size": str(market.min_order_size),
             "neg_risk": market.neg_risk,
@@ -267,6 +290,7 @@ class MarketModel(Base, TimestampMixin):
         )
 
     def to_domain(self) -> Market:
+        raw_payload = self.raw_payload if isinstance(self.raw_payload, Mapping) else {}
         return Market(
             condition_id=self.condition_id,
             market_slug=self.market_slug,
@@ -277,6 +301,8 @@ class MarketModel(Base, TimestampMixin):
             event_id=self.event_id,
             event_title=self.event_title,
             event_slug=self.event_slug,
+            icon_url=_text(raw_payload.get("icon_url")) or _text(raw_payload.get("icon")),
+            end_date=_datetime_value(raw_payload.get("end_date")) or _datetime_value(raw_payload.get("endDate")),
             tick_size=_decimal(self.tick_size) or Decimal("0.01"),
             min_order_size=_decimal(self.min_order_size) or Decimal("1"),
             neg_risk=bool(self.neg_risk),

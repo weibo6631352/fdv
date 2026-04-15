@@ -4,6 +4,7 @@ import { adminApi } from '../../core/api/resources'
 import type { AuditEventRecord, OutboxEventRecord } from '../../core/api/types'
 import { SectionCard } from '../../shared/ui/SectionCard'
 import { DataTable, type DataColumn } from '../../shared/ui/DataTable'
+import { MarketExternalLink } from '../../shared/ui/MarketExternalLink'
 import { formatDateTime } from '../../shared/utils/format'
 
 export const AuditPage = () => {
@@ -42,14 +43,20 @@ export const AuditPage = () => {
       cell: (row) => (
         <div className="table-primary">
           <strong>{row.event_title}</strong>
-          <span>{row.market_slug ?? row.condition_id ?? '—'}</span>
+          {row.market_slug ? (
+            <MarketExternalLink className="link-subtle" marketSlug={row.market_slug}>
+              {row.market_slug}
+            </MarketExternalLink>
+          ) : (
+            <span>{row.condition_id ?? '—'}</span>
+          )}
         </div>
       ),
     },
     { key: 'status', header: '状态', cell: (row) => row.status ?? '—' },
-    { key: 'trace', header: 'trace_id', cell: (row) => row.trace_id ?? '—' },
+    { key: 'trace', header: '追踪 ID', cell: (row) => row.trace_id ?? '—' },
     { key: 'reason', header: '原因', cell: (row) => row.reason ?? '—' },
-    { key: 'updated', header: 'updated_at', cell: (row) => formatDateTime(row.updated_at ?? row.created_at) },
+    { key: 'updated', header: '更新时间', cell: (row) => formatDateTime(row.updated_at ?? row.created_at) },
   ]
 
   const outboxColumns: Array<DataColumn<OutboxEventRecord>> = [
@@ -59,14 +66,20 @@ export const AuditPage = () => {
       cell: (row) => (
         <div className="table-primary">
           <strong>{row.event_type}</strong>
-          <span>{row.market_slug ?? row.condition_id ?? '—'}</span>
+          {row.market_slug ? (
+            <MarketExternalLink className="link-subtle" marketSlug={row.market_slug}>
+              {row.market_slug}
+            </MarketExternalLink>
+          ) : (
+            <span>{row.condition_id ?? '—'}</span>
+          )}
         </div>
       ),
     },
-    { key: 'trace', header: 'trace_id', cell: (row) => row.trace_id ?? '—' },
-    { key: 'priority', header: 'priority', cell: (row) => row.priority ?? '—' },
-    { key: 'retry', header: 'retry_count', cell: (row) => row.retry_count ?? '—' },
-    { key: 'created', header: 'created_at', cell: (row) => formatDateTime(row.created_at) },
+    { key: 'trace', header: '追踪 ID', cell: (row) => row.trace_id ?? '—' },
+    { key: 'priority', header: '优先级', cell: (row) => row.priority ?? '—' },
+    { key: 'retry', header: '重试次数', cell: (row) => row.retry_count ?? '—' },
+    { key: 'created', header: '创建时间', cell: (row) => formatDateTime(row.created_at) },
   ]
 
   return (
@@ -74,15 +87,15 @@ export const AuditPage = () => {
       <header className="page-header">
         <div>
           <p className="eyebrow">审计</p>
-          <h1>审计事件与 outbox</h1>
-          <p>读审计和事件积压，不在前端解释底层 payload 的业务语义。</p>
+          <h1>审计事件与待处理外发队列</h1>
+          <p>这里查看审计事件和积压队列，用于排查状态流转是否正常。</p>
         </div>
       </header>
 
-      <SectionCard title="过滤条件" subtitle="audit-events 和 outbox 分别查询。">
+      <SectionCard title="过滤条件" subtitle="审计事件和待处理外发队列分别查询。">
         <div className="form-grid form-grid--filters">
           <label>
-            <span>audit trace_id</span>
+            <span>审计追踪 ID</span>
             <input
               value={traceId}
               onChange={(event) => {
@@ -92,7 +105,7 @@ export const AuditPage = () => {
             />
           </label>
           <label>
-            <span>event_title</span>
+            <span>事件名称</span>
             <input
               value={eventTitle}
               onChange={(event) => {
@@ -102,7 +115,7 @@ export const AuditPage = () => {
             />
           </label>
           <label>
-            <span>outbox trace_id</span>
+            <span>外发队列追踪 ID</span>
             <input
               value={outboxTraceId}
               onChange={(event) => {
@@ -115,8 +128,8 @@ export const AuditPage = () => {
       </SectionCard>
 
       <SectionCard
-        title="audit-events"
-        subtitle={`当前 ${auditQuery.data?.total ?? 0} 条，offset ${auditOffset}。`}
+        title="审计事件"
+        subtitle={`当前 ${auditQuery.data?.total ?? 0} 条，当前第 ${Math.floor(auditOffset / pageSize) + 1} 页。`}
         actions={
           <div className="inline-actions">
             <button type="button" onClick={() => setAuditOffset((current) => Math.max(0, current - pageSize))} disabled={auditOffset === 0}>
@@ -137,13 +150,13 @@ export const AuditPage = () => {
           rows={auditQuery.data?.items ?? []}
           rowKey={(row) => row.event_id ?? `${row.trace_id}-${row.updated_at ?? row.created_at ?? 'unknown'}`}
           emptyTitle="没有审计事件"
-          emptyDescription="当前查询条件没有匹配数据。"
+          emptyDescription="当前查询条件下没有匹配的审计事件。"
         />
       </SectionCard>
 
       <SectionCard
-        title="outbox pending"
-        subtitle={`当前 ${outboxQuery.data?.total ?? 0} 条，offset ${outboxOffset}。`}
+        title="待处理外发队列"
+        subtitle={`当前 ${outboxQuery.data?.total ?? 0} 条，当前第 ${Math.floor(outboxOffset / pageSize) + 1} 页。`}
         actions={
           <div className="inline-actions">
             <button
@@ -167,8 +180,8 @@ export const AuditPage = () => {
           columns={outboxColumns}
           rows={outboxQuery.data?.items ?? []}
           rowKey={(row) => row.event_id ?? `${row.trace_id}-${row.created_at ?? 'unknown'}`}
-          emptyTitle="没有 outbox pending"
-          emptyDescription="当前没有待处理 outbox 事件。"
+          emptyTitle="没有待处理外发事件"
+          emptyDescription="当前没有待处理的外发队列事件。"
         />
       </SectionCard>
     </div>

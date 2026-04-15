@@ -705,6 +705,8 @@ class PersistenceWorker:
                 "event_id": _safe_first_payload_value(payload, "event_id", "source_event_id"),
                 "event_title": _safe_first_payload_value(payload, "event_title", "title"),
                 "event_slug": _safe_first_payload_value(payload, "event_slug", "slug"),
+                "icon_url": _safe_first_payload_value(payload, "icon_url", "icon"),
+                "end_date": _safe_first_payload_value(payload, "end_date", "endDate"),
                 "yes_token_id": _safe_first_payload_value(payload, "yes_token_id"),
                 "no_token_id": _safe_first_payload_value(payload, "no_token_id"),
                 "tick_size": _safe_first_payload_value(payload, "tick_size"),

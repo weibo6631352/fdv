@@ -6,8 +6,10 @@ import { formatApiError } from '../../core/api/client'
 import { SectionCard } from '../../shared/ui/SectionCard'
 import { DataTable, type DataColumn } from '../../shared/ui/DataTable'
 import { JsonPanel } from '../../shared/ui/JsonPanel'
+import { MarketExternalLink } from '../../shared/ui/MarketExternalLink'
 import { StatusPill } from '../../shared/ui/StatusPill'
 import { formatDateTime, formatDecimal } from '../../shared/utils/format'
+import { formatOrderSideLabel, formatOrderStatusLabel } from '../../shared/utils/labels'
 
 const orderTone = (status: string): 'neutral' | 'success' | 'warning' | 'danger' => {
   if (status === 'matched' || status === 'partially_filled') {
@@ -33,7 +35,7 @@ export const OrdersPage = () => {
   const [marketSlug, setMarketSlug] = useState('')
   const [manualTokenId, setManualTokenId] = useState('')
   const [newPrice, setNewPrice] = useState('0.62')
-  const [operator, setOperator] = useState('manual')
+  const [operator, setOperator] = useState('人工')
   const [formError, setFormError] = useState<string | null>(null)
 
   const ordersQuery = useQuery({
@@ -70,7 +72,13 @@ export const OrdersPage = () => {
         header: '市场',
         cell: (row) => (
           <div className="table-primary">
-            <strong>{row.market_slug ?? row.condition_id}</strong>
+            {row.market_slug ? (
+              <MarketExternalLink className="market-list__title" marketSlug={row.market_slug}>
+                {row.market_slug}
+              </MarketExternalLink>
+            ) : (
+              <strong>{row.condition_id}</strong>
+            )}
             <span>{row.token_id}</span>
           </div>
         ),
@@ -80,8 +88,8 @@ export const OrdersPage = () => {
         header: '方向',
         cell: (row) => (
           <div className="badge-row">
-            <StatusPill label={row.side} tone={row.side === 'sell' ? 'warning' : 'neutral'} />
-            <StatusPill label={row.status} tone={orderTone(row.status)} />
+            <StatusPill label={formatOrderSideLabel(row.side)} tone={row.side === 'sell' ? 'warning' : 'neutral'} />
+            <StatusPill label={formatOrderStatusLabel(row.status)} tone={orderTone(row.status)} />
           </div>
         ),
       },
@@ -97,18 +105,18 @@ export const OrdersPage = () => {
       },
       {
         key: 'filled',
-        header: 'filled',
+        header: '已成交',
         align: 'right',
         cell: (row) => formatDecimal(row.filled_shares),
       },
       {
         key: 'trace',
-        header: 'trace',
+        header: '追踪 ID',
         cell: (row) => row.trace_id ?? '—',
       },
       {
         key: 'updated',
-        header: 'updated_at',
+        header: '更新时间',
         cell: (row) => formatDateTime(row.updated_at),
       },
     ],
@@ -127,7 +135,7 @@ export const OrdersPage = () => {
     const numericPrice = Number(newPrice)
 
     if (!normalizedMarketSlug && !normalizedTokenId) {
-      setFormError('market_slug 和 token_id 至少要提供一个，才能定位要修复的卖单。')
+      setFormError('市场标识和代币 ID 至少要提供一个，才能定位要处理的卖单。')
       return
     }
     if (!Number.isFinite(numericPrice) || numericPrice <= 0 || numericPrice >= 1) {
@@ -135,11 +143,16 @@ export const OrdersPage = () => {
       return
     }
     if (!normalizedOperator) {
-      setFormError('operator 不能为空。')
+      setFormError('操作者不能为空。')
       return
     }
 
     setFormError(null)
+    const targetLabel = normalizedMarketSlug || normalizedTokenId
+    const confirmed = window.confirm(`将对 ${targetLabel} 取消现有卖单，并按 ${newPrice.trim()} 重挂卖单，是否继续？`)
+    if (!confirmed) {
+      return
+    }
     cancelReplaceMutation.mutate({
       market_slug: normalizedMarketSlug || undefined,
       token_id: normalizedTokenId || undefined,
@@ -153,30 +166,30 @@ export const OrdersPage = () => {
       <header className="page-header">
         <div>
           <p className="eyebrow">订单</p>
-          <h1>通用订单查询与人工卖出修复</h1>
-          <p>浏览订单和触发 cancel / replace sell 都通过统一应用服务，不让前端直接改交易状态。</p>
+          <h1>订单查询与卖单重挂</h1>
+          <p>查询当前订单，并在人工确认后执行取消并重挂卖单。</p>
         </div>
       </header>
 
-      <SectionCard title="查询" subtitle="open_only 默认开启，便于先看当前在场风险。">
+      <SectionCard title="筛选条件" subtitle="默认先看未完成订单，便于确认当前在场风险。">
         <div className="form-grid form-grid--filters">
           <label>
-            <span>open_only</span>
+            <span>仅看未完成订单</span>
             <select value={openOnly ? 'true' : 'false'} onChange={(event) => setOpenOnly(event.target.value === 'true')}>
-              <option value="true">true</option>
-              <option value="false">false</option>
+              <option value="true">是</option>
+              <option value="false">否</option>
             </select>
           </label>
           <label>
-            <span>condition_id</span>
+            <span>条件 ID</span>
             <input value={conditionId} onChange={(event) => setConditionId(event.target.value)} />
           </label>
           <label>
-            <span>token_id</span>
+            <span>代币 ID</span>
             <input value={tokenId} onChange={(event) => setTokenId(event.target.value)} />
           </label>
           <label>
-            <span>trace_id</span>
+            <span>追踪 ID</span>
             <input value={traceId} onChange={(event) => setTraceId(event.target.value)} />
           </label>
         </div>
@@ -185,7 +198,7 @@ export const OrdersPage = () => {
       <div className="content-grid content-grid--wide-aside">
         <SectionCard
           title="订单列表"
-          subtitle={`服务端 total ${ordersQuery.data?.total ?? 0}`}
+          subtitle={`服务端共 ${ordersQuery.data?.total ?? 0} 条。`}
           actions={
             <div className="inline-actions">
               <button type="button" onClick={() => setOffset((current) => Math.max(0, current - 50))} disabled={offset === 0}>
@@ -217,26 +230,26 @@ export const OrdersPage = () => {
         </SectionCard>
 
         <div className="detail-stack">
-          <SectionCard title="人工 cancel / replace sell" subtitle="适合已经有持仓且需要重挂 SELL 的场景。">
+          <SectionCard title="取消并重挂卖单" subtitle="只用于人工干预已有持仓的卖单。">
             <form className="form-grid" onSubmit={handleSubmit}>
               <label>
-                <span>market_slug</span>
+                <span>市场标识</span>
                 <input value={marketSlug} onChange={(event) => setMarketSlug(event.target.value)} />
               </label>
               <label>
-                <span>token_id</span>
+                <span>代币 ID</span>
                 <input value={manualTokenId} onChange={(event) => setManualTokenId(event.target.value)} />
               </label>
               <label>
-                <span>new_price</span>
+                <span>目标价格</span>
                 <input value={newPrice} onChange={(event) => setNewPrice(event.target.value)} />
               </label>
               <label>
-                <span>operator</span>
+                <span>操作者</span>
                 <input value={operator} onChange={(event) => setOperator(event.target.value)} />
               </label>
               <button type="submit" disabled={cancelReplaceMutation.isPending}>
-                {cancelReplaceMutation.isPending ? '提交中...' : '提交 SELL 修复'}
+                {cancelReplaceMutation.isPending ? '处理中...' : '确认取消并重挂'}
               </button>
             </form>
             {formError ? (
@@ -257,37 +270,37 @@ export const OrdersPage = () => {
             ) : null}
           </SectionCard>
 
-          <SectionCard title="当前选中订单" subtitle="点击左侧订单可快速带入 market_slug 和 token_id。">
+          <SectionCard title="当前选中订单" subtitle="点击左侧订单可快速带入市场标识和 Token ID。">
             <JsonPanel
               value={selectedOrder}
               emptyLabel="尚未选择订单。"
-              detailsLabel="查看订单原始 JSON"
+              detailsLabel="查看订单原始数据"
               defaultOpen={Boolean(selectedOrder)}
             />
           </SectionCard>
 
-          <SectionCard title="操作结果" subtitle="服务端返回 review、取消结果和重挂结果。">
+          <SectionCard title="处理结果" subtitle="展示取消结果、重挂结果和返回摘要。">
             <JsonPanel
               value={cancelReplaceMutation.data}
-              emptyLabel="尚未执行 SELL 修复。"
-              detailsLabel="查看操作结果原始 JSON"
+              emptyLabel="尚未执行取消并重挂。"
+              detailsLabel="查看处理结果原始数据"
               summary={
                 cancelReplaceMutation.data ? (
                   <div className="detail-list">
                     <div>
-                      <dt>status</dt>
-                      <dd>{cancelReplaceMutation.data.status}</dd>
+                      <dt>处理状态</dt>
+                      <dd>{formatOrderStatusLabel(cancelReplaceMutation.data.status)}</dd>
                     </div>
                     <div>
-                      <dt>trace_id</dt>
+                      <dt>追踪 ID</dt>
                       <dd>{cancelReplaceMutation.data.trace_id}</dd>
                     </div>
                     <div>
-                      <dt>operator</dt>
+                      <dt>操作者</dt>
                       <dd>{cancelReplaceMutation.data.operator ?? '—'}</dd>
                     </div>
                     <div>
-                      <dt>reason</dt>
+                      <dt>结果说明</dt>
                       <dd>{cancelReplaceMutation.data.reason ?? '—'}</dd>
                     </div>
                   </div>

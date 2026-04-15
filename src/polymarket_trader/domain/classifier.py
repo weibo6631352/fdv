@@ -46,6 +46,8 @@ class ClassificationResult:
     event_title: str | None
     event_slug: str | None
     event_id: str | None
+    icon_url: str | None
+    end_date: datetime | None
     matched_fields: tuple[str, ...] = field(default_factory=tuple)
     matched_keywords: tuple[str, ...] = field(default_factory=tuple)
     reject_reason: ClassificationRejectReason | None = None
@@ -91,6 +93,8 @@ class ClassificationResult:
             "event_title": self.event_title,
             "event_slug": self.event_slug,
             "event_id": self.event_id,
+            "icon_url": self.icon_url,
+            "end_date": self.end_date,
             "matched_fields": self.matched_fields,
             "matched_keywords": self.matched_keywords,
             "reject_reason": self.reject_reason.value if self.reject_reason else None,
@@ -134,6 +138,8 @@ class ClassificationResult:
             event_id=self.event_id,
             event_title=self.event_title,
             event_slug=self.event_slug,
+            icon_url=self.icon_url,
+            end_date=self.end_date,
             tick_size=self.tick_size,
             min_order_size=self.min_order_size,
             neg_risk=self.neg_risk,
@@ -240,6 +246,8 @@ class MarketClassifier:
             event_title=parsed["event_title"],
             event_slug=parsed["event_slug"],
             event_id=parsed["event_id"],
+            icon_url=parsed["icon_url"],
+            end_date=parsed["end_date"],
             matched_fields=tuple(signal.field_name for signal in match_signals),
             matched_keywords=tuple(signal.keyword for signal in match_signals),
         )
@@ -275,6 +283,8 @@ class MarketClassifier:
             event_title=parsed["event_title"],
             event_slug=parsed["event_slug"],
             event_id=parsed["event_id"],
+            icon_url=parsed["icon_url"],
+            end_date=parsed["end_date"],
             matched_fields=fields,
             matched_keywords=keywords,
             reject_reason=reason,
@@ -359,6 +369,12 @@ class MarketClassifier:
             event_id = self._parse_text(self._first_value(raw_market, "eventId"))
             if event_id is None and event is not None:
                 event_id = self._parse_text(self._first_value(event, "id"))
+            icon_url = self._parse_text(self._first_value(raw_market, "icon"))
+            if icon_url is None and event is not None:
+                icon_url = self._parse_text(self._first_value(event, "icon"))
+            end_date = self._parse_datetime(self._first_value(raw_market, "endDate", "end_date"))
+            if end_date is None and event is not None:
+                end_date = self._parse_datetime(self._first_value(event, "endDate", "end_date"))
         except (TypeError, ValueError) as exc:
             return {
                 "condition_id": None,
@@ -378,6 +394,8 @@ class MarketClassifier:
                 "event_title": None,
                 "event_slug": None,
                 "event_id": None,
+                "icon_url": None,
+                "end_date": None,
                 "parse_error": f"{type(exc).__name__}: {exc}",
             }
 
@@ -399,6 +417,8 @@ class MarketClassifier:
             "event_title": event_title,
             "event_slug": event_slug,
             "event_id": event_id,
+            "icon_url": icon_url,
+            "end_date": end_date,
             "parse_error": None,
         }
 
@@ -441,6 +461,20 @@ class MarketClassifier:
             return False
         normalized = str(value).strip().lower()
         return normalized in {"1", "true", "yes", "y", "on"}
+
+    @staticmethod
+    def _parse_datetime(value: Any | None) -> datetime | None:
+        if value is None or value == "":
+            return None
+        if isinstance(value, datetime):
+            return value
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
 
     @staticmethod
     def _parse_nullable_bool(value: Any | None) -> bool | None:

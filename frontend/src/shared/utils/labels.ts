@@ -1,0 +1,139 @@
+const PHASE_LABELS: Record<string, string> = {
+  starting: '启动中',
+  workers_started: '后台线程已启动',
+  degraded: '降级运行',
+  recovering_snapshot: '恢复快照中',
+  paused: '已暂停',
+}
+
+const WORKER_STATE_LABELS: Record<string, string> = {
+  running: '运行中',
+  paused: '已暂停',
+  starting: '启动中',
+  stopped: '已停止',
+  idle: '空闲',
+  failed: '异常',
+}
+
+const TRADING_STATUS_LABELS: Record<string, string> = {
+  active: '交易中',
+  paused: '已暂停',
+  closed: '已关闭',
+  resolved: '已结算',
+  rejected: '已拒绝',
+  eligible: '可参与',
+}
+
+const ORDER_SIDE_LABELS: Record<string, string> = {
+  buy: '买入',
+  sell: '卖出',
+}
+
+const ORDER_STATUS_LABELS: Record<string, string> = {
+  ok: '完成',
+  success: '完成',
+  matched: '已成交',
+  partially_filled: '部分成交',
+  live: '挂单中',
+  placed: '已提交',
+  failed: '失败',
+  rejected: '已拒绝',
+  cancelled: '已取消',
+}
+
+const CONFIRMATION_STATUS_LABELS: Record<string, string> = {
+  confirmed: '已确认',
+  pending: '待确认',
+  unknown: '未知',
+}
+
+const ISSUE_FIELD_LABELS: Record<string, string> = {
+  wallet_private_key: '钱包私钥',
+  portfolio_budget_usdc: '组合预算',
+  max_order_usdc: '单笔下单上限',
+  max_market_usdc: '单市场上限',
+  max_total_usdc: '总仓上限',
+  max_open_orders: '最大未完成订单数',
+  database: '数据库连接',
+  market_ws_connected: '市场行情连接',
+  trading_client: '交易客户端',
+  outbox_depth: '外发队列',
+  startup_reconcile: '启动对账',
+  runtime: '运行态',
+  user_ws_connected: '用户行情连接',
+  allow_new_buys: '允许新买入',
+  last_reconcile_at: '最近一次对账',
+}
+
+const STATUS_REASON_LABELS: Record<string, string> = {
+  background_workers_started: '后台线程已启动',
+}
+
+const SIGNATURE_TYPE_LABELS: Record<number, string> = {
+  0: 'EOA 直签',
+  1: '代理钱包',
+  2: 'Safe',
+}
+
+export const formatPhaseLabel = (value: string | null | undefined): string => {
+  if (!value) {
+    return '—'
+  }
+  return PHASE_LABELS[value] ?? value
+}
+
+export const formatWorkerStateLabel = (value: string | null | undefined): string => {
+  if (!value) {
+    return '未知'
+  }
+  return WORKER_STATE_LABELS[value] ?? value
+}
+
+export const formatTradingStatusLabel = (value: string | null | undefined): string => {
+  if (!value) {
+    return '未知'
+  }
+  return TRADING_STATUS_LABELS[value] ?? value
+}
+
+export const formatOrderSideLabel = (value: string | null | undefined): string => {
+  if (!value) {
+    return '未知'
+  }
+  return ORDER_SIDE_LABELS[value] ?? value
+}
+
+export const formatOrderStatusLabel = (value: string | null | undefined): string => {
+  if (!value) {
+    return '未知'
+  }
+  return ORDER_STATUS_LABELS[value] ?? value
+}
+
+export const formatConfirmationStatusLabel = (value: string | null | undefined): string => {
+  if (!value) {
+    return '未知'
+  }
+  return CONFIRMATION_STATUS_LABELS[value] ?? value
+}
+
+export const formatIssueFieldLabel = (value: string | null | undefined): string => {
+  if (!value) {
+    return '未知字段'
+  }
+  return ISSUE_FIELD_LABELS[value] ?? value
+}
+
+export const formatStatusReasonLabel = (value: string | null | undefined): string => {
+  if (!value) {
+    return '—'
+  }
+  return STATUS_REASON_LABELS[value] ?? value
+}
+
+export const formatSignatureTypeLabel = (value: number | null | undefined): string => {
+  if (value === null || value === undefined) {
+    return '—'
+  }
+  return SIGNATURE_TYPE_LABELS[value] ?? String(value)
+}

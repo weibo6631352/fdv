@@ -49,6 +49,43 @@ export const formatDateTime = (value: string | null | undefined): string => {
   }).format(date)
 }
 
+export const formatFullDateTime = (value: string | null | undefined): string => {
+  if (!value) {
+    return '—'
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZoneName: 'short',
+  }).formatToParts(date)
+  const partMap = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, part.value]),
+  )
+  const timeZoneName = partMap.timeZoneName ? ` ${partMap.timeZoneName}` : ''
+  return `${partMap.year}/${partMap.month}/${partMap.day} ${partMap.hour}:${partMap.minute}${timeZoneName}`
+}
+
+export const formatAddressShort = (value: string | null | undefined): string => {
+  if (!value) {
+    return '—'
+  }
+  const normalized = value.trim()
+  if (normalized.length <= 16) {
+    return normalized
+  }
+  return `${normalized.slice(0, 6)}...${normalized.slice(-4)}`
+}
+
 export const formatBool = (value: boolean | null | undefined): string => {
   if (value === null || value === undefined) {
     return '—'

@@ -25,6 +25,7 @@ from strategy_sdk.ports import (
     StrategyPorts,
     TelemetryPort,
 )
+from polymarket_trader.domain.fees import FeeQuote, TakerFeePreview, build_taker_fee_preview, calculate_trade_fee
 
 __all__ = (
     "AccountReadPort",
@@ -33,10 +34,13 @@ __all__ = (
     "DiscoveryEndpoint",
     "DiscoveryQuery",
     "EntrySizing",
+    "FeeQuote",
     "HistoryReadPort",
     "load_mapping_file",
     "load_strategy_config",
     "MarketReadPort",
+    "build_taker_fee_preview",
+    "calculate_trade_fee",
     "RecoveryDecision",
     "RecoveryReplaceRequest",
     "RegistryReadPort",
@@ -51,6 +55,7 @@ __all__ = (
     "StrategyPorts",
     "StrategyRuntimeProfile",
     "StrategySpec",
+    "TakerFeePreview",
     "TelemetryPort",
     "UniverseDecision",
 )

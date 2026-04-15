@@ -1,12 +1,23 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { useSearchParams } from 'react-router-dom'
 import { adminApi } from '../../core/api/resources'
-import type { MarketView } from '../../core/api/types'
+import type { MarketView, TakerFeePreview } from '../../core/api/types'
 import { SectionCard } from '../../shared/ui/SectionCard'
 import { DataTable, type DataColumn } from '../../shared/ui/DataTable'
+import { JsonPanel } from '../../shared/ui/JsonPanel'
 import { StatusPill } from '../../shared/ui/StatusPill'
-import { formatDateTime, formatDecimal, formatJson, formatList, getString } from '../../shared/utils/format'
+import { EntityAvatar } from '../../shared/ui/EntityAvatar'
+import { MarketExternalLink } from '../../shared/ui/MarketExternalLink'
+import {
+  formatDateTime,
+  formatFullDateTime,
+  formatDecimal,
+  formatList,
+  getString,
+} from '../../shared/utils/format'
+import { formatTradingStatusLabel } from '../../shared/utils/labels'
 import { resolveStrategyExtension } from '../../strategy/registry'
 
 const tradingStatusTone = (status: string): 'neutral' | 'success' | 'warning' | 'danger' => {
@@ -22,14 +33,77 @@ const tradingStatusTone = (status: string): 'neutral' | 'success' | 'warning' | 
   return 'neutral'
 }
 
+const tradingStatusOptions = [
+  { value: '', label: '全部状态' },
+  { value: 'active', label: '交易中' },
+  { value: 'paused', label: '已暂停' },
+  { value: 'closed', label: '已关闭' },
+  { value: 'resolved', label: '已结算' },
+  { value: 'rejected', label: '已拒绝' },
+]
+
+const feeOptions = [
+  { value: 'all', label: '全部' },
+  { value: 'true', label: '已开启' },
+  { value: 'false', label: '未开启' },
+]
+
+const sortOptions = [
+  { value: 'fee_rate_updated_at', label: '费率更新时间' },
+  { value: 'market_slug', label: '市场标识' },
+  { value: 'fee_rate_bps', label: '费率' },
+  { value: 'maker_base_fee_bps', label: '挂单费率' },
+  { value: 'taker_base_fee_bps', label: '吃单费率' },
+]
+
+const feeFormatter = new Intl.NumberFormat('zh-CN', {
+  maximumFractionDigits: 5,
+})
+
+const formatFeeValue = (value: string | number | null | undefined): string => {
+  if (value === null || value === undefined || value === '') {
+    return '—'
+  }
+  const numericValue = Number(value)
+  if (Number.isNaN(numericValue)) {
+    return String(value)
+  }
+  return feeFormatter.format(numericValue)
+}
+
+const formatFeePreviewInline = (preview: TakerFeePreview | null | undefined): string => {
+  if (!preview) {
+    return '手续费预估不可用'
+  }
+  return `${formatDecimal(preview.basis_size_shares)}股 买${formatFeeValue(preview.buy?.fee_usdc)} / 卖${formatFeeValue(preview.sell?.fee_usdc)}`
+}
+
+const formatFeePreviewDetail = (
+  preview: TakerFeePreview | null | undefined,
+  side: 'buy' | 'sell',
+): string => {
+  if (!preview) {
+    return '—'
+  }
+  const quote = side === 'buy' ? preview.buy : preview.sell
+  if (!quote) {
+    return '—'
+  }
+  const chargedInLabel = quote.charged_in === 'shares' ? '份额' : 'USDC'
+  const chargedInValue = quote.charged_in === 'shares' ? formatFeeValue(quote.fee_shares) : formatFeeValue(quote.fee_usdc)
+  const priceSourceLabel = quote.price_source === 'best_ask' ? '卖一' : '买一'
+  return `${formatFeeValue(quote.fee_usdc)} USDC (${priceSourceLabel} ${formatDecimal(quote.price)}) / 实扣${chargedInLabel}${chargedInValue}`
+}
+
 export const MarketsPage = () => {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [search, setSearch] = useState('')
   const [tradingStatus, setTradingStatus] = useState('')
   const [feesEnabled, setFeesEnabled] = useState('all')
   const [sortBy, setSortBy] = useState('fee_rate_updated_at')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
   const [offset, setOffset] = useState(0)
-  const [selectedTokenId, setSelectedTokenId] = useState<string | null>(null)
+  const [selectedTokenId, setSelectedTokenId] = useState<string | null>(() => searchParams.get('token_id'))
 
   const runtimeQuery = useQuery({
     queryKey: ['runtime', 'markets'],
@@ -72,12 +146,37 @@ export const MarketsPage = () => {
     })
   }, [marketsQuery.data, search])
 
+  const selectedTokenParam = searchParams.get('token_id')
+
+  const selectMarket = (tokenId: string, replace = false) => {
+    setSelectedTokenId(tokenId)
+    if (selectedTokenParam === tokenId) {
+      return
+    }
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.set('token_id', tokenId)
+    setSearchParams(nextParams, { replace })
+  }
+
+  useEffect(() => {
+    if (selectedTokenParam && selectedTokenParam !== selectedTokenId) {
+      setSelectedTokenId(selectedTokenParam)
+    }
+  }, [selectedTokenId, selectedTokenParam])
+
+  useEffect(() => {
+    if (!selectedTokenParam && !selectedTokenId && filteredMarkets[0]) {
+      selectMarket(filteredMarkets[0].market.no_token_id, true)
+    }
+  }, [filteredMarkets, searchParams, selectedTokenId, selectedTokenParam])
+
   const activeTokenId =
     selectedTokenId && filteredMarkets.some((item) => item.market.no_token_id === selectedTokenId)
       ? selectedTokenId
-      : filteredMarkets[0]?.market.no_token_id ?? null
+      : null
 
   const selectedMarket = filteredMarkets.find((item) => item.market.no_token_id === activeTokenId) ?? null
+  const selectionMissing = Boolean(selectedTokenId) && !selectedMarket
 
   const detailQuery = useQuery({
     queryKey: ['market-detail', activeTokenId],
@@ -104,31 +203,62 @@ export const MarketsPage = () => {
       }),
     enabled: Boolean(activeTokenId),
   })
+  const selectedFeePreview = detailQuery.data?.fee_preview ?? selectedMarket?.fee_preview ?? null
 
   const columns: Array<DataColumn<MarketView>> = [
     {
       key: 'market',
       header: '市场',
       cell: (row) => (
-        <div className="table-primary">
-          <strong>{row.market.event_title ?? row.market.market_slug}</strong>
-          <span>{row.market.market_slug}</span>
+        <div className="market-table-cell">
+          <EntityAvatar
+            label={row.market.event_title ?? row.market.market_slug}
+            imageUrl={row.market.icon_url}
+            size="sm"
+          />
+          <div className="table-primary">
+            <MarketExternalLink
+              className="market-list__title"
+              eventSlug={row.market.event_slug}
+              marketSlug={row.market.market_slug}
+              onClick={(event) => {
+                event.stopPropagation()
+              }}
+            >
+              {row.market.event_title ?? row.market.market_slug}
+            </MarketExternalLink>
+            <MarketExternalLink
+              className="link-subtle"
+              eventSlug={row.market.event_slug}
+              marketSlug={row.market.market_slug}
+            >
+              {row.market.market_slug}
+            </MarketExternalLink>
+          </div>
         </div>
       ),
     },
     {
+      key: 'end_date',
+      header: '封盘时间',
+      cell: (row) => formatFullDateTime(row.market.end_date),
+    },
+    {
       key: 'status',
-      header: '状态',
+      header: '交易状态',
       cell: (row) => (
         <div className="badge-row">
-          <StatusPill label={row.market.trading_status} tone={tradingStatusTone(row.market.trading_status)} />
-          {row.tracked ? <StatusPill label="tracked" tone="success" /> : null}
+          <StatusPill
+            label={formatTradingStatusLabel(row.market.trading_status)}
+            tone={tradingStatusTone(row.market.trading_status)}
+          />
+          {row.tracked ? <StatusPill label="已跟踪" tone="success" /> : null}
         </div>
       ),
     },
     {
       key: 'strategy',
-      header: '策略标签',
+      header: '策略标记',
       cell: (row) => (
         <div className="badge-row">
           {strategyExtension.renderMarketBadges?.(row).map((badge) => (
@@ -139,19 +269,24 @@ export const MarketsPage = () => {
     },
     {
       key: 'spread',
-      header: 'spread',
+      header: '价差',
       align: 'right',
       cell: (row) => formatDecimal(row.spread),
     },
     {
       key: 'fee',
-      header: '费率 bps',
+      header: '费率(BPS)',
       align: 'right',
-      cell: (row) => formatDecimal(row.market.fees.fee_rate_bps),
+      cell: (row) => (
+        <div className="table-primary">
+          <div>{formatDecimal(row.market.fees.fee_rate_bps)}</div>
+          <span>{formatFeePreviewInline(row.fee_preview)}</span>
+        </div>
+      ),
     },
     {
       key: 'position',
-      header: '持仓 shares',
+      header: '持仓份额',
       align: 'right',
       cell: (row) => formatDecimal(row.position?.shares),
     },
@@ -168,200 +303,330 @@ export const MarketsPage = () => {
       <header className="page-header">
         <div>
           <p className="eyebrow">市场</p>
-          <h1>通用 market 视图 + 策略解释槽</h1>
-          <p>列表、盘口、中间价和历史价格是通用能力，策略标签只通过扩展模块附加。</p>
+          <h1>市场监控与策略解释</h1>
+          <p>先从列表定位目标市场，再查看盘口、走势和策略解释。</p>
         </div>
       </header>
 
-      <SectionCard title="筛选" subtitle="服务端负责费率与状态过滤，文本检索在当前页内完成。">
-        <div className="form-grid form-grid--filters">
-          <label>
-            <span>文本检索</span>
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="slug / event / condition" />
+      <SectionCard title="筛选条件" subtitle="状态和费率走服务端过滤，关键词检索在当前页内完成。">
+        <div className="form-grid form-grid--market-filters">
+          <label className="form-grid__wide">
+            <span>关键词</span>
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="输入市场标识、事件标题或条件 ID"
+            />
           </label>
           <label>
-            <span>trading_status</span>
+            <span>交易状态</span>
             <select value={tradingStatus} onChange={(event) => setTradingStatus(event.target.value)}>
-              <option value="">全部</option>
-              <option value="active">active</option>
-              <option value="paused">paused</option>
-              <option value="closed">closed</option>
-              <option value="resolved">resolved</option>
-              <option value="rejected">rejected</option>
+              {tradingStatusOptions.map((option) => (
+                <option key={option.value || 'all'} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
           <label>
-            <span>fees_enabled</span>
+            <span>费率开关</span>
             <select value={feesEnabled} onChange={(event) => setFeesEnabled(event.target.value)}>
-              <option value="all">全部</option>
-              <option value="true">true</option>
-              <option value="false">false</option>
+              {feeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
           <label>
-            <span>sort_by</span>
+            <span>排序字段</span>
             <select value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
-              <option value="fee_rate_updated_at">fee_rate_updated_at</option>
-              <option value="market_slug">market_slug</option>
-              <option value="fee_rate_bps">fee_rate_bps</option>
-              <option value="maker_base_fee_bps">maker_base_fee_bps</option>
-              <option value="taker_base_fee_bps">taker_base_fee_bps</option>
+              {sortOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
           <label>
-            <span>sort_direction</span>
+            <span>排序方向</span>
             <select value={sortDirection} onChange={(event) => setSortDirection(event.target.value as 'asc' | 'desc')}>
-              <option value="desc">desc</option>
-              <option value="asc">asc</option>
+              <option value="desc">降序</option>
+              <option value="asc">升序</option>
             </select>
           </label>
         </div>
       </SectionCard>
 
-      <div className="content-grid content-grid--wide-aside">
-        <SectionCard
-          title="市场列表"
-          subtitle={`当前页 ${filteredMarkets.length} 条，本轮服务端 total ${marketsQuery.data?.total ?? 0}。`}
-          actions={
-            <div className="inline-actions">
-              <button type="button" onClick={() => setOffset((current) => Math.max(0, current - 50))} disabled={offset === 0}>
-                上一页
-              </button>
-              <button
-                type="button"
-                onClick={() => setOffset((current) => current + 50)}
-                disabled={(marketsQuery.data?.items.length ?? 0) < 50}
-              >
-                下一页
-              </button>
-            </div>
-          }
-        >
-          <DataTable
-            columns={columns}
-            rows={filteredMarkets}
-            rowKey={(row) => row.market.no_token_id}
-            emptyTitle="没有 market"
-            emptyDescription="调整筛选条件后重试。"
-            onRowClick={(row) => setSelectedTokenId(row.market.no_token_id)}
-            selectedRowKey={activeTokenId}
-          />
-        </SectionCard>
+      <SectionCard
+        title="市场列表"
+        subtitle={`当前页显示 ${filteredMarkets.length} 条，服务端总数 ${marketsQuery.data?.total ?? 0} 条。`}
+        actions={
+          <div className="inline-actions">
+            <button type="button" onClick={() => setOffset((current) => Math.max(0, current - 50))} disabled={offset === 0}>
+              上一页
+            </button>
+            <button
+              type="button"
+              onClick={() => setOffset((current) => current + 50)}
+              disabled={(marketsQuery.data?.items.length ?? 0) < 50}
+            >
+              下一页
+            </button>
+          </div>
+        }
+      >
+        <DataTable
+          columns={columns}
+          rows={filteredMarkets}
+          rowKey={(row) => row.market.no_token_id}
+      emptyTitle="没有可展示的市场"
+      emptyDescription="请调整筛选条件后重试。"
+      onRowClick={(row) => selectMarket(row.market.no_token_id)}
+      selectedRowKey={activeTokenId}
+    />
+  </SectionCard>
 
-        <div className="detail-stack">
-          <SectionCard title="市场详情" subtitle="详情、盘口和历史曲线都围绕当前选择的 market。">
-            {selectedMarket ? (
-              <div className="detail-list">
-                <div>
-                  <dt>event_title</dt>
-                  <dd>{detailQuery.data?.market.event_title ?? selectedMarket.market.event_title ?? '—'}</dd>
-                </div>
-                <div>
-                  <dt>market_slug</dt>
-                  <dd>{selectedMarket.market.market_slug}</dd>
-                </div>
-                <div>
-                  <dt>matched_keywords</dt>
-                  <dd>{formatList(selectedMarket.market.matched_keywords)}</dd>
-                </div>
-                <div>
-                  <dt>tags</dt>
-                  <dd>{formatList(selectedMarket.market.tags)}</dd>
+      <SectionCard
+        title="当前选中市场"
+        subtitle={
+          selectedMarket
+            ? '点击上方列表即可切换当前查看对象。'
+            : selectionMissing
+              ? '当前筛选结果已不包含你之前选中的市场。'
+              : '先从上方列表选择一个市场。'
+        }
+        actions={
+          selectedMarket ? (
+            <div className="badge-row">
+              <StatusPill
+                label={formatTradingStatusLabel(selectedMarket.market.trading_status)}
+                tone={tradingStatusTone(selectedMarket.market.trading_status)}
+              />
+              {selectedMarket.tracked ? <StatusPill label="已跟踪" tone="success" /> : null}
+              {strategyExtension.renderMarketBadges?.(selectedMarket).map((badge) => (
+                <StatusPill key={badge.label} label={badge.label} tone={badge.tone} />
+              ))}
+            </div>
+          ) : null
+        }
+      >
+        {selectedMarket ? (
+          <>
+            <div className="selected-market-summary">
+              <div className="market-list__main">
+                <EntityAvatar
+                  label={detailQuery.data?.market.event_title ?? selectedMarket.market.event_title ?? selectedMarket.market.market_slug}
+                  imageUrl={detailQuery.data?.market.icon_url ?? selectedMarket.market.icon_url}
+                  size="md"
+                />
+                <div className="market-list__text">
+                  <MarketExternalLink
+                    className="market-list__title"
+                    eventSlug={detailQuery.data?.market.event_slug ?? selectedMarket.market.event_slug}
+                    marketSlug={detailQuery.data?.market.market_slug ?? selectedMarket.market.market_slug}
+                  >
+                    {detailQuery.data?.market.event_title ?? selectedMarket.market.event_title ?? '—'}
+                  </MarketExternalLink>
+                  <MarketExternalLink
+                    className="link-subtle"
+                    eventSlug={detailQuery.data?.market.event_slug ?? selectedMarket.market.event_slug}
+                    marketSlug={detailQuery.data?.market.market_slug ?? selectedMarket.market.market_slug}
+                  >
+                    {selectedMarket.market.market_slug}
+                  </MarketExternalLink>
                 </div>
               </div>
-            ) : (
-              <p className="muted">先从左侧选择一个 market。</p>
-            )}
-          </SectionCard>
-
-          <SectionCard title="盘口与中间价" subtitle="优先展示 hot snapshot。">
+            </div>
             <div className="detail-list">
               <div>
-                <dt>midpoint</dt>
-                <dd>{formatDecimal(midpointQuery.data?.midpoint)}</dd>
-              </div>
-              <div>
-                <dt>best bid / ask</dt>
+                <dt>事件标题</dt>
                 <dd>
-                  {formatDecimal(midpointQuery.data?.best_bid)} / {formatDecimal(midpointQuery.data?.best_ask)}
+                  <MarketExternalLink
+                    className="market-list__title"
+                    eventSlug={detailQuery.data?.market.event_slug ?? selectedMarket.market.event_slug}
+                    marketSlug={detailQuery.data?.market.market_slug ?? selectedMarket.market.market_slug}
+                  >
+                    {detailQuery.data?.market.event_title ?? selectedMarket.market.event_title ?? '—'}
+                  </MarketExternalLink>
                 </dd>
               </div>
               <div>
-                <dt>spread</dt>
-                <dd>{formatDecimal(midpointQuery.data?.spread)}</dd>
+                <dt>市场标识</dt>
+                <dd>
+                  <MarketExternalLink
+                    className="market-list__title"
+                    eventSlug={detailQuery.data?.market.event_slug ?? selectedMarket.market.event_slug}
+                    marketSlug={detailQuery.data?.market.market_slug ?? selectedMarket.market.market_slug}
+                  >
+                    {selectedMarket.market.market_slug}
+                  </MarketExternalLink>
+                </dd>
               </div>
               <div>
-                <dt>received_at</dt>
-                <dd>{formatDateTime(midpointQuery.data?.received_at)}</dd>
+                <dt>封盘时间</dt>
+                <dd>{formatFullDateTime(detailQuery.data?.market.end_date ?? selectedMarket.market.end_date)}</dd>
+              </div>
+              <div>
+                <dt>匹配关键词</dt>
+                <dd>{formatList(selectedMarket.market.matched_keywords)}</dd>
+              </div>
+              <div>
+                <dt>标签</dt>
+                <dd>{formatList(selectedMarket.market.tags)}</dd>
               </div>
             </div>
-            {orderbookQuery.data?.orderbook ? (
-              <div className="depth-grid">
-                <div>
-                  <h3>bids</h3>
-                  <ul className="depth-list">
-                    {orderbookQuery.data.orderbook.bids.slice(0, 5).map((level, index) => (
-                      <li key={`bid-${index}`}>
-                        <span>{formatDecimal(level.price)}</span>
-                        <span>{formatDecimal(level.size)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <h3>asks</h3>
-                  <ul className="depth-list">
-                    {orderbookQuery.data.orderbook.asks.slice(0, 5).map((level, index) => (
-                      <li key={`ask-${index}`}>
-                        <span>{formatDecimal(level.price)}</span>
-                        <span>{formatDecimal(level.size)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            ) : null}
-          </SectionCard>
+          </>
+        ) : (
+          <p className="muted">
+            {selectionMissing ? '当前筛选结果不包含你之前选中的市场，请从列表重新选择。' : '先从上方列表选择一个市场。'}
+          </p>
+        )}
+      </SectionCard>
 
-          <SectionCard title="价格历史" subtitle="`/markets/prices-history` 默认拉取 1d / fidelity 60。">
-            {historyQuery.data && historyQuery.data.history.length > 0 ? (
-              <div className="chart-wrap">
-                <ResponsiveContainer width="100%" height={220}>
-                  <LineChart data={historyQuery.data.history}>
-                    <XAxis
-                      dataKey="timestamp"
-                      tickFormatter={(value: string) => formatDateTime(value)}
-                      minTickGap={24}
-                    />
-                    <YAxis />
-                    <Tooltip
-                      formatter={(value) =>
-                        formatDecimal(Array.isArray(value) ? value[0] : value ?? undefined)
-                      }
-                      labelFormatter={(value) =>
-                        typeof value === 'string' ? formatDateTime(value) : String(value ?? '—')
-                      }
-                    />
-                    <Line type="monotone" dataKey="price" stroke="#0f766e" dot={false} strokeWidth={2} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <p className="muted">当前没有可展示的价格历史。</p>
-            )}
-          </SectionCard>
-
-          {selectedMarket ? strategyExtension.renderMarketDetail?.(selectedMarket) : null}
-
+      <div className="content-grid content-grid--two">
+        <SectionCard title="交易概览" subtitle="当前市场的费用、持仓和挂单概况。">
           {selectedMarket ? (
-            <SectionCard title="原始快照" subtitle="必要时直接看当前 market view。">
-              <pre className="json-block">
-                {formatJson(detailQuery.data ?? selectedMarket)}
-              </pre>
-            </SectionCard>
-          ) : null}
-        </div>
+            <div className="detail-list">
+              <div>
+                <dt>费率(BPS)</dt>
+                <dd>{formatDecimal(selectedMarket.market.fees.fee_rate_bps)}</dd>
+              </div>
+              <div>
+                <dt>100股吃单手续费(买)</dt>
+                <dd>{formatFeePreviewDetail(selectedFeePreview, 'buy')}</dd>
+              </div>
+              <div>
+                <dt>100股吃单手续费(卖)</dt>
+                <dd>{formatFeePreviewDetail(selectedFeePreview, 'sell')}</dd>
+              </div>
+              <div>
+                <dt>费率更新时间</dt>
+                <dd>{formatDateTime(selectedMarket.market.fees.fee_rate_updated_at)}</dd>
+              </div>
+              <div>
+                <dt>持仓份额</dt>
+                <dd>{formatDecimal(selectedMarket.position?.shares)}</dd>
+              </div>
+              <div>
+                <dt>未完成订单数</dt>
+                <dd>{selectedMarket.open_order_count}</dd>
+              </div>
+              <div>
+                <dt>最小下单量</dt>
+                <dd>{formatDecimal(selectedMarket.market.min_order_size)}</dd>
+              </div>
+              <div>
+                <dt>最小变动价位</dt>
+                <dd>{formatDecimal(selectedMarket.market.tick_size)}</dd>
+              </div>
+              <div>
+                <dt>封盘时间</dt>
+                <dd>{formatFullDateTime(selectedMarket.market.end_date)}</dd>
+              </div>
+            </div>
+          ) : (
+            <p className="muted">尚未选中市场，无法展示交易概览。</p>
+          )}
+        </SectionCard>
+
+        <SectionCard title="盘口快照" subtitle="优先看中间价、最优买卖价和最新盘口。">
+          {selectedMarket ? (
+            <>
+              <div className="detail-list">
+                <div>
+                  <dt>中间价</dt>
+                  <dd>{formatDecimal(midpointQuery.data?.midpoint)}</dd>
+                </div>
+                <div>
+                  <dt>最优买价 / 卖价</dt>
+                  <dd>
+                    {formatDecimal(midpointQuery.data?.best_bid)} / {formatDecimal(midpointQuery.data?.best_ask)}
+                  </dd>
+                </div>
+                <div>
+                  <dt>买卖价差</dt>
+                  <dd>{formatDecimal(midpointQuery.data?.spread)}</dd>
+                </div>
+                <div>
+                  <dt>快照时间</dt>
+                  <dd>{formatDateTime(midpointQuery.data?.received_at)}</dd>
+                </div>
+              </div>
+              {orderbookQuery.data?.orderbook ? (
+                <div className="depth-grid">
+                  <div>
+                    <h3>买盘</h3>
+                    <ul className="depth-list">
+                      {orderbookQuery.data.orderbook.bids.slice(0, 5).map((level, index) => (
+                        <li key={`bid-${index}`}>
+                          <span>{formatDecimal(level.price)}</span>
+                          <span>{formatDecimal(level.size)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <h3>卖盘</h3>
+                    <ul className="depth-list">
+                      {orderbookQuery.data.orderbook.asks.slice(0, 5).map((level, index) => (
+                        <li key={`ask-${index}`}>
+                          <span>{formatDecimal(level.price)}</span>
+                          <span>{formatDecimal(level.size)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <p className="muted">尚未选中市场，无法展示盘口快照。</p>
+          )}
+        </SectionCard>
       </div>
+
+      <SectionCard title="价格走势" subtitle="默认展示最近 1 天的价格变化。">
+        {selectedMarket ? (
+          historyQuery.data && historyQuery.data.history.length > 0 ? (
+            <div className="chart-wrap">
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={historyQuery.data.history}>
+                  <XAxis
+                    dataKey="timestamp"
+                    tickFormatter={(value: string) => formatDateTime(value)}
+                    minTickGap={24}
+                  />
+                  <YAxis />
+                  <Tooltip
+                    formatter={(value) =>
+                      formatDecimal(Array.isArray(value) ? value[0] : value ?? undefined)
+                    }
+                    labelFormatter={(value) =>
+                      typeof value === 'string' ? formatDateTime(value) : String(value ?? '—')
+                    }
+                  />
+                  <Line type="monotone" dataKey="price" stroke="#0f766e" dot={false} strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="muted">当前没有可展示的价格历史。</p>
+          )
+        ) : (
+          <p className="muted">尚未选中市场，无法展示价格走势。</p>
+        )}
+      </SectionCard>
+
+      {selectedMarket ? strategyExtension.renderMarketDetail?.(selectedMarket) : null}
+
+      <SectionCard title="原始市场快照" subtitle="排障时再展开查看。">
+        <JsonPanel
+          value={selectedMarket ? detailQuery.data ?? selectedMarket : null}
+          emptyLabel="尚未选中市场。"
+          detailsLabel="查看市场原始数据"
+        />
+      </SectionCard>
     </div>
   )
 }

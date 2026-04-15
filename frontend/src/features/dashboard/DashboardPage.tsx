@@ -4,7 +4,23 @@ import { adminApi } from '../../core/api/resources'
 import { SectionCard } from '../../shared/ui/SectionCard'
 import { JsonPanel } from '../../shared/ui/JsonPanel'
 import { StatusPill } from '../../shared/ui/StatusPill'
-import { formatCompact, formatDateTime, formatDecimal, getString } from '../../shared/utils/format'
+import { EntityAvatar } from '../../shared/ui/EntityAvatar'
+import { MarketExternalLink } from '../../shared/ui/MarketExternalLink'
+import {
+  formatCompact,
+  formatDateTime,
+  formatFullDateTime,
+  formatDecimal,
+  getString,
+} from '../../shared/utils/format'
+import {
+  formatIssueFieldLabel,
+  formatPhaseLabel,
+  formatStatusReasonLabel,
+  formatTradingStatusLabel,
+  formatWorkerStateLabel,
+} from '../../shared/utils/labels'
+import { hasPositiveShares } from '../../shared/utils/markets'
 import { resolveStrategyExtension } from '../../strategy/registry'
 
 const boolTone = (value: boolean): 'success' | 'danger' => (value ? 'success' : 'danger')
@@ -23,6 +39,27 @@ const getWorkerTone = (
     return 'warning'
   }
   return 'neutral'
+}
+
+const marketStatusTone = (status: string): 'neutral' | 'success' | 'warning' | 'danger' => {
+  if (status === 'active') {
+    return 'success'
+  }
+  if (status === 'paused') {
+    return 'warning'
+  }
+  if (status === 'closed' || status === 'resolved' || status === 'rejected') {
+    return 'danger'
+  }
+  return 'neutral'
+}
+
+const sortByEndDate = <T extends { market: { end_date: string | null } }>(items: T[]): T[] => {
+  return [...items].sort((left, right) => {
+    const leftTime = left.market.end_date ? Date.parse(left.market.end_date) : Number.POSITIVE_INFINITY
+    const rightTime = right.market.end_date ? Date.parse(right.market.end_date) : Number.POSITIVE_INFINITY
+    return leftTime - rightTime
+  })
 }
 
 export const DashboardPage = () => {
@@ -64,50 +101,57 @@ export const DashboardPage = () => {
   const warnings = readyQuery.data?.warnings ?? []
   const recentAllocations = portfolioQuery.data?.recent_allocations ?? []
   const workers = workersQuery.data?.workers ?? []
+  const marketItems = marketsQuery.data?.items ?? []
+  const runningWorkerCount = workers.filter((worker) => (worker.state ?? worker.status) === 'running').length
+  const trackedMarkets = useMemo(
+    () => sortByEndDate(marketItems.filter((item) => item.tracked)),
+    [marketItems],
+  )
+  const positionMarkets = useMemo(
+    () => sortByEndDate(marketItems.filter((item) => hasPositiveShares(item.position?.shares))),
+    [marketItems],
+  )
+  const trackedPreview = trackedMarkets.slice(0, 6)
+  const positionPreview = positionMarkets.slice(0, 6)
 
   return (
     <div className="page-stack">
       <header className="page-header">
         <div>
           <p className="eyebrow">总览</p>
-          <h1>运行态与资金闸门</h1>
-          <p>所有读操作都来自 Admin API，策略解释通过独立扩展模块挂接。</p>
+          <h1>系统运行总览</h1>
+          <p>先看账户、市场覆盖和阻塞项，再进入线程、策略和原始快照。</p>
         </div>
       </header>
 
       <section className="stats-grid">
         <div className="stat-card">
-          <span>readiness</span>
-          <strong>{readyQuery.data?.ready_to_trade ? 'ready' : 'blocked'}</strong>
-          <StatusPill
-            label={readyQuery.data?.phase ?? 'starting'}
-            tone={readyQuery.data?.ready_to_trade ? 'success' : 'danger'}
-          />
+          <span>自动交易</span>
+          <strong>{readyQuery.data?.ready_to_trade ? '已就绪' : '受阻'}</strong>
+          <small>当前阶段 {formatPhaseLabel(readyQuery.data?.phase ?? runtimeQuery.data?.phase)}</small>
+        </div>
+        <div className="stat-card">
+          <span>阻塞项</span>
+          <strong>{blockingIssues.length}</strong>
+          <small>告警 {warnings.length}</small>
         </div>
         <div className="stat-card">
           <span>组合余额</span>
           <strong>{formatCompact(portfolioQuery.data?.balance_usdc)}</strong>
-          <small>allowance {formatCompact(portfolioQuery.data?.allowance_usdc)}</small>
+          <small>授权额度 {formatCompact(portfolioQuery.data?.allowance_usdc)}</small>
         </div>
         <div className="stat-card">
-          <span>跟踪 market</span>
+          <span>跟踪市场</span>
           <strong>{runtimeQuery.data?.registry.market_count ?? 0}</strong>
-          <small>phase {runtimeQuery.data?.phase ?? 'starting'}</small>
-        </div>
-        <div className="stat-card">
-          <span>持仓 / 挂单</span>
-          <strong>
-            {portfolioQuery.data?.position_count ?? 0} / {portfolioQuery.data?.open_order_count ?? 0}
-          </strong>
-          <small>fills {portfolioQuery.data?.fill_count ?? 0}</small>
+          <small>运行中线程 {runningWorkerCount}</small>
         </div>
       </section>
 
       <div className="content-grid content-grid--two">
-        <SectionCard title="交易闸门" subtitle="自动交易是否允许，先看这四项。">
+        <SectionCard title="关键状态" subtitle="这里先放会直接影响自动交易的状态。">
           <div className="detail-list">
             <div>
-              <dt>ready_to_trade</dt>
+              <dt>自动交易</dt>
               <dd>
                 <StatusPill
                   label={readyQuery.data?.ready_to_trade ? '允许' : '阻塞'}
@@ -116,7 +160,11 @@ export const DashboardPage = () => {
               </dd>
             </div>
             <div>
-              <dt>User WS</dt>
+              <dt>运行阶段</dt>
+              <dd>{formatPhaseLabel(readyQuery.data?.phase ?? runtimeQuery.data?.phase)}</dd>
+            </div>
+            <div>
+              <dt>用户行情连接</dt>
               <dd>
                 <StatusPill
                   label={readyQuery.data?.runtime.user_ws_connected ? '已连接' : '未连接'}
@@ -125,7 +173,7 @@ export const DashboardPage = () => {
               </dd>
             </div>
             <div>
-              <dt>allow_new_buys</dt>
+              <dt>允许新买入</dt>
               <dd>
                 <StatusPill
                   label={readyQuery.data?.runtime.allow_new_buys ? '打开' : '关闭'}
@@ -134,117 +182,234 @@ export const DashboardPage = () => {
               </dd>
             </div>
             <div>
-              <dt>last_reconcile_at</dt>
+              <dt>最近一次对账</dt>
               <dd>{formatDateTime(readyQuery.data?.runtime.last_reconcile_at)}</dd>
+            </div>
+            <div>
+              <dt>持仓 / 未完成订单</dt>
+              <dd>
+                {portfolioQuery.data?.position_count ?? 0} / {portfolioQuery.data?.open_order_count ?? 0}
+              </dd>
             </div>
           </div>
         </SectionCard>
 
-        <SectionCard title="阻塞与告警" subtitle="这里优先显示真正阻止自动交易的原因。">
-          {blockingIssues.length > 0 ? (
-            <ul className="message-list">
-              {blockingIssues.map((issue, index) => (
-                <li key={`${issue.field}-${issue.code}-${index}`}>
-                  <strong>{issue.field}</strong>
-                  <span>{issue.message}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="muted">当前没有阻塞项。</p>
-          )}
-          {warnings.length > 0 ? (
-            <ul className="message-list is-warning">
-              {warnings.map((issue, index) => (
-                <li key={`${issue.field}-${issue.code}-${index}`}>
-                  <strong>{issue.field}</strong>
-                  <span>{issue.message}</span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </SectionCard>
-      </div>
-
-      <div className="content-grid content-grid--two">
-        <SectionCard title="Worker 摘要" subtitle="运行态与调度信息从 `/workers` 聚合。">
+        <SectionCard title="线程与资金概览" subtitle="确认线程在跑，再看余额、授权和成交数。">
           <div className="detail-list">
             <div>
-              <dt>phase</dt>
-              <dd>{workersQuery.data?.phase ?? '—'}</dd>
+              <dt>运行中线程</dt>
+              <dd>{runningWorkerCount}</dd>
             </div>
             <div>
-              <dt>automatic_trading_enabled</dt>
-              <dd>{workersQuery.data?.automatic_trading_enabled ? '是' : '否'}</dd>
-            </div>
-            <div>
-              <dt>worker 数量</dt>
+              <dt>线程总数</dt>
               <dd>{workers.length}</dd>
             </div>
             <div>
-              <dt>status_reason</dt>
-              <dd>{workersQuery.data?.status_reason ?? '—'}</dd>
+              <dt>状态原因</dt>
+              <dd>{formatStatusReasonLabel(workersQuery.data?.status_reason)}</dd>
+            </div>
+            <div>
+              <dt>授权额度</dt>
+              <dd>{formatDecimal(portfolioQuery.data?.allowance_usdc)}</dd>
+            </div>
+            <div>
+              <dt>可用余额</dt>
+              <dd>{formatDecimal(portfolioQuery.data?.available_usdc)}</dd>
+            </div>
+            <div>
+              <dt>成交数</dt>
+              <dd>{portfolioQuery.data?.fill_count ?? 0}</dd>
             </div>
           </div>
-          {workers.length > 0 ? (
-            <div className="inline-badge-list">
-              {workers.map((worker, index) => {
-                const workerName = worker.name ?? worker.worker_name ?? `worker-${index + 1}`
-                const workerState = worker.state ?? worker.status ?? 'unknown'
-
-                return (
-                <StatusPill
-                  key={`${workerName}-${index}`}
-                  label={`${workerName}: ${workerState}`}
-                  tone={getWorkerTone(workerState, worker.healthy)}
-                />
-                )
-              })}
-            </div>
-          ) : null}
-        </SectionCard>
-
-        <SectionCard title="指标与队列" subtitle="先看快照，不在前端重写指标语义。">
-          <JsonPanel
-            value={metricsQuery.data?.metrics ?? metricsQuery.data?.queue_depths}
-            emptyLabel="暂无指标快照。"
-            detailsLabel="查看指标原始 JSON"
-          />
         </SectionCard>
       </div>
+
+      <SectionCard title="当前阻塞与告警" subtitle="优先处理阻塞项，告警作为次级风险提示。">
+        {blockingIssues.length > 0 ? (
+          <ul className="message-list">
+            {blockingIssues.map((issue, index) => (
+              <li key={`${issue.field}-${issue.code}-${index}`}>
+                <strong>{formatIssueFieldLabel(issue.field)}</strong>
+                <span>{issue.message}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="muted">当前没有阻塞项。</p>
+        )}
+        {warnings.length > 0 ? (
+          <ul className="message-list is-warning">
+            {warnings.map((issue, index) => (
+              <li key={`${issue.field}-${issue.code}-${index}`}>
+                <strong>{formatIssueFieldLabel(issue.field)}</strong>
+                <span>{issue.message}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </SectionCard>
+
+      <div className="content-grid content-grid--two">
+        <SectionCard title="跟踪市场" subtitle="通用跟踪清单，点击可直接打开官网市场页。">
+          {trackedPreview.length > 0 ? (
+            <>
+              <ul className="market-list">
+                {trackedPreview.map((item) => {
+                  const title = item.market.event_title ?? item.market.market_slug
+                  return (
+                    <li key={item.market.no_token_id} className="market-list__item">
+                      <div className="market-list__main">
+                        <EntityAvatar label={title} imageUrl={item.market.icon_url} size="sm" />
+                        <div className="market-list__text">
+                          <MarketExternalLink
+                            className="market-list__title"
+                            eventSlug={item.market.event_slug}
+                            marketSlug={item.market.market_slug}
+                          >
+                            {title}
+                          </MarketExternalLink>
+                          <MarketExternalLink
+                            className="link-subtle"
+                            eventSlug={item.market.event_slug}
+                            marketSlug={item.market.market_slug}
+                          >
+                            {item.market.market_slug}
+                          </MarketExternalLink>
+                        </div>
+                      </div>
+                      <div className="market-list__meta">
+                        <StatusPill
+                          label={formatTradingStatusLabel(item.market.trading_status)}
+                          tone={marketStatusTone(item.market.trading_status)}
+                        />
+                        <span>封盘 {formatFullDateTime(item.market.end_date)}</span>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+              {trackedMarkets.length > trackedPreview.length ? (
+                <p className="muted">还有 {trackedMarkets.length - trackedPreview.length} 个跟踪市场未展开。</p>
+              ) : null}
+            </>
+          ) : (
+            <p className="muted">当前没有可展示的跟踪市场。</p>
+          )}
+        </SectionCard>
+
+        <SectionCard title="持仓市场" subtitle="通用持仓清单，便于直接打开官网市场页复盘。">
+          {positionPreview.length > 0 ? (
+            <>
+              <ul className="market-list">
+                {positionPreview.map((item) => {
+                  const title = item.market.event_title ?? item.market.market_slug
+                  return (
+                    <li key={item.market.no_token_id} className="market-list__item">
+                      <div className="market-list__main">
+                        <EntityAvatar label={title} imageUrl={item.market.icon_url} size="sm" />
+                        <div className="market-list__text">
+                          <MarketExternalLink
+                            className="market-list__title"
+                            eventSlug={item.market.event_slug}
+                            marketSlug={item.market.market_slug}
+                          >
+                            {title}
+                          </MarketExternalLink>
+                          <MarketExternalLink
+                            className="link-subtle"
+                            eventSlug={item.market.event_slug}
+                            marketSlug={item.market.market_slug}
+                          >
+                            {item.market.market_slug}
+                          </MarketExternalLink>
+                        </div>
+                      </div>
+                      <div className="market-list__meta">
+                        <span>持仓 {formatDecimal(item.position?.shares)}</span>
+                        <span>封盘 {formatFullDateTime(item.market.end_date)}</span>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+              {positionMarkets.length > positionPreview.length ? (
+                <p className="muted">还有 {positionMarkets.length - positionPreview.length} 个持仓市场未展开。</p>
+              ) : null}
+            </>
+          ) : (
+            <p className="muted">当前没有持仓市场。</p>
+          )}
+        </SectionCard>
+      </div>
+
+      <SectionCard title="工作线程状态" subtitle="这里看线程是否在跑，以及是否处于异常或暂停。">
+        {workers.length > 0 ? (
+          <div className="inline-badge-list">
+            {workers.map((worker, index) => {
+              const workerName = worker.name ?? worker.worker_name ?? `worker-${index + 1}`
+              const workerState = worker.state ?? worker.status ?? 'unknown'
+
+              return (
+                <StatusPill
+                  key={`${workerName}-${index}`}
+                  label={`${workerName} · ${formatWorkerStateLabel(workerState)}`}
+                  tone={getWorkerTone(workerState, worker.healthy)}
+                />
+              )
+            })}
+          </div>
+        ) : (
+          <p className="muted">当前没有线程快照。</p>
+        )}
+      </SectionCard>
 
       {strategyExtension.renderDashboard?.({
         ready: readyQuery.data,
         runtime: runtimeQuery.data,
         portfolio: portfolioQuery.data,
-        markets: marketsQuery.data?.items ?? [],
+        markets: marketItems,
       })}
 
       <div className="content-grid content-grid--two">
-        <SectionCard title="近期分配" subtitle="组合与分配记录来自 `/portfolio`。">
+        <SectionCard title="最近分配" subtitle="最近的预算分配和敞口变化。">
           {recentAllocations.length > 0 ? (
             <div className="detail-list">
               {recentAllocations.slice(0, 6).map((allocation) => (
                 <div key={allocation.idempotency_key ?? allocation.condition_id}>
-                  <dt>{allocation.market_slug ?? allocation.condition_id}</dt>
+                  <dt>
+                    {allocation.market_slug ? (
+                      <MarketExternalLink className="market-list__title" marketSlug={allocation.market_slug}>
+                        {allocation.market_slug}
+                      </MarketExternalLink>
+                    ) : (
+                      allocation.condition_id
+                    )}
+                  </dt>
                   <dd>
-                    target {formatDecimal(allocation.target_budget_usdc)} / exposure{' '}
+                    目标预算 {formatDecimal(allocation.target_budget_usdc)} / 当前敞口{' '}
                     {formatDecimal(allocation.current_exposure_usdc)}
                   </dd>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="muted">当前没有 recent allocations。</p>
+            <p className="muted">当前没有最近分配记录。</p>
           )}
         </SectionCard>
 
-        <SectionCard title="配置摘要" subtitle="这里只显示已脱敏 settings。">
-          <JsonPanel
-            value={runtimeQuery.data?.settings}
-            emptyLabel="暂无配置摘要。"
-            detailsLabel="查看 settings 原始 JSON"
-          />
+        <SectionCard title="系统快照" subtitle="原始快照默认折叠，排障时再展开。">
+          <div className="detail-stack">
+            <JsonPanel
+              value={metricsQuery.data?.metrics ?? metricsQuery.data?.queue_depths}
+              emptyLabel="暂无指标快照。"
+              detailsLabel="查看指标原始数据"
+            />
+            <JsonPanel
+              value={runtimeQuery.data?.settings}
+              emptyLabel="暂无配置快照。"
+              detailsLabel="查看配置原始数据"
+            />
+          </div>
         </SectionCard>
       </div>
     </div>

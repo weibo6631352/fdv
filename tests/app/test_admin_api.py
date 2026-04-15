@@ -180,6 +180,7 @@ class FakeClobClient:
         orderbook: object | None = None,
         midpoint: Decimal | None = None,
         error: Exception | None = None,
+        wallet_address: str | None = "0x1111111111111111111111111111111111111111",
     ) -> None:
         self._history = history or normalize_price_history_payload(
             {
@@ -206,6 +207,7 @@ class FakeClobClient:
         )
         self._midpoint = midpoint or Decimal("0.57")
         self._error = error
+        self.default_wallet_address = wallet_address
         self.history_calls: list[dict[str, object]] = []
         self.orderbook_calls: list[dict[str, object]] = []
         self.midpoint_calls: list[dict[str, object]] = []
@@ -333,6 +335,8 @@ def _market() -> Market:
         event_id="event-1",
         event_title="Sample Market A",
         event_slug="sample-event-a",
+        icon_url="https://example.com/icon.png",
+        end_date=datetime(2026, 2, 1, 0, 0, tzinfo=timezone.utc),
         tick_size=Decimal("0.01"),
         min_order_size=Decimal("1"),
         fees_enabled=True,
@@ -407,6 +411,7 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
         max_total_usdc=Decimal("100"),
         max_open_orders=10,
         wallet_private_key=SecretStr("super-secret"),
+        polymarket_funder_address="0x2222222222222222222222222222222222222222",
     )
     registry = MarketRegistry()
     registry.upsert(market)
@@ -584,23 +589,40 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
 
         assert runtime_payload["registry"]["market_count"] == 1
         assert runtime_payload["settings"]["wallet_private_key"] == "***"
+        assert runtime_payload["identity"]["wallet_address"] == "0x1111111111111111111111111111111111111111"
+        assert runtime_payload["identity"]["funder_address"] == "0x2222222222222222222222222222222222222222"
         assert runtime_payload["readiness"]["ready"] is True
         assert runtime_payload["markets"][0]["orderbook"]["best_ask"] == "0.59"
         assert runtime_payload["markets"][0]["market"]["market_slug"] == "sample-market-a"
+        assert runtime_payload["markets"][0]["market"]["icon_url"] == "https://example.com/icon.png"
+        assert runtime_payload["markets"][0]["market"]["end_date"] == "2026-02-01T00:00:00+00:00"
         assert runtime_payload["markets"][0]["market"]["fees"]["taker_base_fee_bps"] == 100
         assert runtime_payload["markets"][0]["market"]["fees"]["fee_rate_bps"] == 125
+        assert runtime_payload["markets"][0]["fee_preview"]["fee_rate_bps"] == 125
+        assert runtime_payload["markets"][0]["fee_preview"]["buy"]["fee_usdc"] == "3.02375"
+        assert runtime_payload["markets"][0]["fee_preview"]["buy"]["price_source"] == "best_ask"
+        assert runtime_payload["markets"][0]["fee_preview"]["sell"]["fee_usdc"] == "3.09375"
+        assert runtime_payload["markets"][0]["fee_preview"]["sell"]["price_source"] == "best_bid"
         assert workers["phase"] == "trading_enabled"
         assert isinstance(workers["workers"], list)
         assert metrics["metrics"]["gauges"]["entry_signal_to_submit_ms"] == 42
 
         assert markets["total"] == 1
         assert markets["items"][0]["market"]["condition_id"] == "condition-500m"
+        assert markets["items"][0]["market"]["icon_url"] == "https://example.com/icon.png"
+        assert markets["items"][0]["market"]["end_date"] == "2026-02-01T00:00:00+00:00"
         assert markets["items"][0]["market"]["fees"]["enabled"] is True
         assert markets["items"][0]["market"]["fees"]["maker_base_fee_bps"] == 0
         assert markets["items"][0]["market"]["fees"]["fee_rate_updated_at"] == "2026-01-01T12:02:00+00:00"
+        assert markets["items"][0]["fee_preview"]["basis_size_shares"] == "100"
+        assert markets["items"][0]["fee_preview"]["buy"]["fee_usdc"] == "3.02375"
+        assert markets["items"][0]["fee_preview"]["sell"]["fee_usdc"] == "3.09375"
         assert markets["items"][0]["entry_price_touched"] is True
         assert market_detail["market"]["condition_id"] == "condition-500m"
         assert market_detail["market"]["market_slug"] == "sample-market-a"
+        assert market_detail["market"]["icon_url"] == "https://example.com/icon.png"
+        assert market_detail["market"]["end_date"] == "2026-02-01T00:00:00+00:00"
+        assert market_detail["fee_preview"]["buy"]["fee_shares"] == "5.12500"
         assert market_orderbook["token_id"] == "no-token-500m"
         assert market_orderbook["source"] == "hot"
         assert market_orderbook["orderbook"]["best_bid"] == "0.55"
@@ -817,6 +839,49 @@ def test_admin_ready_route_reports_blockers_when_runtime_is_not_ready() -> None:
         assert "user_ws_not_connected" in ready.json()["runtime"]["blocking_reasons"]
         assert runtime_payload["runtime"]["ready_to_trade"] is False
         assert runtime_payload["readiness"]["ready"] is False
+
+
+def test_admin_ready_route_only_exposes_user_facing_root_blockers() -> None:
+    runtime = _build_runtime(ready=False)
+    runtime.readiness = FakeConfigReadiness(
+        ready_to_trade=False,
+        blocking_issues=(
+            {
+                "field": "wallet_private_key",
+                "code": "missing_secret",
+                "message": "密钥未配置，启动阶段禁止自动下单",
+            },
+        ),
+    )
+    runtime.supervisor._snapshot = replace(
+        runtime.supervisor._snapshot,
+        readiness=replace(
+            runtime.supervisor._snapshot.readiness,
+            blocking_reasons=(
+                "config_not_ready",
+                "trading_client_not_ready",
+                "user_ws_not_connected",
+                "reconcile_not_fresh",
+                "trading_client_unavailable",
+            ),
+        ),
+    )
+    app = create_app(runtime=runtime, admin_service=AdminService())
+
+    with TestClient(app) as client:
+        payload = client.get("/ready").json()
+
+    fields = [issue["field"] for issue in payload["blocking_issues"]]
+    messages = [issue["message"] for issue in payload["blocking_issues"]]
+
+    assert fields == ["wallet_private_key", "user_ws_connected", "last_reconcile_at"]
+    assert "密钥未配置，启动阶段禁止自动下单" in messages
+    assert "用户行情连接未连接，暂停自动下单" in messages
+    assert "首次 reconcile 未完成，禁止自动下单" in messages
+    assert all(issue["field"] != "runtime" for issue in payload["blocking_issues"])
+    assert all("config_not_ready" not in message for message in messages)
+    assert all("trading_client_not_ready" not in message for message in messages)
+    assert all("trading_client_unavailable" not in message for message in messages)
 
 
 def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypatch) -> None:

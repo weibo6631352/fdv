@@ -57,6 +57,7 @@
 - [当前策略设计文档](./docs/设计文档.md)：运行时装配和关键流程。
 - [配置文档](./docs/config.md)：`.env`、策略模块加载和策略侧配置文件。
 - [API 文档](./docs/api.md)：Admin API。
+- [SDK 手续费说明](./docs/sdk-fees.md)：手续费公式、SDK 调用方式和 `fee_preview` 结构。
 - [前端开发清单](./docs/frontend-开发清单.md)：前端边界、模块拆分和二次开发入口。
 - [故障处理](./docs/runbook.md)：启动检查、异常排查顺序和人工恢复路径。
 

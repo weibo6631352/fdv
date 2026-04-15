@@ -49,6 +49,11 @@ export interface RuntimePayload {
     warnings?: BlockingIssue[]
   }
   settings: JsonObject
+  identity: {
+    wallet_address: string | null
+    funder_address: string | null
+    signature_type: number | null
+  }
   runtime: RuntimeStatus
   bootstrap_summary: JsonValue
   registry: {
@@ -114,6 +119,8 @@ export interface MarketSummary {
   event_title: string | null
   no_token_id: string
   yes_token_id: string | null
+  icon_url: string | null
+  end_date: string | null
   tick_size: string | null
   min_order_size: string | null
   neg_risk: boolean
@@ -263,6 +270,21 @@ export interface AllocationRecord {
   idempotency_key: string | null
 }
 
+export interface FeePreviewQuote {
+  price: string | null
+  price_source: string | null
+  fee_usdc: string | null
+  fee_shares: string | null
+  charged_in: 'shares' | 'usdc'
+}
+
+export interface TakerFeePreview {
+  basis_size_shares: string | null
+  fee_rate_bps: number
+  buy: FeePreviewQuote | null
+  sell: FeePreviewQuote | null
+}
+
 export interface MarketView {
   market: MarketSummary
   tracked: boolean
@@ -273,6 +295,7 @@ export interface MarketView {
   best_ask: string | null
   best_bid: string | null
   spread: string | null
+  fee_preview: TakerFeePreview | null
   entry_price_touched: boolean
 }
 

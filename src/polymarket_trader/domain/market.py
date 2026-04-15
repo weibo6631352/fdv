@@ -26,6 +26,8 @@ class Market:
     event_id: str | None = None
     event_title: str | None = None
     event_slug: str | None = None
+    icon_url: str | None = None
+    end_date: datetime | None = None
     tick_size: Decimal = Decimal("0.01")
     min_order_size: Decimal = Decimal("1")
     neg_risk: bool = False
@@ -100,6 +102,8 @@ class Market:
         event_id: str | None = None,
         event_title: str | None = None,
         event_slug: str | None = None,
+        icon_url: str | None = None,
+        end_date: datetime | None = None,
         category: str | None = None,
         tags: tuple[str, ...] | None = None,
         matched_keywords: tuple[str, ...] | None = None,
@@ -114,6 +118,8 @@ class Market:
             event_id=self.event_id if event_id is None else event_id,
             event_title=self.event_title if event_title is None else event_title,
             event_slug=self.event_slug if event_slug is None else event_slug,
+            icon_url=self.icon_url if icon_url is None else icon_url,
+            end_date=self.end_date if end_date is None else end_date,
             category=self.category if category is None else category,
             tags=self.tags if tags is None else tags,
             matched_keywords=(
