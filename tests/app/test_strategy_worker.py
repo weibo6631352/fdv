@@ -23,7 +23,7 @@ from polymarket_trader.infra.polymarket.order_executor import (
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
-from polymarket_trader.strategies.current.strategy import build_strategy
+from strategies.current.strategy import build_strategy
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 from polymarket_trader.workers.strategy_worker import StrategyWorker
 
@@ -167,6 +167,7 @@ class _ScriptedExecutor:
 
 def test_strategy_service_allocates_equally_across_eligible_markets() -> None:
     registry = MarketRegistry()
+    strategy = build_strategy()
     primary = _market(condition_id="condition-1", token_id="no-1", market_slug="token-1")
     secondary = _market(condition_id="condition-2", token_id="no-2", market_slug="token-2")
     registry.upsert(primary)
@@ -176,7 +177,7 @@ def test_strategy_service_allocates_equally_across_eligible_markets() -> None:
         secondary.no_token_id: _snapshot(market=secondary),
     }
     service = StrategyService(
-        strategy_module=build_strategy(),
+        strategy_module=strategy,
         registry=registry,
         orderbook_reader=snapshots.get,
     )
@@ -190,8 +191,6 @@ def test_strategy_service_allocates_equally_across_eligible_markets() -> None:
         max_order_usdc=Decimal("100"),
         max_market_usdc=Decimal("100"),
         max_total_usdc=Decimal("100"),
-        min_liquidity_usdc=Decimal("5"),
-        max_spread=Decimal("0.10"),
     )
 
     assert plan.ready_to_trade
@@ -208,11 +207,12 @@ def test_strategy_worker_turns_entry_price_touch_into_risk_result() -> None:
         registry = MarketRegistry()
         account_state_store = _ready_account_state_store()
         market_ws_worker = MarketWsWorker(event_bus=event_bus, registry=registry)
+        strategy = build_strategy()
         market = _market(condition_id="condition", token_id="no-token", market_slug="token")
         market_ws_worker.track_market(market)
 
         strategy_service = StrategyService(
-            strategy_module=build_strategy(),
+            strategy_module=strategy,
             registry=registry,
             orderbook_reader=market_ws_worker.snapshot,
         )
@@ -220,15 +220,16 @@ def test_strategy_worker_turns_entry_price_touch_into_risk_result() -> None:
         strategy_worker = StrategyWorker(
             event_bus=event_bus,
             strategy_service=strategy_service,
-            trading_service=TradingService(executor=executor),
+            trading_service=TradingService(
+                executor=executor,
+                runtime_profile=strategy.runtime_profile,
+            ),
             account_state_store=account_state_store,
             portfolio_budget_usdc=Decimal("100"),
             available_usdc=Decimal("100"),
             max_order_usdc=Decimal("100"),
             max_market_usdc=Decimal("100"),
             max_total_usdc=Decimal("100"),
-            min_liquidity_usdc=Decimal("5"),
-            max_spread=Decimal("0.10"),
             balance_usdc=Decimal("100"),
             allowance_usdc=Decimal("100"),
             max_open_orders=10,
@@ -263,10 +264,11 @@ def test_strategy_worker_partial_fill_only_sells_filled_shares() -> None:
     async def run() -> None:
         registry = MarketRegistry()
         account_state_store = _ready_account_state_store()
+        strategy = build_strategy()
         market = _market(condition_id="condition", token_id="no-token", market_slug="token")
         registry.upsert(market)
         strategy_service = StrategyService(
-            strategy_module=build_strategy(),
+            strategy_module=strategy,
             registry=registry,
             orderbook_reader={market.no_token_id: _snapshot(market=market)}.get,
         )
@@ -286,15 +288,16 @@ def test_strategy_worker_partial_fill_only_sells_filled_shares() -> None:
         )
         strategy_worker = StrategyWorker(
             strategy_service=strategy_service,
-            trading_service=TradingService(executor=executor),
+            trading_service=TradingService(
+                executor=executor,
+                runtime_profile=strategy.runtime_profile,
+            ),
             account_state_store=account_state_store,
             portfolio_budget_usdc=Decimal("100"),
             available_usdc=Decimal("100"),
             max_order_usdc=Decimal("20"),
             max_market_usdc=Decimal("20"),
             max_total_usdc=Decimal("100"),
-            min_liquidity_usdc=Decimal("5"),
-            max_spread=Decimal("0.10"),
             balance_usdc=Decimal("100"),
             allowance_usdc=Decimal("100"),
             max_open_orders=10,
@@ -329,10 +332,11 @@ def test_strategy_worker_tracks_live_follow_up_sell_in_hot_state() -> None:
     async def run() -> None:
         registry = MarketRegistry()
         account_state_store = _ready_account_state_store()
+        strategy = build_strategy()
         market = _market(condition_id="condition", token_id="no-token", market_slug="token")
         registry.upsert(market)
         strategy_service = StrategyService(
-            strategy_module=build_strategy(),
+            strategy_module=strategy,
             registry=registry,
             orderbook_reader={market.no_token_id: _snapshot(market=market)}.get,
         )
@@ -358,15 +362,16 @@ def test_strategy_worker_tracks_live_follow_up_sell_in_hot_state() -> None:
         )
         strategy_worker = StrategyWorker(
             strategy_service=strategy_service,
-            trading_service=TradingService(executor=executor),
+            trading_service=TradingService(
+                executor=executor,
+                runtime_profile=strategy.runtime_profile,
+            ),
             account_state_store=account_state_store,
             portfolio_budget_usdc=Decimal("100"),
             available_usdc=Decimal("100"),
             max_order_usdc=Decimal("20"),
             max_market_usdc=Decimal("20"),
             max_total_usdc=Decimal("100"),
-            min_liquidity_usdc=Decimal("5"),
-            max_spread=Decimal("0.10"),
             balance_usdc=Decimal("100"),
             allowance_usdc=Decimal("100"),
             max_open_orders=10,
@@ -400,12 +405,13 @@ def test_strategy_worker_no_fill_releases_budget_for_next_market() -> None:
     async def run() -> None:
         registry = MarketRegistry()
         account_state_store = _ready_account_state_store()
+        strategy = build_strategy()
         first = _market(condition_id="condition-1", token_id="no-1", market_slug="token-1")
         second = _market(condition_id="condition-2", token_id="no-2", market_slug="token-2")
         registry.upsert(first)
         registry.upsert(second)
         strategy_service = StrategyService(
-            strategy_module=build_strategy(),
+            strategy_module=strategy,
             registry=registry,
             orderbook_reader={
                 first.no_token_id: _snapshot(market=first),
@@ -436,15 +442,16 @@ def test_strategy_worker_no_fill_releases_budget_for_next_market() -> None:
         )
         strategy_worker = StrategyWorker(
             strategy_service=strategy_service,
-            trading_service=TradingService(executor=executor),
+            trading_service=TradingService(
+                executor=executor,
+                runtime_profile=strategy.runtime_profile,
+            ),
             account_state_store=account_state_store,
             portfolio_budget_usdc=Decimal("100"),
             available_usdc=Decimal("100"),
             max_order_usdc=Decimal("50"),
             max_market_usdc=Decimal("50"),
             max_total_usdc=Decimal("100"),
-            min_liquidity_usdc=Decimal("5"),
-            max_spread=Decimal("0.10"),
             balance_usdc=Decimal("100"),
             allowance_usdc=Decimal("100"),
             max_open_orders=10,

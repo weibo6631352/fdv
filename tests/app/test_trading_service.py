@@ -8,11 +8,18 @@ from polymarket_trader.app.trading_service import TradingService
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.order import BuyOrderIntent
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from strategy_sdk import StrategyRuntimeProfile
 
 
 def test_trading_service_reviews_intent_with_risk_manager() -> None:
     async def run() -> None:
-        service = TradingService()
+        service = TradingService(
+            runtime_profile=StrategyRuntimeProfile(
+                entry_no_price_max=Decimal("0.60"),
+                min_liquidity_usdc=Decimal("5"),
+                max_spread=Decimal("0.10"),
+            )
+        )
         market = Market(
             condition_id="condition",
             market_slug="sample-market-a",
@@ -57,8 +64,6 @@ def test_trading_service_reviews_intent_with_risk_manager() -> None:
             max_total_usdc=Decimal("100"),
             max_open_orders=10,
             order_retry_limit=2,
-            min_liquidity_usdc=Decimal("5"),
-            max_spread=Decimal("0.10"),
         )
 
         assert result.risk_decision.passed

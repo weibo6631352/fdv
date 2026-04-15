@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from polymarket_trader.domain.allocation import AllocationMarketSnapshot, AllocationPlan, equal_weight_budget
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from strategy_sdk import StrategyRuntimeProfile
 
 
 def _market(condition_id: str, market_slug: str, no_token_id: str) -> Market:
@@ -67,9 +68,11 @@ def test_equal_weight_plan_respects_per_market_cap_and_releases_budget() -> None
         max_order_usdc=Decimal("100"),
         max_market_usdc=Decimal("20"),
         max_total_usdc=Decimal("100"),
-        entry_no_price_max=Decimal("0.60"),
-        min_liquidity_usdc=Decimal("5"),
-        max_spread=Decimal("0.10"),
+        runtime_profile=StrategyRuntimeProfile(
+            entry_no_price_max=Decimal("0.60"),
+            min_liquidity_usdc=Decimal("5"),
+            max_spread=Decimal("0.10"),
+        ),
     )
 
     assert plan.eligible_market_count == 2

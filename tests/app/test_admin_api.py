@@ -404,8 +404,6 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
         max_order_usdc=Decimal("25"),
         max_market_usdc=Decimal("50"),
         max_total_usdc=Decimal("100"),
-        min_liquidity_usdc=Decimal("5"),
-        max_spread=Decimal("0.10"),
         max_open_orders=10,
         wallet_private_key=SecretStr("super-secret"),
     )

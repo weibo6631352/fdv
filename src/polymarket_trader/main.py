@@ -12,7 +12,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from polymarket_trader.app.market_service import MarketService
+from polymarket_trader.app.ports import bind_strategy_orderbook_reader, build_strategy_ports
 from polymarket_trader.app.reconcile_service import ReconcileService
+from polymarket_trader.app.strategy_host import load_strategy
 from polymarket_trader.app.strategy_service import StrategyService
 from polymarket_trader.app.trading_service import TradingService
 from polymarket_trader.config import Settings, StartupReadiness, load_settings
@@ -46,9 +48,7 @@ from polymarket_trader.runtime import RuntimePhase, Scheduler, Supervisor, Worke
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
-from polymarket_trader.strategies.current.strategy import build_strategy as build_current_strategy
-from polymarket_trader.strategy_api.interfaces import StrategyModule
-from polymarket_trader.strategy_api.models import DiscoveryEndpoint, DiscoveryQuery
+from strategy_sdk import DiscoveryEndpoint, DiscoveryQuery, StrategyModule
 from polymarket_trader.workers.market_discovery_worker import MarketDiscoveryWorker
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 from polymarket_trader.workers.persistence_worker import PersistenceWorker
@@ -101,7 +101,6 @@ class RuntimeComponents:
 def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     settings = settings or load_settings()
     readiness = settings.validate_startup_readiness()
-    strategy = build_current_strategy()
     logging_runtime = configure_logging()
     metrics = MetricsRegistry()
     trading_thread_pool = ThreadPoolExecutor(
@@ -148,6 +147,16 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         balance_usdc=settings.portfolio_budget_usdc,
         allowance_usdc=settings.portfolio_budget_usdc,
     )
+    strategy_ports = build_strategy_ports(
+        registry=registry,
+        snapshot_provider=account_state_store.snapshot,
+    )
+    strategy = load_strategy(
+        module_path=settings.strategy_module,
+        ports=strategy_ports,
+        config_path=settings.strategy_config_path,
+    )
+    profile = strategy.runtime_profile
     execution_client = (
         PolymarketOrderExecutionClient(trading_client)
         if trading_client is not None
@@ -169,9 +178,10 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     market_ws_worker = MarketWsWorker(
         event_bus=event_bus,
         registry=registry,
-        entry_price_max=strategy.entry_no_price_max,
+        entry_price_max=profile.entry_no_price_max,
         rest_snapshot_loader=load_market_rest_snapshot,
     )
+    bind_strategy_orderbook_reader(strategy_ports, market_ws_worker.snapshot)
     market_service = MarketService(
         strategy_module=strategy,
         registry=registry,
@@ -182,8 +192,12 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         strategy_module=strategy,
         registry=registry,
         orderbook_reader=market_ws_worker.snapshot,
+        runtime_profile=profile,
     )
-    trading_service = TradingService(executor=order_executor)
+    trading_service = TradingService(
+        executor=order_executor,
+        runtime_profile=profile,
+    )
     user_ws_worker = UserWsWorker(
         event_bus=event_bus,
         account_state_store=account_state_store,
@@ -197,9 +211,6 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         max_order_usdc=settings.max_order_usdc,
         max_market_usdc=settings.max_market_usdc,
         max_total_usdc=settings.max_total_usdc,
-        entry_no_price_max=strategy.entry_no_price_max,
-        min_liquidity_usdc=strategy.min_liquidity_usdc,
-        max_spread=strategy.max_spread,
         max_open_orders=settings.max_open_orders,
         order_retry_limit=settings.order_retry_limit,
     )

@@ -52,9 +52,6 @@ class StrategyWorker:
         max_order_usdc: Decimal = Decimal("0"),
         max_market_usdc: Decimal = Decimal("0"),
         max_total_usdc: Decimal = Decimal("0"),
-        entry_no_price_max: Decimal = Decimal("0.60"),
-        min_liquidity_usdc: Decimal = Decimal("0"),
-        max_spread: Decimal | None = None,
         balance_usdc: Decimal | None = None,
         allowance_usdc: Decimal | None = None,
         max_open_orders: int | None = None,
@@ -64,7 +61,9 @@ class StrategyWorker:
         if strategy_service is None:
             raise ValueError("strategy_service is required")
         self._strategy_service = strategy_service
-        self._trading_service = trading_service or TradingService()
+        self._trading_service = trading_service or TradingService(
+            runtime_profile=strategy_service.runtime_profile,
+        )
         self._account_state_store = account_state_store
         self._positions_provider = positions_provider or self._build_positions_provider()
         self._open_orders_provider = open_orders_provider or self._build_open_orders_provider()
@@ -73,9 +72,6 @@ class StrategyWorker:
         self._max_order_usdc = max_order_usdc
         self._max_market_usdc = max_market_usdc
         self._max_total_usdc = max_total_usdc
-        self._entry_no_price_max = entry_no_price_max
-        self._min_liquidity_usdc = min_liquidity_usdc
-        self._max_spread = max_spread
         self._balance_usdc = balance_usdc
         self._allowance_usdc = allowance_usdc
         self._max_open_orders = max_open_orders
@@ -139,9 +135,6 @@ class StrategyWorker:
             max_total_usdc=self._max_total_usdc,
             positions=positions,
             open_orders=open_orders,
-            entry_no_price_max=self._entry_no_price_max,
-            min_liquidity_usdc=self._min_liquidity_usdc,
-            max_spread=self._max_spread,
         )
         if snapshot is not None and not snapshot.allow_new_buys:
             skipped = await self._publish(
@@ -212,9 +205,6 @@ class StrategyWorker:
             max_total_usdc=self._max_total_usdc,
             max_open_orders=self._max_open_orders,
             order_retry_limit=self._order_retry_limit,
-            entry_no_price_max=self._entry_no_price_max,
-            min_liquidity_usdc=self._min_liquidity_usdc,
-            max_spread=self._max_spread,
         )
         risk_event = await self._publish(
             DomainEventType.RISK_CHECK_PASSED

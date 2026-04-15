@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from polymarket_trader.domain.constants import ENTRY_NO_PRICE_MAX
 from polymarket_trader.domain.order import BuyOrderIntent
 from polymarket_trader.domain.risk import RiskManager
+from strategy_sdk import StrategyRuntimeProfile
+
+ENTRY_PRICE_MAX = StrategyRuntimeProfile().entry_no_price_max
 
 
 def test_risk_rejects_intent_without_amount_or_size() -> None:
@@ -12,7 +14,7 @@ def test_risk_rejects_intent_without_amount_or_size() -> None:
         trace_id="trace",
         condition_id="condition",
         token_id="token",
-        price=ENTRY_NO_PRICE_MAX,
+        price=ENTRY_PRICE_MAX,
         amount_usdc=Decimal("0"),
     )
 
@@ -24,7 +26,7 @@ def test_risk_accepts_intent_with_amount() -> None:
         trace_id="trace",
         condition_id="condition",
         token_id="token",
-        price=ENTRY_NO_PRICE_MAX,
+        price=ENTRY_PRICE_MAX,
         amount_usdc=Decimal("1"),
     )
 

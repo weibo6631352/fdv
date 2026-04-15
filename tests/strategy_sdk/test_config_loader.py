@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from polymarket_trader.strategy_api import (
+from strategy_sdk import (
     load_mapping_file as exported_load_mapping_file,
     load_strategy_config as exported_load_strategy_config,
 )
-from polymarket_trader.strategy_api.config_loader import load_mapping_file, load_strategy_config
-from polymarket_trader.strategy_api.errors import StrategyLoadError
+from strategy_sdk.config_loader import load_mapping_file, load_strategy_config
+from strategy_sdk.errors import StrategyLoadError
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +46,6 @@ def test_load_mapping_file_rejects_unsupported_suffix(tmp_path: Path) -> None:
         load_mapping_file(config_path)
 
 
-def test_strategy_api_exports_config_loader_helpers() -> None:
+def test_strategy_sdk_exports_config_loader_helpers() -> None:
     assert exported_load_mapping_file is load_mapping_file
     assert exported_load_strategy_config is load_strategy_config

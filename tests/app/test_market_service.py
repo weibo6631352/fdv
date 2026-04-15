@@ -8,8 +8,9 @@ from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.domain.position import Position
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.registry import MarketRegistry
-from polymarket_trader.strategy_api.models import StrategySpec
-from polymarket_trader.strategy_api.models import UniverseDecision
+from strategy_sdk.models import StrategySpec
+from strategy_sdk.models import StrategyRuntimeProfile
+from strategy_sdk.models import UniverseDecision
 
 
 class _Tracker:
@@ -50,8 +51,18 @@ class _AcceptingStrategy:
     def spec(self):
         return StrategySpec(name="accepting")
 
+    @property
+    def runtime_profile(self):
+        return StrategyRuntimeProfile()
+
+    def build_discovery_queries(self):
+        return ()
+
     def select_market(self, market):
         return UniverseDecision.include(reason="accepted")
+
+    def size_entry(self, context):
+        raise AssertionError("not used")
 
     def decide_entry(self, context):
         raise AssertionError("not used")
@@ -61,6 +72,15 @@ class _AcceptingStrategy:
 
     def decide_recovery(self, context):
         raise AssertionError("not used")
+
+    def should_keep_tracking(self, market, account_snapshot):
+        return True
+
+    def build_filtered_tracking_market(self, candidate_market, *, existing_market, reason):
+        return candidate_market.with_trading_status(
+            TradingStatus.PAUSED,
+            reject_reason=reason or "strategy_filtered_out",
+        )
 
 
 class _SwitchingStrategy:
@@ -71,10 +91,20 @@ class _SwitchingStrategy:
     def spec(self):
         return StrategySpec(name="switching")
 
+    @property
+    def runtime_profile(self):
+        return StrategyRuntimeProfile()
+
+    def build_discovery_queries(self):
+        return ()
+
     def select_market(self, market):
         if self.selected:
             return UniverseDecision.include(reason="accepted")
         return UniverseDecision.exclude(reason="strategy_filtered_out")
+
+    def size_entry(self, context):
+        raise AssertionError("not used")
 
     def decide_entry(self, context):
         raise AssertionError("not used")
@@ -84,6 +114,20 @@ class _SwitchingStrategy:
 
     def decide_recovery(self, context):
         raise AssertionError("not used")
+
+    def should_keep_tracking(self, market, account_snapshot):
+        if account_snapshot is None:
+            return True
+        position = account_snapshot.get_position(market.condition_id, market.no_token_id)
+        if position is not None and position.shares > 0:
+            return True
+        return bool(account_snapshot.open_orders_for_market(market.condition_id, market.no_token_id))
+
+    def build_filtered_tracking_market(self, candidate_market, *, existing_market, reason):
+        return candidate_market.with_trading_status(
+            TradingStatus.PAUSED,
+            reject_reason=reason or "strategy_filtered_out",
+        )
 
 
 def test_market_service_ingests_market_into_registry_and_tracker() -> None:
@@ -128,8 +172,18 @@ def test_market_service_respects_strategy_universe_filter() -> None:
         def spec(self):
             return StrategySpec(name="rejecting")
 
+        @property
+        def runtime_profile(self):
+            return StrategyRuntimeProfile()
+
+        def build_discovery_queries(self):
+            return ()
+
         def select_market(self, market):
             return UniverseDecision.exclude(reason="strategy_filtered_out")
+
+        def size_entry(self, context):
+            raise AssertionError("not used")
 
         def decide_entry(self, context):
             raise AssertionError("not used")
@@ -139,6 +193,15 @@ def test_market_service_respects_strategy_universe_filter() -> None:
 
         def decide_recovery(self, context):
             raise AssertionError("not used")
+
+        def should_keep_tracking(self, market, account_snapshot):
+            return True
+
+        def build_filtered_tracking_market(self, candidate_market, *, existing_market, reason):
+            return candidate_market.with_trading_status(
+                TradingStatus.PAUSED,
+                reject_reason=reason or "strategy_filtered_out",
+            )
 
     registry = MarketRegistry()
     tracker = _Tracker()

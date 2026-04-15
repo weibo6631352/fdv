@@ -1,17 +1,19 @@
 # Polymarket 单策略交易底座
 
 这是一个 Polymarket 单策略后端运行时。
-策略语义收口在 `src/polymarket_trader/strategies/current/`；执行、风控、恢复、审计和管理面由底座统一处理。
+策略实现位于顶层 `src/strategies/`；执行、风控、恢复、审计和管理面由底座统一处理。
 
 ## 快速上手
 
 先看这几个文件：
 
-- 改市场筛选：[src/polymarket_trader/strategies/current/market_filter.py](./src/polymarket_trader/strategies/current/market_filter.py)
-- 改交易阈值：[src/polymarket_trader/strategies/current/config.py](./src/polymarket_trader/strategies/current/config.py)
-- 改分配、入场、退出、恢复：[src/polymarket_trader/strategies/current/trading_strategy.py](./src/polymarket_trader/strategies/current/trading_strategy.py)
-- 改订阅保留与移除：[src/polymarket_trader/strategies/current/subscription.py](./src/polymarket_trader/strategies/current/subscription.py)
-- 看运行入口：[src/polymarket_trader/strategies/current/strategy.py](./src/polymarket_trader/strategies/current/strategy.py)
+- 改 discovery 查询：[src/strategies/current/discovery.py](./src/strategies/current/discovery.py)
+- 改市场筛选：[src/strategies/current/universe.py](./src/strategies/current/universe.py)
+- 改策略配置：[src/strategies/current/config.py](./src/strategies/current/config.py)
+- 改分配、入场、退出：[src/strategies/current/trading.py](./src/strategies/current/trading.py)
+- 改恢复和保留跟踪：[src/strategies/current/recovery.py](./src/strategies/current/recovery.py) / [src/strategies/current/tracking.py](./src/strategies/current/tracking.py)
+- 看策略装配入口：[src/strategies/current/strategy.py](./src/strategies/current/strategy.py)
+- 看策略契约 SDK：[src/strategy_sdk](./src/strategy_sdk)
 
 常用命令：
 
@@ -40,6 +42,8 @@
 | Infrastructure | [infra](./src/polymarket_trader/infra/README.md) | Polymarket、数据库、outbox 和外部 I/O 适配 |
 | Observability | [observability](./src/polymarket_trader/observability/README.md) | 审计、trace、指标 |
 | Runtime | [runtime](./src/polymarket_trader/runtime/README.md) | 事件总线、状态注册表、调度、supervisor |
+| Strategy SDK | [strategy_sdk](./src/strategy_sdk) | 策略契约、上下文对象、运行时 profile、配置加载 |
+| Strategies | [strategies](./src/strategies) | 顶层策略实现包 |
 | Workers | [workers](./src/polymarket_trader/workers/README.md) | 常驻后台任务 |
 | Tests | [tests](./tests/README.md) | 单元、编排和基础设施测试 |
 
@@ -47,18 +51,19 @@
 
 - [当前策略需求文档](./docs/需求文档.md)：业务规则和风控边界。
 - [当前策略设计文档](./docs/设计文档.md)：运行时装配和关键流程。
-- [配置文档](./docs/config.md)：`.env` 和策略侧 Python 常量。
+- [配置文档](./docs/config.md)：`.env`、策略模块加载和策略侧配置文件。
 - [API 文档](./docs/api.md)：Admin API。
-- [运行说明](./docs/operations.md)：启动、停止、人工操作。
-- [故障处理](./docs/runbook.md)：异常排查顺序。
+- [故障处理](./docs/runbook.md)：启动检查、异常排查顺序和人工恢复路径。
 
 ## 策略与测试入口
 
-- 运行入口：[src/polymarket_trader/strategies/current/strategy.py](./src/polymarket_trader/strategies/current/strategy.py)
-- 阈值常量：[src/polymarket_trader/strategies/current/config.py](./src/polymarket_trader/strategies/current/config.py)
-- 市场筛选：[src/polymarket_trader/strategies/current/market_filter.py](./src/polymarket_trader/strategies/current/market_filter.py)
-- 交易决策：[src/polymarket_trader/strategies/current/trading_strategy.py](./src/polymarket_trader/strategies/current/trading_strategy.py)
-- 订阅规则：[src/polymarket_trader/strategies/current/subscription.py](./src/polymarket_trader/strategies/current/subscription.py)
+- 策略 manifest：[src/strategies/current/manifest.py](./src/strategies/current/manifest.py)
+- 运行入口：[src/strategies/current/strategy.py](./src/strategies/current/strategy.py)
+- 策略配置：[src/strategies/current/config.py](./src/strategies/current/config.py)
+- discovery / universe：[src/strategies/current/discovery.py](./src/strategies/current/discovery.py) / [src/strategies/current/universe.py](./src/strategies/current/universe.py)
+- 交易决策：[src/strategies/current/trading.py](./src/strategies/current/trading.py)
+- 恢复 / 跟踪：[src/strategies/current/recovery.py](./src/strategies/current/recovery.py) / [src/strategies/current/tracking.py](./src/strategies/current/tracking.py)
+- 契约 SDK：[src/strategy_sdk/interfaces.py](./src/strategy_sdk/interfaces.py) / [src/strategy_sdk/models.py](./src/strategy_sdk/models.py)
 
 ## 模块接口原则
 

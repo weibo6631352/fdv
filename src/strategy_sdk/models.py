@@ -4,14 +4,16 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 from polymarket_trader.domain.allocation import Allocation, AllocationPlan
 from polymarket_trader.domain.market import Market
 from polymarket_trader.domain.order import Order
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.domain.position import Position
-from polymarket_trader.runtime.account_state import AccountSnapshot
+from polymarket_trader.domain.strategy_profile import StrategyRuntimeProfile as _StrategyRuntimeProfile
+
+StrategyRuntimeProfile = _StrategyRuntimeProfile
 
 
 class StrategyAction(StrEnum):
@@ -28,6 +30,26 @@ class DiscoveryEndpoint(StrEnum):
     MARKETS = "markets"
 
 
+class AccountSnapshotView(Protocol):
+    balance_usdc: Decimal
+    allowance_usdc: Decimal
+    positions: tuple[Position, ...]
+    open_orders: tuple[Order, ...]
+    allow_new_buys: bool
+    paused_markets: tuple[str, ...]
+    last_reconcile_at: datetime | None
+
+    def get_position(self, condition_id: str, token_id: str) -> Position | None: ...
+
+    def is_market_paused(self, condition_id: str) -> bool: ...
+
+    def open_orders_for_market(self, condition_id: str, token_id: str) -> tuple[Order, ...]: ...
+
+    def open_buy_orders_for_market(self, condition_id: str, token_id: str) -> tuple[Order, ...]: ...
+
+    def open_sell_orders_for_market(self, condition_id: str, token_id: str) -> tuple[Order, ...]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class StrategySpec:
     name: str
@@ -39,29 +61,7 @@ class StrategySpec:
 
 @dataclass(frozen=True, slots=True)
 class DiscoveryQuery:
-    """Strategy-provided remote discovery query.
-
-    Official Polymarket docs:
-    - List events: https://docs.polymarket.com/api-reference/events/list-events
-    - List events (keyset pagination):
-      https://docs.polymarket.com/api-reference/events/list-events-keyset-pagination
-    - List markets: https://docs.polymarket.com/api-reference/markets/list-markets
-    - List markets (keyset pagination):
-      https://docs.polymarket.com/api-reference/markets/list-markets-keyset-pagination
-    - Fetching markets guide: https://docs.polymarket.com/market-data/fetching-markets
-
-    Chinese notes:
-    - `endpoint` tells the framework which official Gamma endpoint to call.
-    - `params` stores the full official Gamma query parameter set verbatim; the
-      framework only forwards them and does not re-interpret strategy semantics.
-      Strategy code should fill these keys exactly according to the official docs,
-      such as `active` / `closed` / `title_search` / `tag_slug` / `order` /
-      `ascending` / `after_cursor`.
-    - `max_pages` controls how many pages a single scheduled discovery cycle may
-      consume, so strategy code can narrow or broaden scan depth without changing
-      the framework scheduler itself.
-    - `events_keyset` must not send `offset`; it should paginate with `after_cursor`.
-    """
+    """Strategy-provided remote discovery query."""
 
     endpoint: DiscoveryEndpoint
     params: Mapping[str, Any] = field(default_factory=dict)
@@ -99,7 +99,7 @@ class StrategyContext:
     trace_id: str
     market: Market | None = None
     orderbook: OrderbookSnapshot | None = None
-    account_snapshot: AccountSnapshot | None = None
+    account_snapshot: AccountSnapshotView | None = None
     position: Position | None = None
     open_orders: tuple[Order, ...] = ()
     now: datetime | None = None
@@ -124,11 +124,7 @@ class StrategyDecision:
         reason: str,
         metadata: Mapping[str, Any] | None = None,
     ) -> "StrategyDecision":
-        return cls(
-            action=StrategyAction.SKIP,
-            reason=reason,
-            metadata=metadata or {},
-        )
+        return cls(action=StrategyAction.SKIP, reason=reason, metadata=metadata or {})
 
     @classmethod
     def buy(

@@ -22,6 +22,7 @@ from polymarket_trader.domain.order import (
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.domain.position import Position
 from polymarket_trader.domain.risk import RiskCheckResult, RiskManager
+from strategy_sdk import StrategyRuntimeProfile
 
 
 class TradingService:
@@ -31,9 +32,11 @@ class TradingService:
         self,
         *,
         risk_manager: RiskManager | None = None,
+        runtime_profile: StrategyRuntimeProfile | None = None,
         executor: object | None = None,
     ) -> None:
         self._risk_manager = risk_manager or RiskManager()
+        self._runtime_profile = runtime_profile or StrategyRuntimeProfile()
         self._executor = executor
 
     async def review_intent(
@@ -60,14 +63,11 @@ class TradingService:
         open_orders_count: int | None = None,
         retry_count: int = 0,
         order_retry_limit: int | None = None,
-        entry_no_price_max: Decimal = Decimal("0.60"),
         max_order_usdc: Decimal | None = None,
         max_market_usdc: Decimal | None = None,
         max_total_usdc: Decimal | None = None,
         max_open_orders: int | None = None,
         min_order_size: Decimal | None = None,
-        min_liquidity_usdc: Decimal | None = None,
-        max_spread: Decimal | None = None,
         operation: str = "review",
     ) -> "TradingReviewResult":
         risk_decision = self._risk_manager.check_order_intent(
@@ -92,14 +92,12 @@ class TradingService:
             open_orders_count=open_orders_count,
             retry_count=retry_count,
             order_retry_limit=order_retry_limit,
-            entry_no_price_max=entry_no_price_max,
+            runtime_profile=self._runtime_profile,
             max_order_usdc=max_order_usdc,
             max_market_usdc=max_market_usdc,
             max_total_usdc=max_total_usdc,
             max_open_orders=max_open_orders,
             min_order_size=min_order_size,
-            min_liquidity_usdc=min_liquidity_usdc,
-            max_spread=max_spread,
         )
         if risk_decision.passed:
             order_result, submitted, submission_error = await self._execute_trade_intent(

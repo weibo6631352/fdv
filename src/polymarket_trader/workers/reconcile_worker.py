@@ -442,8 +442,6 @@ class ReconcileWorker:
                 allowance_usdc=account_snapshot.allowance_usdc,
                 max_open_orders=None,
                 min_order_size=market.min_order_size,
-                min_liquidity_usdc=Decimal("0"),
-                max_spread=None,
             )
             submitted = review.submitted
         if not submitted and self._executor is not None and hasattr(self._executor, "submit"):

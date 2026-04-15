@@ -23,15 +23,16 @@ from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.registry import MarketRegistry
-from polymarket_trader.strategy_api.models import (
+from strategy_sdk.models import (
     RecoveryDecision,
     RecoveryReplaceRequest,
     StrategyContext,
     StrategyDecision,
+    StrategyRuntimeProfile,
     StrategySpec,
     UniverseDecision,
 )
-from polymarket_trader.strategies.current.strategy import build_strategy
+from strategies.current.strategy import build_strategy
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 from polymarket_trader.workers.reconcile_worker import ReconcileWorker
 
@@ -96,6 +97,10 @@ class _ReplaceRecoveryStrategy:
             name="replace-recovery",
             capabilities=("universe", "entry", "exit", "recovery"),
         )
+
+    @property
+    def runtime_profile(self) -> StrategyRuntimeProfile:
+        return StrategyRuntimeProfile()
 
     def build_discovery_queries(self) -> tuple[object, ...]:
         return ()

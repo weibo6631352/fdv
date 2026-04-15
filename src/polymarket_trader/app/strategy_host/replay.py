@@ -5,54 +5,80 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping
 
-from polymarket_trader.app.strategy_service import StrategyService, StrategyEntryPlan
+from polymarket_trader.app.ports import build_strategy_ports
+from polymarket_trader.app.strategy_host.loader import load_strategy
+from polymarket_trader.app.strategy_service import StrategyEntryPlan, StrategyService
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.order import Order, OrderSide, OrderStatus, OrderType
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
+from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.registry import MarketRegistry
-from polymarket_trader.strategy_api.config_loader import load_mapping_file
-from polymarket_trader.strategies.current.strategy import build_strategy as build_current_strategy
+from strategy_sdk import load_mapping_file
 
 
 def run_entry_replay(
     fixture_path: str,
+    *,
+    strategy_module: str = "strategies.current",
+    strategy_config_path: str | None = None,
 ) -> dict[str, Any]:
     fixture = load_mapping_file(fixture_path)
-    strategy = build_current_strategy()
     registry = MarketRegistry()
     markets = tuple(_load_market(item) for item in _list(fixture, "markets"))
     for market in markets:
         registry.upsert(market)
+    positions = tuple(_load_position(item) for item in _list(fixture, "positions"))
+    open_orders = tuple(_load_order(item) for item in _list(fixture, "open_orders"))
     orderbooks = {
-        orderbook.token_id: orderbook for orderbook in (_load_orderbook(item) for item in _list(fixture, "orderbooks"))
+        orderbook.token_id: orderbook
+        for orderbook in (_load_orderbook(item) for item in _list(fixture, "orderbooks"))
     }
     budgets = _mapping(fixture, "budgets")
     target = _mapping(fixture, "target")
+    available_usdc = _optional_decimal(budgets, "available_usdc") or _decimal(
+        budgets,
+        "portfolio_budget_usdc",
+    )
+    account_state_store = AccountStateStore()
+    account_state_store.update_balances(
+        balance_usdc=available_usdc,
+        allowance_usdc=available_usdc,
+    )
+    account_state_store.replace_positions(positions)
+    account_state_store.replace_open_orders(open_orders)
+    account_state_store.mark_user_ws_connected(True)
+    account_state_store.mark_reconciled()
+    strategy = load_strategy(
+        module_path=strategy_module,
+        ports=build_strategy_ports(
+            registry=registry,
+            snapshot_provider=account_state_store.snapshot,
+            orderbook_reader=orderbooks.get,
+        ),
+        config_path=strategy_config_path,
+    )
     plan = StrategyService(
         strategy_module=strategy,
         registry=registry,
         orderbook_reader=orderbooks.get,
+        runtime_profile=strategy.runtime_profile,
     ).build_entry_plan(
         condition_id=_text(target, "condition_id"),
         token_id=_text(target, "token_id"),
         trace_id=_text(fixture, "trace_id") or "strategy-replay",
         portfolio_budget_usdc=_decimal(budgets, "portfolio_budget_usdc"),
-        available_usdc=_optional_decimal(budgets, "available_usdc"),
+        available_usdc=available_usdc,
         max_order_usdc=_decimal(budgets, "max_order_usdc"),
         max_market_usdc=_decimal(budgets, "max_market_usdc"),
         max_total_usdc=_decimal(budgets, "max_total_usdc"),
-        entry_no_price_max=_optional_decimal(budgets, "entry_no_price_max") or Decimal("0.60"),
-        min_liquidity_usdc=_optional_decimal(budgets, "min_liquidity_usdc") or Decimal("0"),
-        max_spread=_optional_decimal(budgets, "max_spread"),
-        positions=tuple(_load_position(item) for item in _list(fixture, "positions")),
-        open_orders=tuple(_load_order(item) for item in _list(fixture, "open_orders")),
+        account_snapshot=account_state_store.snapshot(),
     )
     return {
         "fixture_path": str(Path(fixture_path)),
         "strategy": {
             "name": strategy.spec.name,
-            "module_path": "polymarket_trader.strategies.current.strategy",
+            "module_path": strategy_module,
             "capabilities": list(strategy.spec.capabilities),
         },
         "plan": _serialize_plan(plan),
@@ -95,10 +121,7 @@ def _load_orderbook(item: Mapping[str, Any]) -> OrderbookSnapshot:
 
 
 def _load_level(item: Mapping[str, Any]) -> PriceLevel:
-    return PriceLevel(
-        price=_decimal(item, "price"),
-        size=_decimal(item, "size"),
-    )
+    return PriceLevel(price=_decimal(item, "price"), size=_decimal(item, "size"))
 
 
 def _load_position(item: Mapping[str, Any]) -> Position:
@@ -201,8 +224,7 @@ def _optional_text(item: Mapping[str, Any], key: str) -> str | None:
 
 
 def _decimal(item: Mapping[str, Any], key: str) -> Decimal:
-    value = item.get(key)
-    return Decimal(str(value))
+    return Decimal(str(item.get(key)))
 
 
 def _optional_decimal(item: Mapping[str, Any], key: str) -> Decimal | None:

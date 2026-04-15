@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore",
+        extra="forbid",
         populate_by_name=True,
     )
 
@@ -84,6 +84,8 @@ class Settings(BaseSettings):
     # 默认按 EOA 签名处理；如果使用代理钱包或 Safe，需要显式覆盖 signature type / funder。
     polymarket_signature_type: int = Field(default=0, ge=0, le=2)
     polymarket_funder_address: str | None = None
+    strategy_module: str = "strategies.current"
+    strategy_config_path: str | None = None
 
     # 预算相关默认值保持 0，避免在未明确配置前进入自动交易；其余风控阈值对齐示例推荐值。
     portfolio_budget_usdc: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))

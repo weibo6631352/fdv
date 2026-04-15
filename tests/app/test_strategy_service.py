@@ -8,11 +8,12 @@ from polymarket_trader.domain.allocation import Allocation, AllocationPlan
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.runtime.registry import MarketRegistry
-from polymarket_trader.strategy_api.models import (
+from strategy_sdk.models import (
     EntrySizing,
     RecoveryDecision,
     StrategyContext,
     StrategyDecision,
+    StrategyRuntimeProfile,
     StrategySpec,
     UniverseDecision,
 )
@@ -24,6 +25,14 @@ class _CustomSizingStrategy:
         return StrategySpec(
             name="custom",
             capabilities=("universe", "sizing", "entry", "exit", "recovery"),
+        )
+
+    @property
+    def runtime_profile(self) -> StrategyRuntimeProfile:
+        return StrategyRuntimeProfile(
+            entry_no_price_max=Decimal("0.60"),
+            min_liquidity_usdc=Decimal("5"),
+            max_spread=Decimal("0.10"),
         )
 
     def select_market(self, market: Market) -> UniverseDecision:
@@ -108,8 +117,6 @@ def test_strategy_service_uses_strategy_sizing_policy() -> None:
         max_order_usdc=Decimal("100"),
         max_market_usdc=Decimal("100"),
         max_total_usdc=Decimal("100"),
-        min_liquidity_usdc=Decimal("5"),
-        max_spread=Decimal("0.10"),
     )
 
     assert plan.ready_to_trade

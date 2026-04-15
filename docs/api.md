@@ -2,7 +2,7 @@
 
 这里只写已经存在的 HTTP API。
 
-- 核对日期：2026-04-13
+- 核对日期：2026-04-15
 - 适用仓库：`polymarket-trader`
 - 服务入口：`src/polymarket_trader/api/app.py`
 - 默认无应用层鉴权，只放在本机或受控内网。

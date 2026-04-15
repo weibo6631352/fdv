@@ -4,10 +4,11 @@ import asyncio
 from decimal import Decimal
 from types import SimpleNamespace
 
+from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from polymarket_trader.config import Settings
 from polymarket_trader.main import _execute_discovery_query, _run_market_discovery_scan, build_runtime
-from polymarket_trader.strategy_api.models import DiscoveryEndpoint, DiscoveryQuery
+from strategy_sdk.models import DiscoveryEndpoint, DiscoveryQuery, StrategyRuntimeProfile
 
 
 def test_build_runtime_wires_m2_components() -> None:
@@ -17,8 +18,6 @@ def test_build_runtime_wires_m2_components() -> None:
             max_order_usdc=Decimal("25"),
             max_market_usdc=Decimal("50"),
             max_total_usdc=Decimal("100"),
-            min_liquidity_usdc=Decimal("5"),
-            max_spread=Decimal("0.10"),
             max_open_orders=10,
         )
     )
@@ -49,8 +48,6 @@ def test_build_runtime_binds_market_event_outbox_sink() -> None:
                 max_order_usdc=Decimal("25"),
                 max_market_usdc=Decimal("50"),
                 max_total_usdc=Decimal("100"),
-                min_liquidity_usdc=Decimal("5"),
-                max_spread=Decimal("0.10"),
                 max_open_orders=10,
             )
         )
@@ -83,8 +80,6 @@ def test_build_runtime_binds_user_event_outbox_sink_with_trimmed_payload() -> No
                 max_order_usdc=Decimal("25"),
                 max_market_usdc=Decimal("50"),
                 max_total_usdc=Decimal("100"),
-                min_liquidity_usdc=Decimal("5"),
-                max_spread=Decimal("0.10"),
                 max_open_orders=10,
             )
         )
@@ -127,8 +122,6 @@ def test_build_runtime_binds_balance_event_outbox_sink() -> None:
                 max_order_usdc=Decimal("25"),
                 max_market_usdc=Decimal("50"),
                 max_total_usdc=Decimal("100"),
-                min_liquidity_usdc=Decimal("5"),
-                max_spread=Decimal("0.10"),
                 max_open_orders=10,
             )
         )
@@ -152,6 +145,49 @@ def test_build_runtime_binds_balance_event_outbox_sink() -> None:
         assert queued.event_type == DomainEventType.BALANCE_UPDATED.value
         assert str(queued.payload["balance_usdc"]) == "120"
         assert str(queued.payload["allowance_usdc"]) == "90"
+
+    asyncio.run(run())
+
+
+def test_build_runtime_binds_strategy_orderbook_port() -> None:
+    async def run() -> None:
+        runtime = build_runtime(
+            Settings(
+                portfolio_budget_usdc=Decimal("100"),
+                max_order_usdc=Decimal("25"),
+                max_market_usdc=Decimal("50"),
+                max_total_usdc=Decimal("100"),
+                max_open_orders=10,
+            )
+        )
+
+        market = Market(
+            condition_id="condition-1",
+            market_slug="sample-market-a",
+            no_token_id="no-token-1",
+            yes_token_id="yes-token-1",
+            category="Crypto",
+            matched_keywords=("fdv", "500m"),
+            trading_status=TradingStatus.ELIGIBLE,
+        )
+        runtime.market_ws_worker.track_market(market)
+        await runtime.market_ws_worker.handle_message(
+            {
+                "type": "best_bid_ask",
+                "token_id": market.no_token_id,
+                "best_bid": "0.55",
+                "best_ask": "0.60",
+                "best_bid_size": "100",
+                "best_ask_size": "200",
+            }
+        )
+
+        ports = getattr(runtime.strategy, "ports", None)
+        assert ports is not None
+        assert ports.market is not None
+        snapshot = ports.market.get_orderbook(market.no_token_id)
+        assert snapshot is not None
+        assert snapshot.best_ask == Decimal("0.60")
 
     asyncio.run(run())
 
@@ -206,6 +242,10 @@ def test_execute_discovery_query_uses_keyset_cursor_pagination() -> None:
 
 def test_run_market_discovery_scan_uses_strategy_queries() -> None:
     class _StubStrategy:
+        @property
+        def runtime_profile(self):
+            return StrategyRuntimeProfile()
+
         def build_discovery_queries(self):
             return (
                 DiscoveryQuery(

@@ -3,7 +3,13 @@
 先分清两类配置：
 
 - 框架配置：写 `.env`
-- 策略规则：写 `src/polymarket_trader/strategies/current/`
+- 策略规则：写策略包；默认示例策略在 `src/strategies/current/`
+
+## 示例文件
+
+- [`.env.example`](../.env.example)：最小复制入口，只保留常用启动项和自动交易闸门。
+- [`.env.full.example`](../.env.full.example)：完整覆盖项清单，字段名与 `Settings` 一一对应。
+- 运行时默认值以 `src/polymarket_trader/config.py` 的 `Settings` 为准。
 
 ## 先看哪里
 
@@ -17,14 +23,25 @@
 | 超时告警 | `ORDER_SUBMIT_TIMEOUT_MS`、`CRITICAL_LOCK_TIMEOUT_MS` | 防止交易链路无限等待 |
 | 数据库 | `DATABASE_URL`、`DATABASE_HOST` | PostgreSQL 连接地址；支持完整 URL 或拆分字段 |
 | 密钥 | `POLYMARKET_API_KEY`、`WALLET_PRIVATE_KEY` | 只能通过安全环境注入 |
-| 策略规则 | `strategies/current/` | 交易阈值、筛选语义、订阅规则 |
+| 策略装配 | `STRATEGY_MODULE`、`STRATEGY_CONFIG_PATH` | 选择要装配的策略包和可选配置文件 |
+| 策略规则 | `src/strategies/current/` | 默认示例策略的交易阈值、筛选语义、订阅规则 |
 
 ## 规则
 
-- 单一策略语义，不新增环境变量，直接写 `strategies/current/`。
+- 框架只通过 `STRATEGY_MODULE` 选择策略实现；策略业务语义仍然收口在 `src/strategies/`。
+- `Settings` 只接受已声明字段；未声明字段和已淘汰字段会直接报错，不会静默忽略。
+- `.env.example` 只保留常用启动项；不常改的默认值直接看 `Settings`，需要显式覆盖时再写 `.env.full.example`。
+- `POLYMARKET_API_KEY`、`POLYMARKET_API_SECRET`、`POLYMARKET_API_PASSPHRASE` 要么同时提供，要么全部留空并在运行时派生。
 - 会影响资金风险的配置应默认保守，不能默认放大仓位。
 - 队列和线程池必须有上限。
 - 超时字段统一用 `_MS` 或 `_SECONDS`。
+
+## 自动交易闸门
+
+- `validate_startup_readiness` 会在 `WALLET_PRIVATE_KEY` 为空时阻止系统进入 `ready_to_trade=true`。
+- `PORTFOLIO_BUDGET_USDC`、`MAX_ORDER_USDC`、`MAX_MARKET_USDC`、`MAX_TOTAL_USDC`、`MAX_OPEN_ORDERS` 任一不大于 `0` 时，系统不会进入自动交易态。
+- `POLYMARKET_API_KEY`、`POLYMARKET_API_SECRET`、`POLYMARKET_API_PASSPHRASE` 只填部分字段时，系统不会进入自动交易态。
+- `POLYMARKET_SIGNATURE_TYPE` 为 `1` 或 `2` 但未填写 `POLYMARKET_FUNDER_ADDRESS` 时，系统不会进入自动交易态。
 
 ## 数据库
 
@@ -37,11 +54,15 @@
 
 ## 策略文件
 
-- 入口：`src/polymarket_trader/strategies/current/strategy.py`
-- 阈值常量：`src/polymarket_trader/strategies/current/config.py`
-- 市场筛选：`market_filter.py`
-- 交易决策：`trading_strategy.py`
-- 订阅规则：`subscription.py`
+- 当 `STRATEGY_MODULE=strategies.current` 时，对应文件为：
+- manifest：`src/strategies/current/manifest.py`
+- 入口：`src/strategies/current/strategy.py`
+- 配置：`src/strategies/current/config.py`
+- discovery：`src/strategies/current/discovery.py`
+- 市场筛选：`src/strategies/current/universe.py`
+- 交易决策：`src/strategies/current/trading.py`
+- 恢复与跟踪：`src/strategies/current/recovery.py` / `src/strategies/current/tracking.py`
+- 策略契约：`src/strategy_sdk/`
 
 ## 密钥规则
 
@@ -62,6 +83,6 @@
 - 默认值是什么，默认值是否安全。
 - 单位是什么，取值范围是什么。
 - 是否可以运行时热更新。
-- 是否需要写入 [`.env.example`](../.env.example)。
-- 如果只是策略规则，直接写 `strategies/current/`，不要新增环境变量。
+- 是否需要写入 [`.env.full.example`](../.env.full.example)；如果属于最常用启动项，再同步写入 [`.env.example`](../.env.example)。
+- 如果只是策略规则，直接写 `STRATEGY_MODULE` 指向的策略包，不要新增框架环境变量。
 - 是否会改变资金暴露、订单行为或 reconcile 行为。

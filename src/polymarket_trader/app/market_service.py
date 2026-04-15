@@ -7,12 +7,11 @@ from uuid import uuid4
 
 from polymarket_trader.domain.classifier import ClassificationResult, MarketClassifier
 from polymarket_trader.domain.events import DomainEvent, DomainEventType
-from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.market import Market
 from polymarket_trader.observability.trace import ensure_trace_id
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistry
-from polymarket_trader.strategy_api.interfaces import StrategyModule
-from polymarket_trader.strategy_api.models import UniverseDecision
+from strategy_sdk import StrategyModule, UniverseDecision
 
 AccountSnapshotProvider = Callable[[], AccountSnapshot]
 
@@ -230,21 +229,7 @@ class MarketService:
         market: Market,
         account_snapshot: AccountSnapshot | None,
     ) -> bool:
-        strategy_hook = getattr(self._strategy_module, "should_keep_tracking", None)
-        if callable(strategy_hook):
-            return bool(strategy_hook(market, account_snapshot))
-        if account_snapshot is None:
-            return True
-        snapshot = account_snapshot
-        position = snapshot.get_position(market.condition_id, market.no_token_id)
-        if position is not None and (
-            position.shares > 0
-            or position.open_buy_shares > 0
-            or position.open_sell_shares > 0
-            or position.pending_buy_shares > 0
-        ):
-            return True
-        return bool(snapshot.open_orders_for_market(market.condition_id, market.no_token_id))
+        return self._strategy_module.should_keep_tracking(market, account_snapshot)
 
     def _build_retained_filtered_market(
         self,
@@ -253,27 +238,10 @@ class MarketService:
         existing_market: Market,
         reason: str,
     ) -> Market:
-        strategy_hook = getattr(self._strategy_module, "build_filtered_tracking_market", None)
-        if callable(strategy_hook):
-            market = strategy_hook(
-                candidate_market,
-                existing_market=existing_market,
-                reason=reason,
-            )
-            if isinstance(market, Market):
-                return market
-        if existing_market.trading_status in {
-            TradingStatus.CLOSED,
-            TradingStatus.RESOLVED,
-            TradingStatus.REJECTED,
-        }:
-            return candidate_market.with_trading_status(
-                existing_market.trading_status,
-                reject_reason=existing_market.reject_reason,
-            )
-        return candidate_market.with_trading_status(
-            TradingStatus.PAUSED,
-            reject_reason=reason or "strategy_filtered_out",
+        return self._strategy_module.build_filtered_tracking_market(
+            candidate_market,
+            existing_market=existing_market,
+            reason=reason,
         )
 
     def _remove_market_tracking(self, market: Market) -> None:

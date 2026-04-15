@@ -8,7 +8,7 @@ from typing import Any, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
 
-from polymarket_trader.strategy_api.errors import StrategyLoadError
+from strategy_sdk.errors import StrategyLoadError
 
 T = TypeVar("T")
 

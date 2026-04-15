@@ -19,8 +19,13 @@ from polymarket_trader.domain.strategy import StrategyEngine
 from polymarket_trader.observability.trace import ensure_trace_id
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistry
-from polymarket_trader.strategy_api.interfaces import StrategyModule
-from polymarket_trader.strategy_api.models import StrategyAction, StrategyContext, StrategyDecision
+from strategy_sdk import (
+    StrategyAction,
+    StrategyContext,
+    StrategyDecision,
+    StrategyModule,
+    StrategyRuntimeProfile,
+)
 
 OrderbookReader = Callable[[str], OrderbookSnapshot | None]
 
@@ -35,11 +40,17 @@ class StrategyService:
         strategy_engine: StrategyEngine | None = None,
         registry: MarketRegistry | None = None,
         orderbook_reader: OrderbookReader | None = None,
+        runtime_profile: StrategyRuntimeProfile | None = None,
     ) -> None:
         self._strategy_module = strategy_module
         self._strategy_engine = strategy_engine or StrategyEngine()
         self._registry = registry
         self._orderbook_reader = orderbook_reader
+        self._runtime_profile = runtime_profile or strategy_module.runtime_profile
+
+    @property
+    def runtime_profile(self) -> StrategyRuntimeProfile:
+        return self._runtime_profile
 
     def build_entry_plan(
         self,
@@ -57,9 +68,6 @@ class StrategyService:
         max_total_usdc: Decimal,
         positions: Iterable[Position] = (),
         open_orders: Iterable[Order] = (),
-        entry_no_price_max: Decimal = Decimal("0.60"),
-        min_liquidity_usdc: Decimal = Decimal("0"),
-        max_spread: Decimal | None = None,
     ) -> "StrategyEntryPlan":
         trace_id = trace_id or ensure_trace_id()
         if account_snapshot is not None:
@@ -120,7 +128,6 @@ class StrategyService:
             focus_orderbook=resolved_orderbook,
             position_index=position_index,
             open_orders=open_orders,
-            entry_no_price_max=entry_no_price_max,
         )
         if not candidate_snapshots:
             candidate_snapshots = (
@@ -130,7 +137,6 @@ class StrategyService:
                     orderbook=resolved_orderbook,
                     position=position_index.get((resolved_market.condition_id, resolved_market.no_token_id)),
                     open_orders=open_orders,
-                    entry_no_price_max=entry_no_price_max,
                 ),
             )
 
@@ -152,9 +158,7 @@ class StrategyService:
                     "max_order_usdc": max_order_usdc,
                     "max_market_usdc": max_market_usdc,
                     "max_total_usdc": max_total_usdc,
-                    "entry_no_price_max": entry_no_price_max,
-                    "min_liquidity_usdc": min_liquidity_usdc,
-                    "max_spread": max_spread,
+                    "runtime_profile": self._runtime_profile,
                 },
             )
         )
@@ -296,7 +300,6 @@ class StrategyService:
         focus_orderbook: OrderbookSnapshot,
         position_index: dict[tuple[str, str], Position],
         open_orders: tuple[Order, ...],
-        entry_no_price_max: Decimal,
     ) -> tuple[AllocationMarketSnapshot, ...]:
         markets = (
             self._registry.snapshot().markets
@@ -325,7 +328,6 @@ class StrategyService:
                     orderbook=candidate_orderbook,
                     position=position,
                     open_orders=candidate_open_orders,
-                    entry_no_price_max=entry_no_price_max,
                 )
             )
         return tuple(snapshots)
@@ -338,7 +340,6 @@ class StrategyService:
         orderbook: OrderbookSnapshot,
         position: Position | None,
         open_orders: tuple[Order, ...],
-        entry_no_price_max: Decimal,
     ) -> AllocationMarketSnapshot:
         universe_decision = self._strategy_module.select_market(market)
         return AllocationMarketSnapshot(
@@ -356,7 +357,10 @@ class StrategyService:
             resolved=market.trading_status == TradingStatus.RESOLVED,
             cancelled=False,
             archived=market.trading_status == TradingStatus.CLOSED,
-            liquidity_usdc=_ask_depth_notional(orderbook, entry_no_price_max),
+            liquidity_usdc=_ask_depth_notional(
+                orderbook,
+                self._runtime_profile.entry_no_price_max,
+            ),
             spread=orderbook.spread,
             best_ask=orderbook.best_ask,
             best_ask_size=orderbook.best_ask_size,

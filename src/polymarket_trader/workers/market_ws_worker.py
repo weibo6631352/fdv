@@ -7,12 +7,14 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Awaitable, Callable, Mapping
 from uuid import uuid4
 
-from polymarket_trader.domain.constants import ENTRY_NO_PRICE_MAX
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from polymarket_trader.domain.market import Market
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from polymarket_trader.domain.strategy_profile import StrategyRuntimeProfile
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
+
+_DEFAULT_RUNTIME_PROFILE = StrategyRuntimeProfile()
 
 
 def _utc_now() -> datetime:
@@ -261,7 +263,7 @@ class MarketWsWorker:
         *,
         event_bus: EventBus | None = None,
         registry: MarketRegistry | None = None,
-        entry_price_max: Decimal = ENTRY_NO_PRICE_MAX,
+        entry_price_max: Decimal = _DEFAULT_RUNTIME_PROFILE.entry_no_price_max,
         rest_snapshot_loader: Callable[
             [str],
             Awaitable[OrderbookSnapshot | Mapping[str, Any]],
