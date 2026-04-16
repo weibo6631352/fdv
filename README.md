@@ -20,9 +20,10 @@
 - 跑回归：`pytest -q`
 - 跑静态检查：`ruff check .`
 - 验证 PostgreSQL 链路：`pytest tests/infra/test_postgres_integration.py -q`
-- 启动前端管理台：`npm --prefix frontend install && npm --prefix frontend run dev`
-- 一键启动全部服务并打开前端：`./start_all.sh`
-- 构建前端 dist：`./build_dist.sh`
+- 启动前端管理台（开发模式）：`npm --prefix frontend install && npm --prefix frontend run dev`
+- 一键启动后台和前端页面：`./start_all.sh`
+- 停止后台和前端页面：`./stop_all.sh`
+- 构建可运行发布包：`./build_dist.sh --archive`
 
 ## 核心规则
 

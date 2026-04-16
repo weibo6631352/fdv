@@ -33,15 +33,23 @@ npm --prefix frontend run lint
 npm --prefix frontend run build
 ```
 
-根目录也提供了打包脚本：
+根目录也提供了发布脚本：
 
 ```bash
 ./build_dist.sh
 ./build_dist.sh --archive
 ```
 
-- `./build_dist.sh`：产出 `frontend/dist`
-- `./build_dist.sh --archive`：额外产出 `.dist-packages/frontend-dist.tar.gz`
+- `./build_dist.sh`：产出 `frontend/dist`，并组装 `.dist-packages/fdv-runtime/` 可运行发布目录
+- `./build_dist.sh --archive`：额外产出 `.dist-packages/fdv-runtime.tar.gz`
+- 根目录 `./stop_all.sh`：停止当前仓库模式启动的前后端
+
+发布目录内的 `start_all.sh` 会：
+
+- 拉起后端 API；
+- 用静态服务器托管 `frontend/dist`；
+- 代理 `/api/*` 到后端；
+- 尝试自动打开浏览器，并打印静态目录与日志目录。
 
 ## API 连接
 

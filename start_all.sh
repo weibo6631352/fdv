@@ -1,22 +1,48 @@
 #!/usr/bin/env bash
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec bash "$0" "$@"
+fi
+
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUNTIME_DIR="$ROOT_DIR/.dev-runtime"
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_MODE=0
+if [[ -d "$APP_DIR/wheels" && -f "$APP_DIR/support/fdv_static_server.py" ]]; then
+  PACKAGE_MODE=1
+fi
+
+if [[ "$PACKAGE_MODE" -eq 1 ]]; then
+  RUNTIME_DIR="$APP_DIR/.runtime"
+else
+  RUNTIME_DIR="$APP_DIR/.dev-runtime"
+fi
+
+RUNTIME_VENV_DIR="$RUNTIME_DIR/venv"
+RUNTIME_MARKER_FILE="$RUNTIME_DIR/runtime-mode.txt"
 BACKEND_PID_FILE="$RUNTIME_DIR/backend.pid"
 FRONTEND_PID_FILE="$RUNTIME_DIR/frontend.pid"
 BACKEND_LOG="$RUNTIME_DIR/backend.log"
 FRONTEND_LOG="$RUNTIME_DIR/frontend.log"
 DATABASE_INIT_LOG="$RUNTIME_DIR/database-init.log"
-BACKEND_HEALTH_URL="http://127.0.0.1:8000/health"
-FRONTEND_URL="http://127.0.0.1:5173/"
+RUNTIME_INSTALL_LOG="$RUNTIME_DIR/runtime-install.log"
+BACKEND_HOST="${FDV_BACKEND_HOST:-127.0.0.1}"
+BACKEND_PORT="${FDV_BACKEND_PORT:-8000}"
+FRONTEND_HOST="${FDV_FRONTEND_HOST:-127.0.0.1}"
+FRONTEND_PORT="${FDV_FRONTEND_PORT:-5173}"
+BACKEND_BASE_URL="http://${BACKEND_HOST}:${BACKEND_PORT}"
+BACKEND_HEALTH_URL="${BACKEND_BASE_URL}/health"
+FRONTEND_URL="http://${FRONTEND_HOST}:${FRONTEND_PORT}/"
+FRONTEND_DIST_DIR="$APP_DIR/frontend/dist"
 LOCAL_PG_ROOT="$RUNTIME_DIR/postgres"
 LOCAL_PG_DATA_DIR="$LOCAL_PG_ROOT/data"
 LOCAL_PG_SOCKET_DIR="$LOCAL_PG_ROOT/socket"
 LOCAL_PG_LOG="$LOCAL_PG_ROOT/postgres.log"
+LOCAL_PG_HOST="${FDV_LOCAL_PG_HOST:-127.0.0.1}"
 LOCAL_PG_PORT="${FDV_LOCAL_PG_PORT:-55432}"
 LOCAL_PG_DB="${FDV_LOCAL_PG_DB:-fdv_dev}"
 LOCAL_PG_USER="${FDV_LOCAL_PG_USER:-${USER:-$(id -un)}}"
+BROWSER_OPEN_LOG="$RUNTIME_DIR/browser-open.log"
+PYTHON_BIN=""
 
 mkdir -p "$RUNTIME_DIR"
 
@@ -51,18 +77,83 @@ find_pg_command() {
   return 1
 }
 
-load_repo_env() {
-  if [[ -f "$ROOT_DIR/.env" ]]; then
-    set -a
-    # shellcheck disable=SC1091
-    source "$ROOT_DIR/.env"
-    set +a
+load_env_file() {
+  local env_file="$1"
+
+  if [[ ! -f "$env_file" ]]; then
+    return 0
   fi
+
+  log "加载配置: $env_file"
+  set -a
+  # shellcheck disable=SC1090
+  source "$env_file"
+  set +a
+}
+
+load_env() {
+  if [[ -n "${FDV_ENV_FILE:-}" ]]; then
+    load_env_file "$FDV_ENV_FILE"
+    return 0
+  fi
+
+  if [[ -f "$APP_DIR/config/.env" ]]; then
+    load_env_file "$APP_DIR/config/.env"
+  fi
+
+  if [[ -f "$APP_DIR/.env" ]]; then
+    load_env_file "$APP_DIR/.env"
+  fi
+}
+
+python_run() {
+  "$PYTHON_BIN" "$@"
+}
+
+ensure_runtime_python() {
+  local expected_mode
+  local install_target
+
+  require_command python3
+  expected_mode="repo"
+  if [[ "$PACKAGE_MODE" -eq 1 ]]; then
+    expected_mode="bundle"
+  fi
+
+  if [[ -x "$RUNTIME_VENV_DIR/bin/python" && -f "$RUNTIME_MARKER_FILE" ]]; then
+    if [[ "$(<"$RUNTIME_MARKER_FILE")" == "$expected_mode" ]]; then
+      PYTHON_BIN="$RUNTIME_VENV_DIR/bin/python"
+      return 0
+    fi
+  fi
+
+  rm -rf "$RUNTIME_VENV_DIR"
+  mkdir -p "$RUNTIME_DIR"
+  : > "$RUNTIME_INSTALL_LOG"
+
+  log "准备 Python 运行环境"
+  python3 -m venv "$RUNTIME_VENV_DIR" >>"$RUNTIME_INSTALL_LOG" 2>&1
+
+  if [[ "$PACKAGE_MODE" -eq 1 ]]; then
+    install_target="本地 wheels"
+    "$RUNTIME_VENV_DIR/bin/python" -m pip install \
+      --no-index \
+      --find-links "$APP_DIR/wheels" \
+      polymarket-trader \
+      >>"$RUNTIME_INSTALL_LOG" 2>&1
+  else
+    install_target="当前仓库"
+    "$RUNTIME_VENV_DIR/bin/python" -m pip install -e "$APP_DIR" >>"$RUNTIME_INSTALL_LOG" 2>&1
+  fi
+
+  printf '%s\n' "$expected_mode" > "$RUNTIME_MARKER_FILE"
+  PYTHON_BIN="$RUNTIME_VENV_DIR/bin/python"
+  log "Python 运行环境已就绪 (${install_target})"
 }
 
 http_ready() {
   local url="$1"
-  python3 - "$url" <<'PY'
+  python_run - "$url" <<'PY'
 import sys
 import urllib.request
 
@@ -98,7 +189,7 @@ start_background_process() {
   local log_file="$3"
 
   : > "$log_file"
-  setsid bash -lc "cd '$ROOT_DIR' && $command_text" </dev/null >>"$log_file" 2>&1 &
+  setsid bash -lc "cd '$APP_DIR' && $command_text" </dev/null >>"$log_file" 2>&1 &
   echo "$!" > "$pid_file"
 }
 
@@ -150,17 +241,27 @@ listening_pid_for_port() {
     | head -n 1
 }
 
-process_belongs_to_repo() {
+process_belongs_to_app() {
   local pid="$1"
   local cwd
 
   cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
-  [[ -n "$cwd" && "$cwd" == "$ROOT_DIR"* ]]
+  [[ -n "$cwd" && "$cwd" == "$APP_DIR"* ]]
 }
 
-reclaim_repo_owned_port() {
+process_matches_service() {
+  local pid="$1"
+  local command_fragment="$2"
+  local cmdline
+
+  cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+  [[ -n "$cmdline" && "$cmdline" == *"$command_fragment"* ]]
+}
+
+reclaim_managed_port() {
   local port="$1"
   local service_name="$2"
+  local command_fragment="$3"
   local pid
 
   pid="$(listening_pid_for_port "$port")"
@@ -168,8 +269,14 @@ reclaim_repo_owned_port() {
     return 0
   fi
 
-  if process_belongs_to_repo "$pid"; then
+  if process_belongs_to_app "$pid"; then
     log "停止占用 $port 的旧${service_name}: pid=$pid"
+    stop_process "$pid"
+    return 0
+  fi
+
+  if process_matches_service "$pid" "$command_fragment"; then
+    log "停止占用 $port 的其他${service_name}: pid=$pid"
     stop_process "$pid"
     return 0
   fi
@@ -180,7 +287,7 @@ reclaim_repo_owned_port() {
 
 initialize_database_once() {
   : > "$DATABASE_INIT_LOG"
-  if PYTHONPATH="$ROOT_DIR/src" python3 - <<'PY' >>"$DATABASE_INIT_LOG" 2>&1
+  if python_run - <<'PY' >>"$DATABASE_INIT_LOG" 2>&1
 import asyncio
 from polymarket_trader.config import Settings
 from polymarket_trader.infra.db import initialize_database
@@ -211,6 +318,40 @@ database_config_is_default() {
   [[ "$database_port" == "5432" ]] || return 1
   [[ "$database_name" == "trader" ]] || return 1
   [[ "$database_user" == "trader" ]] || return 1
+}
+
+database_url_targets_local_bootstrap_postgres() {
+  local database_url="${DATABASE_URL:-}"
+
+  [[ -n "$database_url" ]] || return 1
+
+  DATABASE_URL_TO_CHECK="$database_url" \
+  LOCAL_PG_HOST_TO_CHECK="$LOCAL_PG_HOST" \
+  LOCAL_PG_PORT_TO_CHECK="$LOCAL_PG_PORT" \
+  LOCAL_PG_DB_TO_CHECK="$LOCAL_PG_DB" \
+  python3 - <<'PY'
+import os
+import sys
+from urllib.parse import urlsplit
+
+database_url = os.environ["DATABASE_URL_TO_CHECK"]
+expected_host = os.environ["LOCAL_PG_HOST_TO_CHECK"]
+expected_port = int(os.environ["LOCAL_PG_PORT_TO_CHECK"])
+expected_db = os.environ["LOCAL_PG_DB_TO_CHECK"]
+
+try:
+    parsed = urlsplit(database_url)
+except Exception:
+    sys.exit(1)
+
+path = parsed.path.lstrip("/")
+port = parsed.port
+host = parsed.hostname
+
+if host == expected_host and port == expected_port and path == expected_db:
+    sys.exit(0)
+sys.exit(1)
+PY
 }
 
 bootstrap_local_postgres() {
@@ -254,29 +395,29 @@ bootstrap_local_postgres() {
       >/dev/null
   fi
 
-  if "$pg_isready_bin" -h 127.0.0.1 -p "$LOCAL_PG_PORT" >/dev/null 2>&1; then
-    log "复用本地 PostgreSQL: 127.0.0.1:$LOCAL_PG_PORT"
+  if "$pg_isready_bin" -h "$LOCAL_PG_HOST" -p "$LOCAL_PG_PORT" >/dev/null 2>&1; then
+    log "复用本地 PostgreSQL: ${LOCAL_PG_HOST}:$LOCAL_PG_PORT"
   else
-    log "启动仓库内 PostgreSQL: 127.0.0.1:$LOCAL_PG_PORT"
+    log "启动仓库内 PostgreSQL: ${LOCAL_PG_HOST}:$LOCAL_PG_PORT"
     "$pg_ctl_bin" \
       -D "$LOCAL_PG_DATA_DIR" \
       -l "$LOCAL_PG_LOG" \
-      -o "-p $LOCAL_PG_PORT -h 127.0.0.1 -k '$LOCAL_PG_SOCKET_DIR'" \
+      -o "-p $LOCAL_PG_PORT -h $LOCAL_PG_HOST -k '$LOCAL_PG_SOCKET_DIR'" \
       start \
       >/dev/null
   fi
 
-  if ! "$pg_isready_bin" -h 127.0.0.1 -p "$LOCAL_PG_PORT" >/dev/null 2>&1; then
+  if ! "$pg_isready_bin" -h "$LOCAL_PG_HOST" -p "$LOCAL_PG_PORT" >/dev/null 2>&1; then
     log "本地 PostgreSQL 未就绪，日志见 $LOCAL_PG_LOG"
     return 1
   fi
 
-  if [[ "$("$psql_bin" -h 127.0.0.1 -p "$LOCAL_PG_PORT" -U "$LOCAL_PG_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$LOCAL_PG_DB'")" != "1" ]]; then
+  if [[ "$("$psql_bin" -h "$LOCAL_PG_HOST" -p "$LOCAL_PG_PORT" -U "$LOCAL_PG_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$LOCAL_PG_DB'")" != "1" ]]; then
     log "创建本地开发库: $LOCAL_PG_DB"
-    "$createdb_bin" -h 127.0.0.1 -p "$LOCAL_PG_PORT" -U "$LOCAL_PG_USER" "$LOCAL_PG_DB"
+    "$createdb_bin" -h "$LOCAL_PG_HOST" -p "$LOCAL_PG_PORT" -U "$LOCAL_PG_USER" "$LOCAL_PG_DB"
   fi
 
-  export DATABASE_URL="postgresql+asyncpg://${LOCAL_PG_USER}@127.0.0.1:${LOCAL_PG_PORT}/${LOCAL_PG_DB}"
+  export DATABASE_URL="postgresql+asyncpg://${LOCAL_PG_USER}@${LOCAL_PG_HOST}:${LOCAL_PG_PORT}/${LOCAL_PG_DB}"
 }
 
 ensure_database() {
@@ -285,8 +426,12 @@ ensure_database() {
     return 0
   fi
 
-  if database_config_is_default; then
-    log "默认数据库配置不可用，切换到仓库内 PostgreSQL 开发库"
+  if database_config_is_default || database_url_targets_local_bootstrap_postgres; then
+    if database_url_targets_local_bootstrap_postgres; then
+      log "DATABASE_URL 指向仓库内本地 PostgreSQL，尝试自动拉起"
+    else
+      log "默认数据库配置不可用，切换到仓库内 PostgreSQL 开发库"
+    fi
     bootstrap_local_postgres || return 1
     initialize_database_once || {
       log "本地 PostgreSQL 已启动，但 schema 初始化失败，日志见 $DATABASE_INIT_LOG"
@@ -297,23 +442,42 @@ ensure_database() {
     return 0
   fi
 
-  log "数据库初始化失败，请检查 .env 中 DATABASE_URL / DATABASE_* 配置，日志见 $DATABASE_INIT_LOG"
+  log "数据库初始化失败，请检查配置文件中的 DATABASE_URL / DATABASE_*，日志见 $DATABASE_INIT_LOG"
   return 1
 }
 
-ensure_backend() {
-  if http_ready "$BACKEND_HEALTH_URL"; then
-    log "后端已在运行: $BACKEND_HEALTH_URL"
+ensure_frontend_dist() {
+  if [[ -f "$FRONTEND_DIST_DIR/index.html" ]]; then
     return 0
   fi
 
+  if [[ "$PACKAGE_MODE" -eq 1 ]]; then
+    log "发布包缺少 frontend/dist，无法启动前端"
+    return 1
+  fi
+
+  require_command npm
+  if [[ ! -d "$APP_DIR/frontend/node_modules" ]]; then
+    log "安装前端依赖"
+    if [[ -f "$APP_DIR/frontend/package-lock.json" ]]; then
+      npm --prefix "$APP_DIR/frontend" ci
+    else
+      npm --prefix "$APP_DIR/frontend" install
+    fi
+  fi
+
+  log "构建前端静态资源"
+  VITE_API_BASE_URL=/api npm --prefix "$APP_DIR/frontend" run build
+}
+
+ensure_backend() {
   cleanup_pid_file_process "$BACKEND_PID_FILE"
-  reclaim_repo_owned_port 8000 "后端服务" || return 1
+  reclaim_managed_port "$BACKEND_PORT" "后端服务" "polymarket_trader.api.app:create_app" || return 1
   ensure_database
 
   log "启动后端服务"
   start_background_process \
-    "export PYTHONPATH=src && python3 -m uvicorn polymarket_trader.api.app:create_app --factory --host 127.0.0.1 --port 8000 --reload" \
+    "'$PYTHON_BIN' -m uvicorn polymarket_trader.api.app:create_app --factory --host '$BACKEND_HOST' --port '$BACKEND_PORT'" \
     "$BACKEND_PID_FILE" \
     "$BACKEND_LOG"
 
@@ -321,29 +485,15 @@ ensure_backend() {
   log "后端已启动: $BACKEND_HEALTH_URL"
 }
 
-ensure_frontend_dependencies() {
-  if [[ -d "$ROOT_DIR/frontend/node_modules" ]]; then
-    return 0
-  fi
-
-  log "安装前端依赖"
-  npm --prefix "$ROOT_DIR/frontend" install
-}
-
 ensure_frontend() {
-  if http_ready "$FRONTEND_URL"; then
-    log "前端已在运行: $FRONTEND_URL"
-    return 0
-  fi
+  ensure_frontend_dist
 
   cleanup_pid_file_process "$FRONTEND_PID_FILE"
-  reclaim_repo_owned_port 5173 "前端服务" || return 1
+  reclaim_managed_port "$FRONTEND_PORT" "前端服务" "fdv_static_server.py" || return 1
 
-  ensure_frontend_dependencies
-
-  log "启动前端服务"
+  log "启动前端静态服务"
   start_background_process \
-    "npm --prefix frontend run dev -- --host 127.0.0.1 --port 5173" \
+    "'$PYTHON_BIN' '$APP_DIR/support/fdv_static_server.py' --host '$FRONTEND_HOST' --port '$FRONTEND_PORT' --static-dir '$APP_DIR/frontend/dist' --backend-base-url '$BACKEND_BASE_URL'" \
     "$FRONTEND_PID_FILE" \
     "$FRONTEND_LOG"
 
@@ -353,32 +503,48 @@ ensure_frontend() {
 
 open_browser() {
   local url="$1"
+  : > "$BROWSER_OPEN_LOG"
 
   if command -v xdg-open >/dev/null 2>&1; then
-    xdg-open "$url" >/dev/null 2>&1 || true
-    return 0
+    if xdg-open "$url" >>"$BROWSER_OPEN_LOG" 2>&1; then
+      log "已尝试通过 xdg-open 打开浏览器: $url"
+      return 0
+    fi
   fi
 
   if command -v gio >/dev/null 2>&1; then
-    gio open "$url" >/dev/null 2>&1 || true
+    if gio open "$url" >>"$BROWSER_OPEN_LOG" 2>&1; then
+      log "已尝试通过 gio open 打开浏览器: $url"
+      return 0
+    fi
+  fi
+
+  if python_run -m webbrowser "$url" >>"$BROWSER_OPEN_LOG" 2>&1; then
+    log "已尝试通过 python webbrowser 打开浏览器: $url"
     return 0
   fi
 
-  python3 -m webbrowser "$url" >/dev/null 2>&1 || true
+  log "自动打开浏览器失败，请手动访问: $url"
+  if [[ -s "$BROWSER_OPEN_LOG" ]]; then
+    log "浏览器打开日志: $BROWSER_OPEN_LOG"
+  fi
+  return 1
 }
 
 main() {
-  require_command python3
-  require_command npm
-
-  load_repo_env
+  ensure_runtime_python
+  load_env
   ensure_backend
   ensure_frontend
-  open_browser "$FRONTEND_URL"
+  if ! open_browser "$FRONTEND_URL"; then
+    :
+  fi
 
   log "全部服务已就绪"
   log "前端地址: $FRONTEND_URL"
-  log "后端文档: http://127.0.0.1:8000/docs"
+  log "后端文档: ${BACKEND_BASE_URL}/docs"
+  log "前端静态目录: $FRONTEND_DIST_DIR"
+  log "应用目录: $APP_DIR"
   log "日志目录: $RUNTIME_DIR"
 }
 
