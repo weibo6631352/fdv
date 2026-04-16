@@ -116,6 +116,11 @@ def test_current_strategy_sizes_entry_from_candidate_snapshots() -> None:
             market=primary,
             token_id=primary.no_token_id,
             orderbook=primary_orderbook,
+            portfolio_budget_usdc=Decimal("100"),
+            available_usdc=Decimal("100"),
+            max_order_usdc=Decimal("100"),
+            max_market_usdc=Decimal("100"),
+            max_total_usdc=Decimal("100"),
             entry_candidates=(
                 EntryCandidate(
                     market=primary,
@@ -128,13 +133,6 @@ def test_current_strategy_sizes_entry_from_candidate_snapshots() -> None:
                     orderbook=secondary_orderbook,
                 ),
             ),
-            metadata={
-                "portfolio_budget_usdc": Decimal("100"),
-                "available_usdc": Decimal("100"),
-                "max_order_usdc": Decimal("100"),
-                "max_market_usdc": Decimal("100"),
-                "max_total_usdc": Decimal("100"),
-            },
         )
     )
 

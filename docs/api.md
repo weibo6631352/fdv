@@ -2,7 +2,7 @@
 
 这里只写已经存在的 HTTP API。
 
-- 核对日期：2026-04-15
+- 核对日期：2026-04-16
 - 适用仓库：`polymarket-trader`
 - 服务入口：`src/polymarket_trader/api/app.py`
 - 默认无应用层鉴权，只放在本机或受控内网。
@@ -30,7 +30,7 @@
 | `GET` | `/markets/midpoint` | 市场中间价 |
 | `GET` | `/markets/prices-history` | 市场价格历史 |
 | `GET` | `/orders` | 订单分页查询 |
-| `POST` | `/orders/cancel-replace-sell` | 人工取消并重挂 SELL |
+| `POST` | `/orders/replace` | 人工替换单个 open order |
 | `GET` | `/fills` | fills 分页查询 |
 | `GET` | `/positions` | 持仓分页查询 |
 | `GET` | `/portfolio` | 组合与账户摘要 |
@@ -238,6 +238,7 @@
 返回结构：
 
 - 与 `/markets.items[]` 单项结构一致。
+- `token_views[]` 是当前推荐读取的逐 token 视图；顶层 `orderbook` / `yes_orderbook` 等字段仍保留给现有调用方兼容使用。
 
 ### 3.6 `GET /markets/orderbook`
 
@@ -253,8 +254,8 @@
 
 约束：
 
-- 三者至少给一个。
-- 若只给 `market_slug` 或 `condition_id`，内部默认取该 market 的 `no_token_id`。
+- `token_id` 必填。
+- `market_slug` 和 `condition_id` 只作为附加定位信息，不再隐式回退到 `no_token_id`。
 
 关键返回字段：
 
@@ -293,8 +294,8 @@
 
 约束：
 
-- 三者至少给一个。
-- 若只给 `market_slug` 或 `condition_id`，内部默认取该 market 的 `no_token_id`。
+- `token_id` 必填。
+- `market_slug` 和 `condition_id` 只作为附加定位信息，不再隐式回退到 `no_token_id`。
 
 关键返回字段：
 
@@ -656,26 +657,26 @@
 
 `plan.market_plans[].actions[].action_type` 当前可能出现：
 
-- `cancel_open_buy`
-- `cancel_excess_sell`
-- `submit_missing_sell`
+- `cancel_order`
+- `replace_order`
+- `submit_order`
 - `pause_trading`
 
 失败口径：
 
 - 若 `reconcile_worker` 不可用，返回 `{"status":"failed","reason":"reconcile_worker_unavailable"}`。
 
-### 4.2 `POST /orders/cancel-replace-sell`
+### 4.2 `POST /orders/replace`
 
 用途：
 
-- 对某个 market 的 open SELL 做人工重挂。
+- 对单个 open order 做人工 replace，不绑定 BUY / SELL，也不绑定 NO / YES。
 
 请求体：
 
 ```json
 {
-  "market_slug": "sample-market-a",
+  "order_id": "sell-1",
   "new_price": "0.78",
   "operator": "manual",
   "reason": "admin_reprice",
@@ -687,10 +688,12 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| `market_slug` / `condition_id` / `token_id` | 三者至少给一个 |
+| `order_id` | 必填，目标 open order 的 `order_id` 或 `idempotency_key` |
+| `market_slug` / `condition_id` / `token_id` | 可选，用于辅助唯一定位订单 |
 | `new_price` | `0 < new_price < 1` |
+| `size_shares` | 可选；不传则默认沿用当前 open order 的剩余份额 |
 | `operator` | 默认 `manual` |
-| `reason` | 默认 `admin_cancel_replace_sell` |
+| `reason` | 默认 `admin_replace_order` |
 | `trace_id` | 可选，不传则自动生成 |
 
 成功返回重点：
@@ -699,25 +702,25 @@
 - `trace_id`
 - `operator`
 - `market`
-- `cancelled_orders`
+- `order`
 - `replace_review`
 - `replace_order_submitted`
 
 说明：
 
-- 先取消该 market 现有 open SELL。
-- 如果当前没有 open SELL，但账户里仍有持仓，也会直接提交新的 SELL。
+- 这是对单张 open order 的真正 replace，不会先把整个 market 的同类订单全部撤掉。
+- hot state 会按原订单的 `side` 和 `token_id` 更新，不再默认按 SELL / NO 处理。
 
 当前明确失败原因：
 
+- `order_not_found`
 - `market_not_found`
 - `market_not_operable`
 - `invalid_price`
 - `invalid_tick_size`
 - `price_not_aligned_to_tick_size`
-- `no_position_to_sell`
-- `cancel_failed`
-- `replace_sell_failed`
+- `order_size_unknown`
+- `replace_order_failed`
 
 ## 5. 当前接口边界
 
@@ -750,4 +753,4 @@ Admin API 是人工查询和受控操作入口，不是交易策略入口。
 - 市场实时盘口用 `/markets/orderbook`
 - 市场轻量价格轮询用 `/markets/midpoint`
 - 市场价格走势回放用 `/markets/prices-history`
-- 人工修复只用 `/operations/reconcile` 和 `/orders/cancel-replace-sell`
+- 人工修复只用 `/operations/reconcile` 和 `/orders/replace`

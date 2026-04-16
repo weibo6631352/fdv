@@ -43,7 +43,10 @@ def size_entry(config: CurrentStrategyConfig, context: StrategyContext) -> Entry
         也就是说，先找出所有可参与分配的候选市场，再在这些市场之间平均分配预算。
     """
 
-    portfolio_budget_usdc = _metadata_decimal(context, "portfolio_budget_usdc")
+    portfolio_budget_usdc = context.portfolio_budget_usdc or _metadata_decimal(
+        context,
+        "portfolio_budget_usdc",
+    )
     if portfolio_budget_usdc is None:
         return _empty_sizing(context, reason="missing_portfolio_budget")
 
@@ -58,19 +61,19 @@ def size_entry(config: CurrentStrategyConfig, context: StrategyContext) -> Entry
             reason="missing_market_state",
         )
 
-    available_usdc = _metadata_decimal(context, "available_usdc")
+    available_usdc = context.available_usdc or _metadata_decimal(context, "available_usdc")
     if available_usdc is None:
         available_usdc = portfolio_budget_usdc
 
-    max_order_usdc = _metadata_decimal(context, "max_order_usdc")
+    max_order_usdc = context.max_order_usdc or _metadata_decimal(context, "max_order_usdc")
     if max_order_usdc is None:
         return _empty_sizing(context, reason="missing_max_order_usdc")
 
-    max_market_usdc = _metadata_decimal(context, "max_market_usdc")
+    max_market_usdc = context.max_market_usdc or _metadata_decimal(context, "max_market_usdc")
     if max_market_usdc is None:
         return _empty_sizing(context, reason="missing_max_market_usdc")
 
-    max_total_usdc = _metadata_decimal(context, "max_total_usdc")
+    max_total_usdc = context.max_total_usdc or _metadata_decimal(context, "max_total_usdc")
     if max_total_usdc is None:
         return _empty_sizing(context, reason="missing_max_total_usdc")
 
@@ -147,7 +150,7 @@ def decide_entry(config: CurrentStrategyConfig, context: StrategyContext) -> Str
     if best_ask > config.entry_no_price_max:
         return StrategyDecision.skip(reason="price_above_entry_max")
 
-    amount_usdc = _metadata_decimal(context, "amount_usdc", "buy_budget_usdc")
+    amount_usdc = context.amount_usdc or _metadata_decimal(context, "amount_usdc", "buy_budget_usdc")
     if amount_usdc is None or amount_usdc <= Decimal("0"):
         return StrategyDecision.skip(reason="missing_entry_amount")
 
@@ -176,7 +179,7 @@ def decide_exit(config: CurrentStrategyConfig, context: StrategyContext) -> Stra
         - 否则返回 ``SKIP``。
     """
 
-    size_shares = _metadata_decimal(context, "size_shares")
+    size_shares = context.size_shares or _metadata_decimal(context, "size_shares")
     if size_shares is not None and size_shares > Decimal("0"):
         uncovered_shares = size_shares
     elif context.position is not None:
@@ -214,7 +217,10 @@ def _empty_sizing(context: StrategyContext, *, reason: str) -> EntrySizing:
         一个不包含 allocation 的 ``EntrySizing``。
     """
 
-    total_budget_usdc = _metadata_decimal(context, "portfolio_budget_usdc") or Decimal("0")
+    total_budget_usdc = context.portfolio_budget_usdc or _metadata_decimal(
+        context,
+        "portfolio_budget_usdc",
+    ) or Decimal("0")
     return EntrySizing(
         allocation_plan=AllocationPlan(
             trace_id=context.trace_id,

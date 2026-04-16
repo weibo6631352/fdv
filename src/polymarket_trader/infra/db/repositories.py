@@ -242,6 +242,14 @@ class MarketRepository(BaseRepository):
         row = await self._session.scalar(select(MarketModel).where(MarketModel.market_slug == market_slug))
         return None if row is None else row.to_domain()
 
+    async def get_by_token_id(self, token_id: str) -> Market | None:
+        row = await self._session.scalar(
+            select(MarketModel).where(
+                (MarketModel.no_token_id == token_id) | (MarketModel.yes_token_id == token_id)
+            )
+        )
+        return None if row is None else row.to_domain()
+
     async def get_by_no_token_id(self, token_id: str) -> Market | None:
         row = await self._session.scalar(select(MarketModel).where(MarketModel.no_token_id == token_id))
         return None if row is None else row.to_domain()

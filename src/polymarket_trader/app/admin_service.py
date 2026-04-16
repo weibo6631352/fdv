@@ -9,7 +9,6 @@ from typing import Any, Callable, Literal, Mapping, Sequence
 from uuid import uuid4
 
 from polymarket_trader.app.reconcile_service import ReconcileAction, ReconcilePlan
-from polymarket_trader.app.strategy_service import StrategyService
 from polymarket_trader.app.trading_service import TradingReviewResult, TradingService
 from polymarket_trader.domain.allocation import Allocation
 from polymarket_trader.domain.events import AuditEvent, Fill, OutboxEvent
@@ -22,7 +21,7 @@ from polymarket_trader.domain.order import (
     OrderSide,
     OrderStatus,
     OrderType,
-    SellOrderIntent,
+    ReplaceOrderIntent,
 )
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.domain.position import Position
@@ -88,22 +87,11 @@ def _page_payload(page: RepositoryPage[Any], *, serializer: Callable[[Any], Any]
 _MARKET_LIST_YES_ORDERBOOK_CONCURRENCY = 8
 
 
-def _market_status_allowed_for_manual_sell(market: Market) -> bool:
+def _market_status_allowed_for_manual_order(market: Market) -> bool:
     return market.trading_status not in {
         TradingStatus.CLOSED,
         TradingStatus.RESOLVED,
         TradingStatus.REJECTED,
-    }
-
-
-def _order_status_is_terminal(order_status: OrderResultStatus) -> bool:
-    return order_status in {
-        OrderResultStatus.FULL_FILL,
-        OrderResultStatus.PARTIAL_FILL,
-        OrderResultStatus.NO_FILL,
-        OrderResultStatus.REJECTED,
-        OrderResultStatus.FAILED,
-        OrderResultStatus.CANCELLED,
     }
 
 
@@ -119,6 +107,20 @@ def _order_result_to_order_status(result: OrderResult) -> OrderStatus:
         OrderResultStatus.UNKNOWN_TIMEOUT: OrderStatus.FAILED,
     }
     return mapping.get(result.status, OrderStatus.FAILED)
+
+
+def _normalize_order_id(order: Order) -> str:
+    return order.order_id or order.idempotency_key or (
+        f"{order.condition_id}:{order.token_id}:{order.side.value}:{order.status.value}"
+    )
+
+
+def _order_open_shares(order: Order) -> Decimal | None:
+    if order.remaining_shares is not None:
+        return max(order.remaining_shares, Decimal("0"))
+    if order.size_shares is not None:
+        return max(order.size_shares, Decimal("0"))
+    return None
 
 
 def _normalize_condition_ids(condition_ids: Sequence[str] | None) -> tuple[str, ...]:
@@ -468,12 +470,9 @@ class AdminService:
                     if market_by_condition is not None:
                         return market_by_condition
                 if token_id is not None:
-                    market_by_token = await repos.market.get_by_no_token_id(token_id)
+                    market_by_token = await repos.market.get_by_token_id(token_id)
                     if market_by_token is not None:
                         return market_by_token
-                    market_by_yes_token = await repos.market.get_by_yes_token_id(token_id)
-                    if market_by_yes_token is not None:
-                        return market_by_yes_token
                 if market_slug is not None:
                     return await repos.market.get_by_market_slug(market_slug)
                 return None
@@ -500,7 +499,7 @@ class AdminService:
         )
         resolved_market_slug = market.market_slug if market is not None else market_slug
         resolved_condition_id = market.condition_id if market is not None else condition_id
-        resolved_token_id = token_id or (market.no_token_id if market is not None else None)
+        resolved_token_id = token_id
         if resolved_token_id is None:
             return None
 
@@ -536,7 +535,7 @@ class AdminService:
         )
         resolved_market_slug = market.market_slug if market is not None else market_slug
         resolved_condition_id = market.condition_id if market is not None else condition_id
-        resolved_token_id = token_id or (market.no_token_id if market is not None else None)
+        resolved_token_id = token_id
         if resolved_token_id is None:
             return None
 
@@ -763,35 +762,55 @@ class AdminService:
         )
         return self._serialize_reconcile_result(result)
 
-    async def cancel_replace_sell(
+    async def replace_order(
         self,
         *,
+        order_id: str,
         market_slug: str | None = None,
         condition_id: str | None = None,
         token_id: str | None = None,
         new_price: Decimal,
+        size_shares: Decimal | None = None,
         operator: str = "manual",
-        reason: str = "admin_cancel_replace_sell",
+        reason: str = "admin_replace_order",
         trace_id: str | None = None,
     ) -> dict[str, Any]:
         trace_id = trace_id or uuid4().hex
-        market = self._resolve_market(
+        account = self._account_snapshot()
+        source_order = self._find_open_order(
+            account,
+            order_id=order_id,
             market_slug=market_slug,
             condition_id=condition_id,
             token_id=token_id,
+        )
+        if source_order is None:
+            return {
+                "status": "failed",
+                "trace_id": trace_id,
+                "reason": "order_not_found",
+                "order_id": order_id,
+            }
+
+        market = self._resolve_market(
+            market_slug=market_slug or source_order.market_slug,
+            condition_id=condition_id or source_order.condition_id,
+            token_id=token_id or source_order.token_id,
         )
         if market is None:
             return {
                 "status": "failed",
                 "trace_id": trace_id,
                 "reason": "market_not_found",
+                "order": self._serialize_order(source_order),
             }
-        if not _market_status_allowed_for_manual_sell(market):
+        if not _market_status_allowed_for_manual_order(market):
             return {
                 "status": "failed",
                 "trace_id": trace_id,
                 "reason": "market_not_operable",
                 "market": self._serialize_market(market),
+                "order": self._serialize_order(source_order),
             }
         if new_price <= Decimal("0") or new_price >= Decimal("1"):
             return {
@@ -799,6 +818,7 @@ class AdminService:
                 "trace_id": trace_id,
                 "reason": "invalid_price",
                 "market": self._serialize_market(market),
+                "order": self._serialize_order(source_order),
             }
         if market.tick_size <= Decimal("0"):
             return {
@@ -806,6 +826,7 @@ class AdminService:
                 "trace_id": trace_id,
                 "reason": "invalid_tick_size",
                 "market": self._serialize_market(market),
+                "order": self._serialize_order(source_order),
             }
         tick_remainder = (new_price % market.tick_size) if market.tick_size else Decimal("0")
         if tick_remainder != Decimal("0"):
@@ -814,106 +835,71 @@ class AdminService:
                 "trace_id": trace_id,
                 "reason": "price_not_aligned_to_tick_size",
                 "market": self._serialize_market(market),
+                "order": self._serialize_order(source_order),
                 "new_price": _decimal_text(new_price),
             }
 
-        account = self._account_snapshot()
-        position = account.get_position(market.condition_id, market.no_token_id)
-        if position is None or position.shares <= Decimal("0"):
+        requested_size_shares = size_shares or _order_open_shares(source_order)
+        if requested_size_shares is None or requested_size_shares <= Decimal("0"):
             return {
                 "status": "failed",
                 "trace_id": trace_id,
-                "reason": "no_position_to_sell",
+                "reason": "order_size_unknown",
                 "market": self._serialize_market(market),
+                "order": self._serialize_order(source_order),
             }
 
         try:
             trading_service = self._trading_service()
-            strategy_service = self._strategy_service()
         except RuntimeError as exc:
             return {
                 "status": "failed",
                 "trace_id": trace_id,
                 "reason": str(exc),
                 "market": self._serialize_market(market),
-            }
-        open_sell_orders = account.open_sell_orders_for_market(market.condition_id, market.no_token_id)
-        cancelled_orders: list[dict[str, Any]] = []
-        failed_cancels: list[dict[str, Any]] = []
-
-        for order in open_sell_orders:
-            cancel_intent = strategy_service.build_cancel_intent(
-                trace_id=trace_id,
-                condition_id=market.condition_id,
-                no_token_id=market.no_token_id,
-                order_id=order.order_id or order.idempotency_key or f"{market.condition_id}:{market.no_token_id}:sell",
-                market_slug=market.market_slug,
-                reason=reason,
-            )
-            cancel_review = await trading_service.cancel(cancel_intent)
-            cancelled_orders.append(self._serialize_review(cancel_review))
-            cancel_result = cancel_review.order_result
-            if cancel_result is None or not _order_status_is_terminal(cancel_result.status):
-                failed_cancels.append(
-                    {
-                        "order": self._serialize_order(order),
-                        "review": self._serialize_review(cancel_review),
-                    }
-                )
-                break
-            self._remove_hot_order(order)
-
-        if failed_cancels:
-            return {
-                "status": "failed",
-                "trace_id": trace_id,
-                "reason": "cancel_failed",
-                "market": self._serialize_market(market),
-                "cancelled_orders": cancelled_orders,
-                "failed_cancels": failed_cancels,
+                "order": self._serialize_order(source_order),
             }
 
-        account = self._account_snapshot()
-        sell_intent = SellOrderIntent(
+        replace_intent = ReplaceOrderIntent(
             trace_id=trace_id,
-            condition_id=market.condition_id,
-            token_id=market.no_token_id,
-            price=new_price,
-            size_shares=position.shares,
-            market_slug=market.market_slug,
+            condition_id=source_order.condition_id,
+            token_id=source_order.token_id,
+            order_id=_normalize_order_id(source_order),
+            new_price=new_price,
+            size_shares=requested_size_shares,
+            market_slug=source_order.market_slug or market.market_slug,
+            reason=reason,
         )
-        sell_review = await trading_service.sell(
-            sell_intent,
-            market=market,
-            position=position,
-            open_orders=account.open_orders_for_market(market.condition_id, market.no_token_id),
-            balance_usdc=account.balance_usdc,
-            allowance_usdc=account.allowance_usdc,
-            max_order_usdc=None,
-            max_market_usdc=None,
-            max_total_usdc=None,
-            max_open_orders=None,
-        )
-        sell_result = sell_review.order_result
-        if sell_result is None or sell_result.status == OrderResultStatus.FAILED:
+        replace_review = await trading_service.replace(replace_intent)
+        replace_result = replace_review.order_result
+        if replace_result is None or replace_result.status in {
+            OrderResultStatus.FAILED,
+            OrderResultStatus.REJECTED,
+        }:
             return {
                 "status": "failed",
                 "trace_id": trace_id,
-                "reason": "replace_sell_failed",
+                "reason": "replace_order_failed",
                 "market": self._serialize_market(market),
-                "cancelled_orders": cancelled_orders,
-                "replace_review": self._serialize_review(sell_review),
+                "order": self._serialize_order(source_order),
+                "replace_review": self._serialize_review(replace_review),
             }
 
-        self._apply_hot_sell_result(market, sell_result, operator=operator, reason=reason)
+        self._apply_hot_replace_result(
+            market,
+            source_order=source_order,
+            result=replace_result,
+            operator=operator,
+            reason=reason,
+        )
         return {
             "status": "ok",
             "trace_id": trace_id,
             "operator": operator,
             "market": self._serialize_market(market),
-            "cancelled_orders": cancelled_orders,
-            "replace_review": self._serialize_review(sell_review),
-            "replace_order_submitted": self._serialize_order_result(sell_result),
+            "order": self._serialize_order(source_order),
+            "replace_review": self._serialize_review(replace_review),
+            "replace_order_submitted": self._serialize_order_result(replace_result),
         }
 
     def _runtime_status_snapshot(self) -> dict[str, Any]:
@@ -1229,12 +1215,56 @@ class AdminService:
             account_snapshot = self._account_snapshot()
         if registry_snapshot is None:
             registry_snapshot = self._registry_snapshot()
-        orderbook = self._market_ws_snapshot(market.no_token_id)
-        position = account_snapshot.get_position(market.condition_id, market.no_token_id)
-        open_orders = account_snapshot.open_orders_for_market(market.condition_id, market.no_token_id)
+        no_view = self._serialize_token_view(
+            market,
+            token_id=market.no_token_id,
+            outcome="NO",
+            orderbook=self._market_ws_snapshot(market.no_token_id),
+            account_snapshot=account_snapshot,
+        )
+        yes_view = self._serialize_token_view(
+            market,
+            token_id=market.yes_token_id,
+            outcome="YES",
+            orderbook=yes_orderbook,
+            account_snapshot=account_snapshot,
+        )
+        token_views = [view for view in (no_view, yes_view) if view is not None]
         return {
             "market": self._serialize_market(market),
             "tracked": registry_snapshot.get_by_condition_id(market.condition_id) is not None,
+            "token_views": token_views,
+            "orderbook": None if no_view is None else no_view["orderbook"],
+            "position": None if no_view is None else no_view["position"],
+            "open_orders": [] if no_view is None else no_view["open_orders"],
+            "open_order_count": 0 if no_view is None else no_view["open_order_count"],
+            "best_ask": None if no_view is None else no_view["best_ask"],
+            "best_bid": None if no_view is None else no_view["best_bid"],
+            "spread": None if no_view is None else no_view["spread"],
+            "fee_preview": None if no_view is None else no_view["fee_preview"],
+            "yes_orderbook": None if yes_view is None else yes_view["orderbook"],
+            "yes_best_ask": None if yes_view is None else yes_view["best_ask"],
+            "yes_best_bid": None if yes_view is None else yes_view["best_bid"],
+            "yes_spread": None if yes_view is None else yes_view["spread"],
+            "yes_fee_preview": None if yes_view is None else yes_view["fee_preview"],
+        }
+
+    def _serialize_token_view(
+        self,
+        market: Market,
+        *,
+        token_id: str | None,
+        outcome: str,
+        orderbook: OrderbookSnapshot | None,
+        account_snapshot: AccountSnapshot,
+    ) -> dict[str, Any] | None:
+        if token_id is None:
+            return None
+        position = account_snapshot.get_position(market.condition_id, token_id)
+        open_orders = account_snapshot.open_orders_for_market(market.condition_id, token_id)
+        return {
+            "token_id": token_id,
+            "outcome": outcome,
             "orderbook": self._serialize_orderbook(orderbook),
             "position": self._serialize_position(position) if position is not None else None,
             "open_orders": [self._serialize_order(order) for order in open_orders],
@@ -1246,16 +1276,6 @@ class AdminService:
                 build_taker_fee_preview(
                     market=market,
                     orderbook=orderbook,
-                )
-            ),
-            "yes_orderbook": self._serialize_orderbook(yes_orderbook),
-            "yes_best_ask": _decimal_text(yes_orderbook.best_ask) if yes_orderbook is not None else None,
-            "yes_best_bid": _decimal_text(yes_orderbook.best_bid) if yes_orderbook is not None else None,
-            "yes_spread": _decimal_text(yes_orderbook.spread) if yes_orderbook is not None else None,
-            "yes_fee_preview": self._serialize_fee_preview(
-                build_taker_fee_preview(
-                    market=market,
-                    orderbook=yes_orderbook,
                 )
             ),
         }
@@ -1689,12 +1709,6 @@ class AdminService:
             raise RuntimeError("trading_service unavailable")
         return trading_service
 
-    def _strategy_service(self) -> StrategyService:
-        strategy_service = getattr(self.runtime, "strategy_service", None)
-        if strategy_service is None:
-            raise RuntimeError("strategy_service unavailable")
-        return strategy_service
-
     def _resolve_market(
         self,
         *,
@@ -1748,72 +1762,169 @@ class AdminService:
         sliced = tuple(items[offset : offset + limit])
         return RepositoryPage(items=sliced, total=len(items), limit=limit, offset=offset)
 
+    def _find_open_order(
+        self,
+        snapshot: AccountSnapshot,
+        *,
+        order_id: str,
+        market_slug: str | None = None,
+        condition_id: str | None = None,
+        token_id: str | None = None,
+    ) -> Order | None:
+        matches = [
+            order
+            for order in snapshot.open_orders
+            if order.open
+            and order_id in {_normalize_order_id(order), order.order_id, order.idempotency_key}
+            and (market_slug is None or order.market_slug == market_slug)
+            and (condition_id is None or order.condition_id == condition_id)
+            and (token_id is None or order.token_id == token_id)
+        ]
+        if len(matches) != 1:
+            return None
+        return matches[0]
+
     def _remove_hot_order(self, order: Order) -> None:
         account_state = getattr(self.runtime, "account_state_store", None)
         if account_state is None:
             return
-        order_id = order.order_id or order.idempotency_key or f"{order.condition_id}:{order.token_id}:{order.side.value}"
+        order_id = _normalize_order_id(order)
         account_state.remove_order(order_id)
 
-    def _apply_hot_sell_result(
+    def _apply_hot_replace_result(
         self,
         market: Market,
-        result: OrderResult,
         *,
+        source_order: Order,
+        result: OrderResult,
         operator: str,
         reason: str,
     ) -> None:
         account_state = getattr(self.runtime, "account_state_store", None)
         if account_state is None:
             return
-        open_sell_shares = result.remaining_shares
-        if result.status == OrderResultStatus.LIVE and open_sell_shares <= Decimal("0"):
-            open_sell_shares = result.requested_size_shares or Decimal("0")
-        if open_sell_shares < Decimal("0"):
-            open_sell_shares = Decimal("0")
-        order_id = result.order_id or result.trace_id
-        account_state.upsert_order(
-            Order(
-                trace_id=result.trace_id,
-                condition_id=result.condition_id,
-                token_id=result.token_id,
-                market_slug=market.market_slug,
-                side=OrderSide.SELL,
-                order_type=OrderType.GTC,
-                price=result.price or Decimal("0"),
-                size_shares=result.requested_size_shares,
-                filled_shares=result.matched_shares,
-                remaining_shares=open_sell_shares,
-                notional_usdc=result.notional_usdc,
-                order_id=order_id,
-                trade_id=result.trade_id,
-                status=_order_result_to_order_status(result),
-                idempotency_key=result.intent.idempotency_key if result.intent is not None else order_id,
-                reason=f"{reason}:{operator}",
-                post_only=bool(getattr(result.intent, "post_only", False)),
-                created_at=result.timestamps.queued_at,
-                updated_at=result.timestamps.ack_at,
-            )
+        self._remove_hot_order(source_order)
+        order_status = _order_result_to_order_status(result)
+        replacement_size_shares = (
+            result.requested_size_shares
+            or _order_open_shares(source_order)
+            or source_order.size_shares
         )
-        position = account_state.snapshot().get_position(market.condition_id, market.no_token_id)
-        if position is not None:
-            account_state.upsert_position(
-                Position(
-                    condition_id=position.condition_id,
-                    token_id=position.token_id,
-                    shares=position.shares,
-                    cost_usdc=position.cost_usdc,
-                    market_slug=position.market_slug or market.market_slug,
-                    open_buy_shares=position.open_buy_shares,
-                    open_sell_shares=open_sell_shares,
-                    pending_buy_shares=position.pending_buy_shares,
-                    confirmed_shares=position.confirmed_shares,
-                    last_order_id=order_id,
-                    last_trade_id=result.trade_id,
-                    confirmation_status=_order_status_to_text(result.status),
+        replacement_remaining = result.remaining_shares
+        if (
+            result.status in {OrderResultStatus.LIVE, OrderResultStatus.PARTIAL_FILL}
+            and replacement_remaining <= Decimal("0")
+            and replacement_size_shares is not None
+        ):
+            replacement_remaining = max(replacement_size_shares - result.matched_shares, Decimal("0"))
+        if replacement_remaining < Decimal("0"):
+            replacement_remaining = Decimal("0")
+
+        if order_status in {
+            OrderStatus.CREATED,
+            OrderStatus.SIGNED,
+            OrderStatus.SUBMITTED,
+            OrderStatus.LIVE,
+            OrderStatus.MATCHED,
+            OrderStatus.PARTIALLY_FILLED,
+        }:
+            order_id = result.order_id or result.trace_id
+            replacement_side = result.side or source_order.side
+            replacement_order_type = result.order_type or source_order.order_type
+            replacement_price = result.price or source_order.price
+            amount_usdc = result.requested_amount_usdc
+            if amount_usdc is None and replacement_side == OrderSide.BUY:
+                amount_usdc = source_order.amount_usdc
+            notional_usdc = result.notional_usdc
+            if (
+                notional_usdc == Decimal("0")
+                and replacement_size_shares is not None
+                and replacement_price is not None
+            ):
+                notional_usdc = replacement_price * replacement_size_shares
+            account_state.upsert_order(
+                Order(
+                    trace_id=result.trace_id,
+                    condition_id=result.condition_id,
+                    token_id=result.token_id,
+                    market_slug=source_order.market_slug or market.market_slug,
+                    side=replacement_side,
+                    order_type=replacement_order_type,
+                    price=replacement_price,
+                    amount_usdc=amount_usdc,
+                    size_shares=replacement_size_shares,
+                    filled_shares=result.matched_shares,
+                    remaining_shares=replacement_remaining,
+                    notional_usdc=notional_usdc,
+                    order_id=order_id,
+                    trade_id=result.trade_id,
+                    status=order_status,
+                    idempotency_key=result.intent.idempotency_key if result.intent is not None else order_id,
+                    reason=f"{reason}:{operator}",
+                    post_only=bool(getattr(result.intent, "post_only", False)),
+                    created_at=result.timestamps.queued_at,
                     updated_at=result.timestamps.ack_at,
                 )
             )
+
+        self._refresh_hot_position_coverage(
+            condition_id=source_order.condition_id,
+            token_id=source_order.token_id,
+            market_slug=source_order.market_slug or market.market_slug,
+            last_order_id=result.order_id or result.trace_id,
+            last_trade_id=result.trade_id,
+            confirmation_status=_order_status_to_text(result.status),
+            updated_at=result.timestamps.ack_at,
+        )
+
+    def _refresh_hot_position_coverage(
+        self,
+        *,
+        condition_id: str,
+        token_id: str,
+        market_slug: str | None,
+        last_order_id: str | None,
+        last_trade_id: str | None,
+        confirmation_status: str,
+        updated_at: datetime | None,
+    ) -> None:
+        account_state = getattr(self.runtime, "account_state_store", None)
+        if account_state is None:
+            return
+        snapshot = account_state.snapshot()
+        position = snapshot.get_position(condition_id, token_id)
+        open_buy_shares = sum(
+            _order_open_shares(order) or Decimal("0")
+            for order in snapshot.open_buy_orders_for_market(condition_id, token_id)
+        )
+        open_sell_shares = snapshot.open_sell_shares_for_market(condition_id, token_id)
+        pending_buy_shares = open_buy_shares
+        if position is None and open_buy_shares <= Decimal("0") and open_sell_shares <= Decimal("0"):
+            return
+        current_position = position or Position(
+            condition_id=condition_id,
+            token_id=token_id,
+            shares=Decimal("0"),
+            cost_usdc=Decimal("0"),
+            market_slug=market_slug,
+        )
+        account_state.upsert_position(
+            Position(
+                condition_id=current_position.condition_id,
+                token_id=current_position.token_id,
+                shares=current_position.shares,
+                cost_usdc=current_position.cost_usdc,
+                market_slug=current_position.market_slug or market_slug,
+                open_buy_shares=open_buy_shares,
+                open_sell_shares=open_sell_shares,
+                pending_buy_shares=pending_buy_shares,
+                confirmed_shares=current_position.confirmed_shares,
+                last_order_id=last_order_id,
+                last_trade_id=last_trade_id,
+                confirmation_status=confirmation_status,
+                updated_at=updated_at,
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)

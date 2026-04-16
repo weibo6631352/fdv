@@ -20,7 +20,6 @@ from polymarket_trader.config import Settings
 from polymarket_trader.domain.events import AuditEvent, Fill, OutboxEvent
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.order import (
-    CancelOrderIntent,
     ExecutionTimestamps,
     OrderRecord,
     OrderResult,
@@ -28,7 +27,7 @@ from polymarket_trader.domain.order import (
     OrderSide,
     OrderStatus,
     OrderType,
-    SellOrderIntent,
+    ReplaceOrderIntent,
 )
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
@@ -63,7 +62,7 @@ EXPECTED_ADMIN_ROUTES = {
     ("GET", "/markets/midpoint"),
     ("GET", "/markets/prices-history"),
     ("GET", "/orders"),
-    ("POST", "/orders/cancel-replace-sell"),
+    ("POST", "/orders/replace"),
     ("GET", "/fills"),
     ("GET", "/positions"),
     ("GET", "/portfolio"),
@@ -100,13 +99,6 @@ class FakeTradeReview:
     risk_decision: object | None
     order_result: OrderResult | None
     submission_error: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class FakeRiskDecision:
-    passed: bool
-    reason: str = "passed"
-    retryable: bool = False
 
 
 class FakeMarketWsWorker:
@@ -264,53 +256,12 @@ class FakeReconcileWorker:
         return self.result
 
 
-class FakeStrategyService:
-    def build_cancel_intent(
-        self,
-        *,
-        trace_id: str,
-        condition_id: str,
-        no_token_id: str,
-        order_id: str,
-        market_slug: str | None = None,
-        reason: str = "",
-    ) -> CancelOrderIntent:
-        return CancelOrderIntent(
-            trace_id=trace_id,
-            condition_id=condition_id,
-            token_id=no_token_id,
-            order_id=order_id,
-            market_slug=market_slug,
-            reason=reason,
-        )
-
-
 class FakeTradingService:
     def __init__(self) -> None:
-        self.cancel_calls: list[CancelOrderIntent] = []
-        self.sell_calls: list[SellOrderIntent] = []
+        self.replace_calls: list[ReplaceOrderIntent] = []
 
-    async def cancel(self, intent: CancelOrderIntent, *, operation: str = "cancel") -> FakeTradeReview:
-        self.cancel_calls.append(intent)
-        result = OrderResult(
-            trace_id=intent.trace_id,
-            condition_id=intent.condition_id,
-            token_id=intent.token_id,
-            market_slug=intent.market_slug,
-            status=OrderResultStatus.CANCELLED,
-            intent=intent,
-            order_id=intent.order_id,
-            reason=intent.reason or operation,
-        )
-        return FakeTradeReview(
-            operation=operation,
-            submitted=True,
-            risk_decision=None,
-            order_result=result,
-        )
-
-    async def sell(self, intent: SellOrderIntent, **kwargs: object) -> FakeTradeReview:
-        self.sell_calls.append(intent)
+    async def replace(self, intent: ReplaceOrderIntent, *, operation: str = "replace") -> FakeTradeReview:
+        self.replace_calls.append(intent)
         now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
         result = OrderResult(
             trace_id=intent.trace_id,
@@ -319,15 +270,13 @@ class FakeTradingService:
             market_slug=intent.market_slug,
             status=OrderResultStatus.LIVE,
             intent=intent,
-            order_id=f"{intent.trace_id}-sell",
-            side=OrderSide.SELL,
-            order_type=intent.order_type,
-            price=intent.price,
+            order_id=f"{intent.trace_id}-replace",
+            price=intent.new_price,
             requested_size_shares=intent.size_shares,
             matched_shares=Decimal("0"),
             remaining_shares=intent.size_shares,
-            notional_usdc=intent.notional_usdc,
-            reason="sell_submitted",
+            notional_usdc=intent.new_price * intent.size_shares,
+            reason="replace_submitted",
             timestamps=ExecutionTimestamps(
                 queued_at=now,
                 sign_started_at=now,
@@ -337,9 +286,9 @@ class FakeTradingService:
             ),
         )
         return FakeTradeReview(
-            operation="sell",
+            operation=operation,
             submitted=True,
-            risk_decision=FakeRiskDecision(passed=True),
+            risk_decision=None,
             order_result=result,
         )
 
@@ -573,7 +522,6 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
         event_bus=event_bus,
         persistence_worker=SimpleNamespace(snapshot=lambda: FakePersistenceSnapshot(outbox_depth=0)),
         supervisor=FakeSupervisor(runtime_snapshot),
-        strategy_service=FakeStrategyService(),
         trading_service=FakeTradingService(),
         reconcile_worker=FakeReconcileWorker(_reconcile_result(market)),
         bootstrap_summary={"loaded_reference": {"markets": 1, "positions": 1}},
@@ -594,8 +542,14 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         metrics = client.get("/metrics").json()
         markets = client.get("/markets").json()
         market_detail = client.get("/markets/detail", params={"market_slug": "sample-market-a"}).json()
-        market_orderbook = client.get("/markets/orderbook", params={"market_slug": "sample-market-a"}).json()
-        market_midpoint = client.get("/markets/midpoint", params={"market_slug": "sample-market-a"}).json()
+        market_orderbook = client.get(
+            "/markets/orderbook",
+            params={"market_slug": "sample-market-a", "token_id": "no-token-500m"},
+        ).json()
+        market_midpoint = client.get(
+            "/markets/midpoint",
+            params={"market_slug": "sample-market-a", "token_id": "no-token-500m"},
+        ).json()
         market_prices_history = client.get(
             "/markets/prices-history",
             params={
@@ -653,6 +607,10 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert markets["items"][0]["fee_preview"]["buy"]["fee_usdc"] == "3.02375"
         assert markets["items"][0]["fee_preview"]["sell"]["fee_usdc"] == "3.09375"
         assert markets["items"][0]["yes_orderbook"]["token_id"] == "yes-token-500m"
+        assert markets["items"][0]["token_views"][0]["token_id"] == "no-token-500m"
+        assert markets["items"][0]["token_views"][0]["outcome"] == "NO"
+        assert markets["items"][0]["token_views"][1]["token_id"] == "yes-token-500m"
+        assert markets["items"][0]["token_views"][1]["outcome"] == "YES"
         assert markets["items"][0]["yes_best_ask"] == "0.99"
         assert markets["items"][0]["yes_best_bid"] == "0.95"
         assert markets["items"][0]["yes_fee_preview"]["basis_size_shares"] == "100"
@@ -663,6 +621,8 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert market_detail["market"]["icon_url"] == "https://example.com/icon.png"
         assert market_detail["market"]["end_date"] == "2026-02-01T00:00:00+00:00"
         assert market_detail["fee_preview"]["buy"]["fee_shares"] == "5.12500"
+        assert market_detail["token_views"][0]["token_id"] == "no-token-500m"
+        assert market_detail["token_views"][1]["token_id"] == "yes-token-500m"
         assert market_detail["yes_orderbook"]["token_id"] == "yes-token-500m"
         assert market_detail["yes_fee_preview"]["buy"]["fee_shares"] == "0.12500"
         assert market_orderbook["token_id"] == "no-token-500m"
@@ -732,7 +692,7 @@ def test_admin_api_exposes_openapi_and_docs_routes() -> None:
             if path not in {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
         }
         assert set(schema["paths"]) == documented_paths
-        assert schema["paths"]["/orders/cancel-replace-sell"]["post"]
+        assert schema["paths"]["/orders/replace"]["post"]
         assert schema["paths"]["/operations/reconcile"]["post"]
 
         assert docs_response.status_code == 200
@@ -745,7 +705,7 @@ def test_admin_api_exposes_openapi_and_docs_routes() -> None:
         assert "ReDoc" in redoc_response.text
 
 
-def test_admin_api_supports_reconcile_and_cancel_replace_sell_routes() -> None:
+def test_admin_api_supports_reconcile_and_replace_routes() -> None:
     runtime = _build_runtime(ready=True)
     app = create_app(runtime=runtime, admin_service=AdminService())
 
@@ -757,10 +717,10 @@ def test_admin_api_supports_reconcile_and_cancel_replace_sell_routes() -> None:
                 "condition_ids": ["condition-500m"],
             },
         )
-        cancel_replace_response = client.post(
-            "/orders/cancel-replace-sell",
+        replace_response = client.post(
+            "/orders/replace",
             json={
-                "market_slug": "sample-market-a",
+                "order_id": "sell-1",
                 "new_price": "0.78",
                 "operator": "manual",
                 "reason": "admin_reprice",
@@ -775,14 +735,13 @@ def test_admin_api_supports_reconcile_and_cancel_replace_sell_routes() -> None:
         assert reconcile_payload["plan"]["market_plans"][0]["actions"][0]["action_type"] == "cancel_order"
         assert runtime.reconcile_worker.calls == [("trace-manual-reconcile", ("condition-500m",))]
 
-        assert cancel_replace_response.status_code == 200
-        cancel_replace_payload = cancel_replace_response.json()
-        assert cancel_replace_payload["status"] == "ok"
-        assert cancel_replace_payload["cancelled_orders"][0]["order_result"]["status"] == "cancelled"
-        assert cancel_replace_payload["replace_order_submitted"]["status"] == "live"
-        assert cancel_replace_payload["replace_order_submitted"]["price"] == "0.78"
-        assert runtime.trading_service.cancel_calls
-        assert runtime.trading_service.sell_calls
+        assert replace_response.status_code == 200
+        replace_payload = replace_response.json()
+        assert replace_payload["status"] == "ok"
+        assert replace_payload["replace_order_submitted"]["status"] == "live"
+        assert replace_payload["replace_order_submitted"]["price"] == "0.78"
+        assert replace_payload["order"]["order_id"] == "sell-1"
+        assert runtime.trading_service.replace_calls
 
         updated_portfolio = client.get("/portfolio").json()
         assert updated_portfolio["open_order_count"] == 2

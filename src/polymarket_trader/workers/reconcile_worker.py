@@ -454,6 +454,11 @@ class ReconcileWorker:
                 trade_intent.idempotency_key
                 or f"{trade_intent.trace_id}:{trade_intent.condition_id}:{trade_intent.token_id}:{trade_intent.side.value.lower()}"
             )
+            buy_open_shares = (
+                (trade_intent.amount_usdc / trade_intent.price)
+                if isinstance(trade_intent, BuyOrderIntent) and trade_intent.price > 0
+                else Decimal("0")
+            )
             current_position = account_snapshot.get_position(action.condition_id, action.token_id)
             if current_position is None:
                 current_position = Position(
@@ -462,12 +467,11 @@ class ReconcileWorker:
                     shares=Decimal("0"),
                     cost_usdc=Decimal("0"),
                     market_slug=action.market_slug,
+                    open_buy_shares=buy_open_shares,
                     open_sell_shares=(
                         trade_intent.size_shares if isinstance(trade_intent, SellOrderIntent) else Decimal("0")
                     ),
-                    pending_buy_shares=(
-                        trade_intent.amount_usdc if isinstance(trade_intent, BuyOrderIntent) else Decimal("0")
-                    ),
+                    pending_buy_shares=buy_open_shares,
                 )
             elif isinstance(trade_intent, SellOrderIntent):
                 open_sell_shares = account_snapshot.open_sell_shares_for_market(
@@ -479,14 +483,10 @@ class ReconcileWorker:
                 )
             else:
                 current_position = current_position.with_open_buy_shares(
-                    current_position.open_buy_shares + (
-                        (trade_intent.amount_usdc / trade_intent.price)
-                        if trade_intent.price > 0
-                        else Decimal("0")
-                    )
+                    current_position.open_buy_shares + buy_open_shares
                 )
                 current_position = current_position.with_pending_buy_shares(
-                    current_position.pending_buy_shares + trade_intent.amount_usdc
+                    current_position.pending_buy_shares + buy_open_shares
                 )
             self._account_state_store.upsert_order(
                 OrderRecord(
@@ -550,6 +550,7 @@ class ReconcileWorker:
             action.source_order_id,
         )
         existing_size = Decimal("0") if existing_order is None else _order_open_size(existing_order)
+        existing_shares = Decimal("0") if existing_order is None else (_order_open_shares(existing_order) or Decimal("0"))
         if action.source_order_id is not None:
             self._account_state_store.remove_order(action.source_order_id)
 
@@ -559,12 +560,16 @@ class ReconcileWorker:
         replacement_status = OrderStatus.SUBMITTED
         matched_shares = Decimal("0")
         trade_id = None
+        replacement_side = OrderSide.SELL if existing_order is None else existing_order.side
+        replacement_order_type = OrderType.GTC if existing_order is None else existing_order.order_type
         if isinstance(result, OrderResult):
             replacement_order_id = result.order_id or replacement_order_id
             replacement_price = result.price or replacement_price
             matched_shares = result.matched_shares
             trade_id = result.trade_id
             replacement_status = _order_result_to_order_status(result)
+            replacement_side = result.side or replacement_side
+            replacement_order_type = result.order_type or replacement_order_type
             replacement_remaining = result.remaining_shares
             if result.status in {OrderResultStatus.LIVE, OrderResultStatus.PARTIAL_FILL} and replacement_remaining <= Decimal(
                 "0"
@@ -585,8 +590,8 @@ class ReconcileWorker:
                     trace_id=replace_intent.trace_id,
                     condition_id=replace_intent.condition_id,
                     token_id=replace_intent.token_id,
-                    side=OrderSide.SELL,
-                    order_type=OrderType.GTC,
+                    side=replacement_side,
+                    order_type=replacement_order_type,
                     price=replacement_price,
                     market_slug=replace_intent.market_slug,
                     size_shares=replace_intent.size_shares,
@@ -597,7 +602,7 @@ class ReconcileWorker:
                     trade_id=trade_id,
                     status=replacement_status,
                     idempotency_key=replace_intent.idempotency_key or replacement_order_id,
-                    reason=replace_intent.reason or "reconcile_replace_sell",
+                    reason=replace_intent.reason or "reconcile_replace_order",
                     created_at=_utc_now(),
                     updated_at=_utc_now(),
                 )
@@ -610,10 +615,17 @@ class ReconcileWorker:
             current_position = account_snapshot.get_position(action.condition_id, action.token_id)
         if current_position is None:
             return
-        updated_open_sell = max(current_position.open_sell_shares - existing_size, Decimal("0")) + replacement_remaining
-        self._account_state_store.upsert_position(
-            current_position.with_open_sell_shares(updated_open_sell)
-        )
+        if replacement_side == OrderSide.SELL:
+            updated_open_sell = max(current_position.open_sell_shares - existing_size, Decimal("0")) + replacement_remaining
+            self._account_state_store.upsert_position(
+                current_position.with_open_sell_shares(updated_open_sell)
+            )
+        else:
+            updated_open_buy = max(current_position.open_buy_shares - existing_shares, Decimal("0")) + replacement_remaining
+            updated_position = current_position.with_open_buy_shares(updated_open_buy)
+            self._account_state_store.upsert_position(
+                updated_position.with_pending_buy_shares(updated_open_buy)
+            )
 
     async def _publish_diff(self, trace_id: str, market: Market, action: ReconcileAction) -> None:
         await self._publish(
@@ -624,7 +636,7 @@ class ReconcileWorker:
                 event_id=uuid4().hex,
                 market_slug=market.market_slug,
                 condition_id=market.condition_id,
-                token_id=market.no_token_id,
+                token_id=action.token_id,
                 reason=action.reason,
                 created_at=_utc_now(),
                 payload={
@@ -1078,6 +1090,14 @@ def _order_open_size(order: Order) -> Decimal:
     if order.amount_usdc is not None:
         return max(order.amount_usdc, Decimal("0"))
     return Decimal("0")
+
+
+def _order_open_shares(order: Order) -> Decimal | None:
+    if order.remaining_shares is not None:
+        return max(order.remaining_shares, Decimal("0"))
+    if order.size_shares is not None:
+        return max(order.size_shares, Decimal("0"))
+    return None
 
 
 def _order_result_to_order_status(result: OrderResult) -> OrderStatus:

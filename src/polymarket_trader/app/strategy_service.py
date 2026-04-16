@@ -18,7 +18,6 @@ from polymarket_trader.domain.order import (
 )
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.domain.position import Position
-from polymarket_trader.domain.strategy import StrategyEngine
 from polymarket_trader.observability.trace import ensure_trace_id
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistry
@@ -40,12 +39,10 @@ class StrategyService:
         self,
         *,
         strategy_module: StrategyModule,
-        strategy_engine: StrategyEngine | None = None,
         registry: MarketRegistry | None = None,
         orderbook_reader: OrderbookReader | None = None,
     ) -> None:
         self._strategy_module = strategy_module
-        self._strategy_engine = strategy_engine or StrategyEngine()
         self._registry = registry
         self._orderbook_reader = orderbook_reader
 
@@ -163,6 +160,13 @@ class StrategyService:
                 ),
                 entry_candidates=entry_candidates,
                 now=resolved_orderbook.received_at,
+                portfolio_budget_usdc=portfolio_budget_usdc,
+                available_usdc=(
+                    available_usdc if available_usdc is not None else portfolio_budget_usdc
+                ),
+                max_order_usdc=max_order_usdc,
+                max_market_usdc=max_market_usdc,
+                max_total_usdc=max_total_usdc,
                 metadata={
                     "portfolio_budget_usdc": portfolio_budget_usdc,
                     "available_usdc": (
@@ -203,6 +207,14 @@ class StrategyService:
                         position=focus_position,
                         open_orders=focus_open_orders,
                         now=resolved_orderbook.received_at,
+                        portfolio_budget_usdc=portfolio_budget_usdc,
+                        available_usdc=available_usdc,
+                        max_order_usdc=max_order_usdc,
+                        max_market_usdc=max_market_usdc,
+                        max_total_usdc=max_total_usdc,
+                        allocation_plan=plan,
+                        allocation=allocation,
+                        amount_usdc=allocation.buy_budget_usdc,
                         metadata={
                             "allocation": allocation,
                             "allocation_plan": plan,
@@ -233,81 +245,6 @@ class StrategyService:
             allocation=allocation,
             intent=intent,
             eligible_market_count=plan.eligible_market_count,
-            reason=reason,
-        )
-
-    def build_sell_intent(
-        self,
-        *,
-        trace_id: str,
-        condition_id: str,
-        token_id: str,
-        size_shares: Decimal,
-        market_slug: str | None = None,
-    ) -> SellOrderIntent:
-        market = self._resolve_market(condition_id=condition_id, token_id=token_id)
-        decision = self._strategy_module.decide_exit(
-            StrategyContext(
-                trace_id=trace_id,
-                market=market,
-                token_id=token_id,
-                open_orders=(),
-                metadata={
-                    "size_shares": size_shares,
-                    "market_slug": market_slug,
-                },
-            )
-        )
-        intent = _decision_to_sell_intent(
-            trace_id=trace_id,
-            condition_id=condition_id,
-            market_slug=market_slug,
-            token_id=token_id,
-            decision=decision,
-        )
-        if intent is None:
-            raise ValueError("strategy did not return a valid SELL decision")
-        return intent
-
-    def build_cancel_intent(
-        self,
-        *,
-        trace_id: str,
-        condition_id: str,
-        token_id: str,
-        order_id: str,
-        market_slug: str | None = None,
-        reason: str = "",
-    ) -> CancelOrderIntent:
-        return self._strategy_engine.build_cancel_intent(
-            trace_id=trace_id,
-            condition_id=condition_id,
-            token_id=token_id,
-            order_id=order_id,
-            market_slug=market_slug,
-            reason=reason,
-        )
-
-    def build_replace_intent(
-        self,
-        *,
-        trace_id: str,
-        condition_id: str,
-        token_id: str,
-        order_id: str,
-        new_price: Decimal,
-        size_shares: Decimal,
-        market_slug: str | None = None,
-        reason: str = "",
-    ) -> ReplaceOrderIntent:
-        return self._strategy_engine.build_replace_intent(
-            trace_id=trace_id,
-            condition_id=condition_id,
-            token_id=token_id,
-            order_id=order_id,
-            new_price=new_price,
-            size_shares=size_shares,
-            market_slug=market_slug,
             reason=reason,
         )
 
@@ -550,23 +487,3 @@ def decision_to_managed_intent(
             reason=decision.reason,
         )
     return None
-
-
-def _decision_to_sell_intent(
-    *,
-    trace_id: str,
-    condition_id: str,
-    market_slug: str | None,
-    token_id: str | None,
-    decision: StrategyDecision,
-) -> SellOrderIntent | None:
-    intent = decision_to_managed_intent(
-        trace_id=trace_id,
-        condition_id=condition_id,
-        market_slug=market_slug,
-        default_token_id=token_id,
-        decision=decision,
-    )
-    if not isinstance(intent, SellOrderIntent):
-        return None
-    return intent

@@ -14,7 +14,7 @@
 ## 运行链路分类
 
 - 交易主链路：Orderbook Watcher、Strategy Worker、Risk Manager、Order Executor、User WS 中的订单 / 成交状态更新。
-- 关键修复链路：取消异常 open BUY、补挂缺失 SELL 等必须优先处理的修复动作。
+- 关键修复链路：取消异常 open order、补挂缺失订单、replace 漂移订单等必须优先处理的修复动作。
 - 后台维护链路：Market Discovery、周期 reconcile、余额和 allowance 周期检查。
 - 异步支撑链路：Persistence Worker、指标聚合、Admin 普通查询、报表。
 

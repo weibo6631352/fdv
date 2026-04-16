@@ -104,6 +104,15 @@ class StrategyContext:
     entry_candidates: tuple["EntryCandidate", ...] = ()
     order_result: OrderResult | None = None
     now: datetime | None = None
+    portfolio_budget_usdc: Decimal | None = None
+    available_usdc: Decimal | None = None
+    max_order_usdc: Decimal | None = None
+    max_market_usdc: Decimal | None = None
+    max_total_usdc: Decimal | None = None
+    allocation_plan: AllocationPlan | None = None
+    allocation: Allocation | None = None
+    amount_usdc: Decimal | None = None
+    size_shares: Decimal | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 

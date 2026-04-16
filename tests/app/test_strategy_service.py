@@ -52,12 +52,12 @@ class _CustomSizingStrategy:
 
     def decide_entry(self, context: StrategyContext) -> StrategyDecision:
         assert context.market is not None
-        amount_usdc = Decimal(str(context.metadata["buy_budget_usdc"]))
+        assert context.amount_usdc is not None
         return StrategyDecision.buy(
             reason="custom_entry",
             token_id=context.token_id or context.market.no_token_id,
             price=Decimal("0.43"),
-            amount_usdc=amount_usdc,
+            amount_usdc=context.amount_usdc,
             market_slug=context.market.market_slug,
         )
 

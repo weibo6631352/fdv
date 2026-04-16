@@ -165,7 +165,15 @@ def _serialize_plan(plan: StrategyEntryPlan) -> dict[str, Any]:
         else {
             "condition_id": plan.market.condition_id,
             "market_slug": plan.market.market_slug,
-            "token_id": plan.market.no_token_id,
+            "token_id": (
+                None
+                if plan.intent is None
+                else plan.intent.token_id
+            ) or (
+                None
+                if plan.allocation is None
+                else plan.allocation.token_id
+            ),
         },
         "allocation_plan": {
             "trace_id": plan.allocation_plan.trace_id,
@@ -178,6 +186,7 @@ def _serialize_plan(plan: StrategyEntryPlan) -> dict[str, Any]:
         if plan.allocation is None
         else {
             "condition_id": plan.allocation.condition_id,
+            "token_id": plan.allocation.token_id,
             "target_budget_usdc": str(plan.allocation.target_budget_usdc),
             "buy_budget_usdc": str(plan.allocation.buy_budget_usdc),
             "reason": plan.allocation.reason,
@@ -189,7 +198,8 @@ def _serialize_plan(plan: StrategyEntryPlan) -> dict[str, Any]:
             "condition_id": plan.intent.condition_id,
             "token_id": plan.intent.token_id,
             "price": str(plan.intent.price),
-            "amount_usdc": str(plan.intent.amount_usdc),
+            "amount_usdc": None if getattr(plan.intent, "amount_usdc", None) is None else str(plan.intent.amount_usdc),
+            "size_shares": None if getattr(plan.intent, "size_shares", None) is None else str(plan.intent.size_shares),
             "market_slug": plan.intent.market_slug,
             "order_type": plan.intent.order_type.value,
         },

@@ -97,14 +97,14 @@
 4. 保留订单和成交事件，合并或丢弃低价值快照事件。
 5. 恢复后补写指标和运维记录。
 
-## 人工 SELL cancel + replace
+## 人工 replace open order
 
 症状：
-- open SELL 价格需要人工调整。
-- 自动 SELL 修复未满足业务预期，但持仓和市场状态明确。
+- 某张 open order 的价格需要人工调整。
+- 自动修复未满足业务预期，但目标订单和市场状态明确。
 
 处置：
-1. 调用 `POST /orders/cancel-replace-sell`，只传 `market_slug`、`condition_id` 或 `token_id` 之一和新的 SELL 价格。
-2. 确认返回中 `cancelled_orders` 全部进入终态。
-3. 确认 `replace_order_submitted` 返回新的 SELL 订单结果。
-4. 若失败原因是 `price_not_aligned_to_tick_size`、`no_position_to_sell` 或 `market_not_operable`，不要重试下单，先修正输入或等待状态恢复。
+1. 调用 `POST /orders/replace`，至少传 `order_id` 和新的价格；必要时补 `market_slug`、`condition_id` 或 `token_id` 辅助定位。
+2. 确认返回中的 `order` 是预期那张单。
+3. 确认 `replace_order_submitted` 返回新的订单结果。
+4. 若失败原因是 `price_not_aligned_to_tick_size`、`order_size_unknown` 或 `market_not_operable`，不要继续重试，先修正输入或等待状态恢复。

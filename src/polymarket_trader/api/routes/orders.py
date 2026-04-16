@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from polymarket_trader.api.deps import get_admin_service
 from polymarket_trader.app.admin_service import AdminService
@@ -11,20 +11,16 @@ from polymarket_trader.app.admin_service import AdminService
 router = APIRouter(prefix="/orders", tags=["orders"])
 
 
-class CancelReplaceSellRequest(BaseModel):
+class ReplaceOrderRequest(BaseModel):
+    order_id: str = Field(min_length=1)
     market_slug: str | None = None
     condition_id: str | None = None
     token_id: str | None = None
     new_price: Decimal = Field(gt=Decimal("0"), lt=Decimal("1"))
+    size_shares: Decimal | None = Field(default=None, gt=Decimal("0"))
     operator: str = "manual"
-    reason: str = "admin_cancel_replace_sell"
+    reason: str = "admin_replace_order"
     trace_id: str | None = None
-
-    @model_validator(mode="after")
-    def _validate_target(self) -> "CancelReplaceSellRequest":
-        if not any((self.market_slug, self.condition_id, self.token_id)):
-            raise ValueError("market_slug, condition_id, or token_id is required")
-        return self
 
 
 @router.get("")
@@ -51,16 +47,18 @@ async def list_orders(
     )
 
 
-@router.post("/cancel-replace-sell")
-async def cancel_replace_sell(
-    request: CancelReplaceSellRequest,
+@router.post("/replace")
+async def replace_order(
+    request: ReplaceOrderRequest,
     service: AdminService = Depends(get_admin_service),
 ) -> dict[str, object]:
-    return await service.cancel_replace_sell(
+    return await service.replace_order(
+        order_id=request.order_id,
         market_slug=request.market_slug,
         condition_id=request.condition_id,
         token_id=request.token_id,
         new_price=request.new_price,
+        size_shares=request.size_shares,
         operator=request.operator,
         reason=request.reason,
         trace_id=request.trace_id,

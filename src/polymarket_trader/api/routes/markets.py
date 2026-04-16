@@ -37,8 +37,8 @@ async def get_market_orderbook(
     token_id: str | None = Query(default=None),
     service: AdminService = Depends(get_admin_service),
 ) -> dict[str, object]:
-    if not any((market_slug, condition_id, token_id)):
-        raise HTTPException(status_code=422, detail="market_slug, condition_id, or token_id is required")
+    if token_id is None:
+        raise HTTPException(status_code=422, detail="token_id is required")
     try:
         payload = await service.get_market_orderbook(
             market_slug=market_slug,
@@ -63,8 +63,8 @@ async def get_market_midpoint(
     token_id: str | None = Query(default=None),
     service: AdminService = Depends(get_admin_service),
 ) -> dict[str, object]:
-    if not any((market_slug, condition_id, token_id)):
-        raise HTTPException(status_code=422, detail="market_slug, condition_id, or token_id is required")
+    if token_id is None:
+        raise HTTPException(status_code=422, detail="token_id is required")
     try:
         payload = await service.get_market_midpoint(
             market_slug=market_slug,

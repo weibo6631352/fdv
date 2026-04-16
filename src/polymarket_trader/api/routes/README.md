@@ -9,7 +9,7 @@
 - `audit_events.py`：暴露 `/audit-events`。
 - `allocations.py`：暴露 `/allocations`。
 - `markets.py`：market 列表、详情、orderbook、midpoint、价格历史查询。
-- `orders.py`：订单查询和 SELL cancel / replace 入口。
+- `orders.py`：订单查询和通用 order replace 入口。
 - `fills.py`：成交查询。
 - `positions.py`：持仓查询。
 - `portfolio.py`：组合预算、exposure 和分配状态查询。

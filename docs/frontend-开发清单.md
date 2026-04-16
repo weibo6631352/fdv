@@ -109,7 +109,7 @@ frontend/
 - 已建立通用 UI 组件：状态卡、数据表、筛选栏、空状态、加载态、详情面板。
 - 已接入总览页：`/ready`、`/runtime`、`/workers`、`/metrics`、`/portfolio`。
 - 已接入市场页：`/markets`、`/markets/detail`、`/markets/orderbook`、`/markets/midpoint`、`/markets/prices-history`。
-- 已接入订单页：`/orders`、`/orders/cancel-replace-sell`。
+- 已接入订单页：`/orders`、`/orders/replace`。
 - 已接入持仓页：`/positions`、`/fills`。
 - 已接入审计页：`/audit-events`、`/outbox/pending`。
 - 已接入操作页：`/operations/reconcile`。
