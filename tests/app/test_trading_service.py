@@ -8,18 +8,11 @@ from polymarket_trader.app.trading_service import TradingService
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.order import BuyOrderIntent
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
-from strategy_sdk import StrategyRuntimeProfile
 
 
 def test_trading_service_reviews_intent_with_risk_manager() -> None:
     async def run() -> None:
-        service = TradingService(
-            runtime_profile=StrategyRuntimeProfile(
-                entry_no_price_max=Decimal("0.60"),
-                min_liquidity_usdc=Decimal("5"),
-                max_spread=Decimal("0.10"),
-            )
-        )
+        service = TradingService()
         market = Market(
             condition_id="condition",
             market_slug="sample-market-a",
@@ -34,9 +27,9 @@ def test_trading_service_reviews_intent_with_risk_manager() -> None:
         orderbook = OrderbookSnapshot(
             token_id="no-token",
             best_bid=Decimal("0.55"),
-            best_ask=Decimal("0.60"),
+            best_ask=Decimal("0.43"),
             bids=(PriceLevel(price=Decimal("0.55"), size=Decimal("100")),),
-            asks=(PriceLevel(price=Decimal("0.60"), size=Decimal("100")),),
+            asks=(PriceLevel(price=Decimal("0.43"), size=Decimal("100")),),
             received_at=datetime.now(timezone.utc),
             market_slug=market.market_slug,
             condition_id=market.condition_id,
@@ -48,7 +41,7 @@ def test_trading_service_reviews_intent_with_risk_manager() -> None:
             trace_id="trace",
             condition_id=market.condition_id,
             token_id=market.no_token_id,
-            price=Decimal("0.60"),
+            price=Decimal("0.43"),
             amount_usdc=Decimal("10"),
             market_slug=market.market_slug,
         )

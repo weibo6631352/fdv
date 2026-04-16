@@ -19,6 +19,7 @@ from polymarket_trader.app.trading_service import TradingService
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, Fill, OutboxPriority
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.order import (
+    BuyOrderIntent,
     CancelOrderIntent,
     Order,
     OrderRecord,
@@ -370,17 +371,14 @@ class ReconcileWorker:
     ) -> None:
         if action.action_type == ReconcileActionType.PAUSE_TRADING:
             return
-        if action.action_type == ReconcileActionType.CANCEL_OPEN_BUY:
+        if action.action_type == ReconcileActionType.CANCEL_ORDER:
             await self._apply_cancel(action, account_snapshot)
             return
-        if action.action_type == ReconcileActionType.CANCEL_EXCESS_SELL:
-            await self._apply_cancel(action, account_snapshot)
-            return
-        if action.action_type == ReconcileActionType.REPLACE_OPEN_SELL:
+        if action.action_type == ReconcileActionType.REPLACE_ORDER:
             await self._apply_replace(action, market, account_snapshot)
             return
-        if action.action_type == ReconcileActionType.SUBMIT_MISSING_SELL:
-            await self._apply_sell(action, market, account_snapshot)
+        if action.action_type == ReconcileActionType.SUBMIT_ORDER:
+            await self._apply_submit_order(action, market, account_snapshot)
             return
         raise RuntimeError(f"unsupported reconcile action: {action.action_type}")
 
@@ -400,7 +398,7 @@ class ReconcileWorker:
             self._account_state_store.remove_order(action.source_order_id)
             position = account_snapshot.get_position(action.condition_id, action.token_id)
             if position is not None:
-                if action.action_type == ReconcileActionType.CANCEL_OPEN_BUY:
+                if action.source_order_side == OrderSide.BUY:
                     updated_position = position.with_open_buy_shares(Decimal("0"))
                     updated_position = updated_position.with_pending_buy_shares(Decimal("0"))
                 else:
@@ -414,20 +412,20 @@ class ReconcileWorker:
         if result is not None and isinstance(result, OrderResult) and result.status == OrderResultStatus.CANCELLED:
             return
 
-    async def _apply_sell(
+    async def _apply_submit_order(
         self,
         action: ReconcileAction,
         market: Market,
         account_snapshot: AccountSnapshot,
     ) -> None:
-        sell_intent = action.intent
-        if not isinstance(sell_intent, SellOrderIntent):
-            raise TypeError("sell action is missing sell intent")
+        trade_intent = action.intent
+        if not isinstance(trade_intent, (BuyOrderIntent, SellOrderIntent)):
+            raise TypeError("submit action is missing trade intent")
 
         submitted = False
         if self._trading_service is not None:
             review = await self._trading_service.review_intent(
-                sell_intent,
+                trade_intent,
                 market=market,
                 position=account_snapshot.get_position(action.condition_id, action.token_id),
                 open_orders=account_snapshot.open_orders_for_market(action.condition_id, action.token_id),
@@ -442,19 +440,19 @@ class ReconcileWorker:
                 allowance_usdc=account_snapshot.allowance_usdc,
                 max_open_orders=None,
                 min_order_size=market.min_order_size,
+                operation=trade_intent.side.value.lower(),
             )
             submitted = review.submitted
         if not submitted and self._executor is not None and hasattr(self._executor, "submit"):
-            result = self._executor.submit(sell_intent)
+            result = self._executor.submit(trade_intent)
             if hasattr(result, "__await__"):
                 result = await result
             submitted = _submission_succeeded(result)
 
         if self._account_state_store is not None and submitted:
-            order_id = sell_intent.idempotency_key or f"{sell_intent.trace_id}:{sell_intent.condition_id}:{sell_intent.token_id}:sell"
-            open_sell_shares = account_snapshot.open_sell_shares_for_market(
-                action.condition_id,
-                action.token_id,
+            order_id = (
+                trade_intent.idempotency_key
+                or f"{trade_intent.trace_id}:{trade_intent.condition_id}:{trade_intent.token_id}:{trade_intent.side.value.lower()}"
             )
             current_position = account_snapshot.get_position(action.condition_id, action.token_id)
             if current_position is None:
@@ -464,30 +462,50 @@ class ReconcileWorker:
                     shares=Decimal("0"),
                     cost_usdc=Decimal("0"),
                     market_slug=action.market_slug,
-                    open_sell_shares=sell_intent.size_shares,
-                    pending_buy_shares=Decimal("0"),
+                    open_sell_shares=(
+                        trade_intent.size_shares if isinstance(trade_intent, SellOrderIntent) else Decimal("0")
+                    ),
+                    pending_buy_shares=(
+                        trade_intent.amount_usdc if isinstance(trade_intent, BuyOrderIntent) else Decimal("0")
+                    ),
+                )
+            elif isinstance(trade_intent, SellOrderIntent):
+                open_sell_shares = account_snapshot.open_sell_shares_for_market(
+                    action.condition_id,
+                    action.token_id,
+                )
+                current_position = current_position.with_open_sell_shares(
+                    open_sell_shares + trade_intent.size_shares,
                 )
             else:
-                current_position = current_position.with_open_sell_shares(
-                    open_sell_shares + sell_intent.size_shares,
+                current_position = current_position.with_open_buy_shares(
+                    current_position.open_buy_shares + (
+                        (trade_intent.amount_usdc / trade_intent.price)
+                        if trade_intent.price > 0
+                        else Decimal("0")
+                    )
+                )
+                current_position = current_position.with_pending_buy_shares(
+                    current_position.pending_buy_shares + trade_intent.amount_usdc
                 )
             self._account_state_store.upsert_order(
                 OrderRecord(
-                    trace_id=sell_intent.trace_id,
-                    condition_id=sell_intent.condition_id,
-                    token_id=sell_intent.token_id,
-                    side=OrderSide.SELL,
-                    order_type=OrderType.GTC,
-                    price=sell_intent.price,
-                    market_slug=sell_intent.market_slug,
-                    size_shares=sell_intent.size_shares,
-                    remaining_shares=sell_intent.size_shares,
-                    notional_usdc=sell_intent.notional_usdc,
+                    trace_id=trade_intent.trace_id,
+                    condition_id=trade_intent.condition_id,
+                    token_id=trade_intent.token_id,
+                    side=trade_intent.side,
+                    order_type=trade_intent.order_type,
+                    price=trade_intent.price,
+                    market_slug=trade_intent.market_slug,
+                    size_shares=getattr(trade_intent, "size_shares", None),
+                    remaining_shares=getattr(trade_intent, "size_shares", None),
+                    amount_usdc=getattr(trade_intent, "amount_usdc", None),
+                    notional_usdc=trade_intent.notional_usdc,
                     order_id=order_id,
                     status=OrderStatus.SUBMITTED,
-                    idempotency_key=sell_intent.idempotency_key or order_id,
-                    reason="reconcile_submit_sell",
-                    post_only=sell_intent.post_only,
+                    idempotency_key=trade_intent.idempotency_key or order_id,
+                    reason="reconcile_submit_order",
+                    post_only=trade_intent.post_only,
                     created_at=_utc_now(),
                     updated_at=_utc_now(),
                 )

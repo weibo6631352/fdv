@@ -8,7 +8,6 @@ from polymarket_trader.domain.market import Market
 from polymarket_trader.domain.order import Order, OrderSide, OrderType
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.domain.position import Position
-from polymarket_trader.domain.strategy_profile import StrategyRuntimeProfile
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,11 +41,10 @@ class MarketBuyBudgetChanged:
 @dataclass(frozen=True, slots=True)
 class AllocationMarketSnapshot:
     market: Market
+    token_id: str
     orderbook: OrderbookSnapshot | None = None
     position: Position | None = None
     open_orders: tuple[Order, ...] = field(default_factory=tuple)
-    classification_passed: bool = True
-    classification_reason: str | None = None
     tradable: bool = True
     risk_allowed: bool = True
     market_active: bool = True
@@ -68,10 +66,6 @@ class AllocationMarketSnapshot:
     @property
     def market_slug(self) -> str:
         return self.market.market_slug
-
-    @property
-    def token_id(self) -> str:
-        return self.market.no_token_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,9 +107,7 @@ class AllocationPlan:
         max_order_usdc: Decimal,
         max_market_usdc: Decimal,
         max_total_usdc: Decimal,
-        runtime_profile: StrategyRuntimeProfile | None = None,
     ) -> "AllocationPlan":
-        profile = runtime_profile or StrategyRuntimeProfile()
         market_snapshots = tuple(markets)
         candidate_details: list[dict[str, object]] = []
         allocations: list[Allocation] = []
@@ -126,27 +118,15 @@ class AllocationPlan:
         for snapshot in market_snapshots:
             exposure_usdc = current_exposure_usdc(snapshot.position, snapshot.open_orders)
             total_exposure_usdc += exposure_usdc
-            skip_reason = _allocation_skip_reason(
-                snapshot,
-                runtime_profile=profile,
-            )
-            liquidity_usdc = _market_liquidity_usdc(
-                snapshot,
-                price_cap=profile.entry_no_price_max,
-            )
-            depth_usdc = _ask_depth_notional(
-                snapshot.orderbook,
-                price_cap=profile.entry_no_price_max,
-            )
+            skip_reason = _allocation_skip_reason(snapshot)
+            liquidity_usdc = _market_liquidity_usdc(snapshot)
             hard_capacity_usdc = _market_hard_capacity_usdc(
                 snapshot,
                 exposure_usdc=exposure_usdc,
                 available_usdc=available_usdc,
                 max_order_usdc=max_order_usdc,
                 max_market_usdc=max_market_usdc,
-                runtime_profile=profile,
                 liquidity_usdc=liquidity_usdc,
-                depth_usdc=depth_usdc,
             )
 
             if skip_reason:
@@ -171,7 +151,7 @@ class AllocationPlan:
                     "snapshot": snapshot,
                     "exposure_usdc": exposure_usdc,
                     "hard_capacity_usdc": hard_capacity_usdc,
-                    "depth_usdc": depth_usdc,
+                    "liquidity_usdc": liquidity_usdc,
                     "market_min_order_size": snapshot.market.min_order_size,
                     "target_budget_usdc": Decimal("0"),
                     "buy_budget_usdc": Decimal("0"),
@@ -255,7 +235,7 @@ class AllocationPlan:
                         release_reason = _capacity_release_reason(
                             available_capacity_usdc=available_capacity_usdc,
                             hard_capacity_usdc=hard_capacity_usdc,
-                            depth_usdc=candidate["depth_usdc"],
+                            liquidity_usdc=candidate["liquidity_usdc"],
                         )
 
                     if buy_budget_usdc < market_min_order_size:
@@ -377,12 +357,7 @@ def current_exposure_usdc(position: Position | None, open_orders: Iterable[Order
 
 def _allocation_skip_reason(
     snapshot: AllocationMarketSnapshot,
-    *,
-    runtime_profile: StrategyRuntimeProfile,
 ) -> str:
-    price_cap = runtime_profile.entry_no_price_max
-    if not snapshot.classification_passed:
-        return snapshot.classification_reason or "market_out_of_universe"
     if not snapshot.tradable:
         return "market_not_tradable"
     if not snapshot.market_active:
@@ -400,24 +375,6 @@ def _allocation_skip_reason(
     if not snapshot.risk_allowed:
         return "risk_limit_reached"
 
-    best_ask = _best_ask(snapshot)
-    if best_ask is None:
-        return "missing_best_ask"
-    if best_ask > price_cap:
-        return "price_above_entry_max"
-
-    liquidity_usdc = _market_liquidity_usdc(snapshot, price_cap=price_cap)
-    if liquidity_usdc < runtime_profile.min_liquidity_usdc:
-        return "liquidity_below_min"
-
-    spread = _market_spread(snapshot)
-    if (
-        runtime_profile.max_spread is not None
-        and spread is not None
-        and spread > runtime_profile.max_spread
-    ):
-        return "spread_above_max"
-
     return ""
 
 
@@ -428,14 +385,8 @@ def _market_hard_capacity_usdc(
     available_usdc: Decimal,
     max_order_usdc: Decimal,
     max_market_usdc: Decimal,
-    runtime_profile: StrategyRuntimeProfile,
     liquidity_usdc: Decimal,
-    depth_usdc: Decimal,
 ) -> Decimal:
-    best_ask = _best_ask(snapshot)
-    if best_ask is None or best_ask > runtime_profile.entry_no_price_max:
-        return Decimal("0")
-
     remaining_market_usdc = max_market_usdc - exposure_usdc
     if remaining_market_usdc < Decimal("0"):
         remaining_market_usdc = Decimal("0")
@@ -445,17 +396,8 @@ def _market_hard_capacity_usdc(
         hard_capacity_usdc = max_order_usdc
     if available_usdc < hard_capacity_usdc:
         hard_capacity_usdc = available_usdc
-    if liquidity_usdc < runtime_profile.min_liquidity_usdc:
-        return Decimal("0")
-    spread = _market_spread(snapshot)
-    if (
-        runtime_profile.max_spread is not None
-        and spread is not None
-        and spread > runtime_profile.max_spread
-    ):
-        return Decimal("0")
-    if depth_usdc < hard_capacity_usdc:
-        hard_capacity_usdc = depth_usdc
+    if liquidity_usdc < hard_capacity_usdc:
+        hard_capacity_usdc = liquidity_usdc
     if hard_capacity_usdc < Decimal("0"):
         return Decimal("0")
     return hard_capacity_usdc
@@ -463,46 +405,23 @@ def _market_hard_capacity_usdc(
 
 def _market_liquidity_usdc(
     snapshot: AllocationMarketSnapshot,
-    *,
-    price_cap: Decimal,
 ) -> Decimal:
     if snapshot.liquidity_usdc is not None:
         return snapshot.liquidity_usdc
-    return _ask_depth_notional(snapshot.orderbook, price_cap=price_cap)
-
-
-def _market_spread(snapshot: AllocationMarketSnapshot) -> Decimal | None:
-    if snapshot.spread is not None:
-        return snapshot.spread
-    if snapshot.orderbook is not None:
-        return snapshot.orderbook.spread
-    return None
-
-
-def _best_ask(snapshot: AllocationMarketSnapshot) -> Decimal | None:
-    if snapshot.best_ask is not None:
-        return snapshot.best_ask
-    if snapshot.orderbook is not None:
-        return snapshot.orderbook.best_ask
-    return None
+    return _ask_depth_notional(snapshot.orderbook)
 
 
 def _ask_depth_notional(
     orderbook: OrderbookSnapshot | None,
-    *,
-    price_cap: Decimal,
 ) -> Decimal:
     if orderbook is None:
         return Decimal("0")
     depth_usdc = Decimal("0")
     levels = orderbook.asks
     if not levels and orderbook.best_ask is not None and orderbook.best_ask_size is not None:
-        if orderbook.best_ask <= price_cap:
-            return orderbook.best_ask * orderbook.best_ask_size
-        return Decimal("0")
+        return orderbook.best_ask * orderbook.best_ask_size
     for level in levels:
-        if level.price <= price_cap:
-            depth_usdc += level.price * level.size
+        depth_usdc += level.price * level.size
     return depth_usdc
 
 
@@ -510,11 +429,11 @@ def _capacity_release_reason(
     *,
     available_capacity_usdc: Decimal,
     hard_capacity_usdc: Decimal,
-    depth_usdc: Decimal,
+    liquidity_usdc: Decimal,
 ) -> str:
     if available_capacity_usdc <= Decimal("0"):
         return "market_limit_reached"
-    if depth_usdc < hard_capacity_usdc:
+    if liquidity_usdc < hard_capacity_usdc:
         return "depth_insufficient"
     return "single_market_limit_reached"
 

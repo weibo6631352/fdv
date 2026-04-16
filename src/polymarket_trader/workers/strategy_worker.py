@@ -11,6 +11,7 @@ from polymarket_trader.app.trading_service import TradingReviewResult, TradingSe
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from polymarket_trader.domain.market import Market
 from polymarket_trader.domain.order import (
+    BuyOrderIntent,
     CancelOrderIntent,
     ManagedOrderIntent,
     Order,
@@ -18,12 +19,15 @@ from polymarket_trader.domain.order import (
     OrderResultStatus,
     OrderSide,
     OrderStatus,
+    OrderType,
+    ReplaceOrderIntent,
     SellOrderIntent,
 )
 from polymarket_trader.domain.position import Position
 from polymarket_trader.domain.state_machine import MarketLifecycle
 from polymarket_trader.runtime.account_state import AccountSnapshot, AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
+from strategy_sdk import StrategyContext
 
 PositionsProvider = Callable[[], Iterable[Position]]
 OpenOrdersProvider = Callable[[], Iterable[Order]]
@@ -61,9 +65,7 @@ class StrategyWorker:
         if strategy_service is None:
             raise ValueError("strategy_service is required")
         self._strategy_service = strategy_service
-        self._trading_service = trading_service or TradingService(
-            runtime_profile=strategy_service.runtime_profile,
-        )
+        self._trading_service = trading_service or TradingService()
         self._account_state_store = account_state_store
         self._positions_provider = positions_provider or self._build_positions_provider()
         self._open_orders_provider = open_orders_provider or self._build_open_orders_provider()
@@ -98,8 +100,6 @@ class StrategyWorker:
         snapshot = self._snapshot()
         if event_name == DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value:
             return await self._handle_orderbook_snapshot_updated(event, snapshot)
-        if event_name == DomainEventType.ENTRY_PRICE_TOUCHED.value:
-            return await self._handle_entry_price_touched(event, snapshot)
 
         order_result = _coerce_order_result_from_event(event)
         if order_result is not None:
@@ -136,7 +136,7 @@ class StrategyWorker:
                 snapshot.open_orders if snapshot is not None else tuple(self._open_orders_provider())
             ),
         )
-        if plan.market is None or plan.orderbook is None or event.token_id != plan.market.no_token_id:
+        if plan.market is None or plan.orderbook is None or event.token_id != plan.orderbook.token_id:
             return None
 
         state = self._state_for_market(plan.market)
@@ -144,33 +144,6 @@ class StrategyWorker:
             self._transition_market(plan.market, MarketLifecycle.WATCHING_ORDERBOOK)
         elif state != MarketLifecycle.WATCHING_ORDERBOOK:
             return None
-
-        if not plan.orderbook.no_entry_touched(self._strategy_service.runtime_profile.entry_no_price_max):
-            return None
-        return await self._execute_entry_plan(event=event, snapshot=snapshot, plan=plan)
-
-    async def _handle_entry_price_touched(
-        self,
-        event: DomainEvent,
-        snapshot: AccountSnapshot | None,
-    ) -> "StrategyWorkerResult":
-        plan = self._strategy_service.build_entry_plan(
-            trace_id=event.trace_id,
-            condition_id=event.condition_id,
-            token_id=event.token_id,
-            account_snapshot=snapshot,
-            portfolio_budget_usdc=self._portfolio_budget_usdc,
-            available_usdc=(
-                self._available_usdc if self._available_usdc is not None else _snapshot_balance(snapshot)
-            ),
-            max_order_usdc=self._max_order_usdc,
-            max_market_usdc=self._max_market_usdc,
-            max_total_usdc=self._max_total_usdc,
-            positions=(snapshot.positions if snapshot is not None else tuple(self._positions_provider())),
-            open_orders=(
-                snapshot.open_orders if snapshot is not None else tuple(self._open_orders_provider())
-            ),
-        )
         return await self._execute_entry_plan(event=event, snapshot=snapshot, plan=plan)
 
     async def _execute_entry_plan(
@@ -184,18 +157,18 @@ class StrategyWorker:
         open_orders = (
             snapshot.open_orders if snapshot is not None else tuple(self._open_orders_provider())
         )
-        if snapshot is not None and not snapshot.allow_new_buys:
+        if snapshot is not None and not snapshot.allow_new_entries:
             skipped = await self._publish(
                 DomainEventType.SKIPPED,
                 trace_id=event.trace_id,
                 market_slug=event.market_slug,
                 condition_id=event.condition_id,
                 token_id=event.token_id,
-                reason="buying_paused",
+                reason="entry_paused",
                 payload={
                     "entry_event_id": event.event_id,
                     "origin": _SELF_ORIGIN,
-                    "reason": "buying_paused",
+                    "reason": "entry_paused",
                     "account_snapshot": _serialize_snapshot(snapshot),
                 },
             )
@@ -209,34 +182,20 @@ class StrategyWorker:
             )
 
         if not plan.ready_to_trade or plan.intent is None or plan.market is None or plan.orderbook is None:
-            skipped = await self._publish(
-                DomainEventType.SKIPPED,
-                trace_id=plan.trace_id,
-                market_slug=plan.market.market_slug if plan.market is not None else event.market_slug,
-                condition_id=plan.market.condition_id if plan.market is not None else event.condition_id,
-                token_id=event.token_id,
-                reason=plan.reason or "allocation_skipped",
-                payload={
-                    "entry_event_id": event.event_id,
-                    "origin": _SELF_ORIGIN,
-                    "allocation_plan": _serialize_allocation_plan(plan),
-                    "allocation": _serialize_allocation(plan),
-                    "reason": plan.reason or "allocation_skipped",
-                },
-            )
-            self._transition_market(plan.market, MarketLifecycle.ENTRY_READY if plan.market else None)
+            self._transition_market(plan.market, MarketLifecycle.WATCHING_ORDERBOOK if plan.market else None)
             return StrategyWorkerResult(
                 entry_event=event,
                 plan=plan,
                 review=None,
-                emitted_event=skipped,
+                emitted_event=None,
                 state_after=self._state_for_market(plan.market),
             )
 
-        focus_position = _match_position(positions, plan.market.condition_id, plan.market.no_token_id)
-        focus_open_orders = _match_open_orders(open_orders, plan.market.condition_id, plan.market.no_token_id)
-        self._transition_market(plan.market, MarketLifecycle.BUY_SUBMITTING)
-        review = await self._trading_service.buy(
+        focus_token_id = plan.intent.token_id
+        focus_position = _match_position(positions, plan.market.condition_id, focus_token_id)
+        focus_open_orders = _match_open_orders(open_orders, plan.market.condition_id, focus_token_id)
+        self._transition_market(plan.market, MarketLifecycle.ENTRY_SUBMITTING)
+        review = await self._trading_service.review_intent(
             plan.intent,
             market=plan.market,
             orderbook=plan.orderbook,
@@ -253,6 +212,7 @@ class StrategyWorker:
             max_total_usdc=self._max_total_usdc,
             max_open_orders=self._max_open_orders,
             order_retry_limit=self._order_retry_limit,
+            operation=plan.intent.side.value.lower(),
         )
         risk_event = await self._publish(
             DomainEventType.RISK_CHECK_PASSED
@@ -261,7 +221,7 @@ class StrategyWorker:
             trace_id=plan.trace_id,
             market_slug=plan.market.market_slug,
             condition_id=plan.market.condition_id,
-            token_id=plan.market.no_token_id,
+            token_id=plan.intent.token_id,
             reason="" if review.risk_decision is None else review.risk_decision.reason,
             payload={
                 "entry_event_id": event.event_id,
@@ -331,70 +291,37 @@ class StrategyWorker:
         self._transition_from_order_result(order_result)
         follow_up_intents: list[ManagedOrderIntent] = []
         follow_up_results: list[TradingReviewResult] = []
+        active_snapshot = snapshot
+
+        if order_result.side == OrderSide.BUY and order_result.status in {
+            OrderResultStatus.FULL_FILL,
+            OrderResultStatus.PARTIAL_FILL,
+            OrderResultStatus.NO_FILL,
+        }:
+            self._update_account_state_from_buy(order_result, snapshot=snapshot)
+            active_snapshot = (
+                self._account_state_store.snapshot()
+                if self._account_state_store is not None
+                else snapshot
+            )
+        elif (
+            execution is not None
+            and isinstance(execution.intent, SellOrderIntent)
+            and order_result.side == OrderSide.SELL
+        ):
+            self._update_account_state_from_sell(
+                order_result,
+                snapshot=snapshot,
+                intent=execution.intent,
+            )
+            active_snapshot = (
+                self._account_state_store.snapshot()
+                if self._account_state_store is not None
+                else snapshot
+            )
 
         if order_result.side is not None and order_result.side.value == "BUY":
             if order_result.status in {OrderResultStatus.FULL_FILL, OrderResultStatus.PARTIAL_FILL}:
-                self._update_account_state_from_buy(order_result, snapshot=snapshot)
-                post_buy_snapshot = (
-                    self._account_state_store.snapshot()
-                    if self._account_state_store is not None
-                    else snapshot
-                )
-                filled_shares = _filled_shares(order_result)
-                if filled_shares > Decimal("0"):
-                    sell_intent = self._strategy_service.build_sell_intent(
-                        trace_id=order_result.trace_id,
-                        condition_id=order_result.condition_id,
-                        no_token_id=order_result.token_id,
-                        size_shares=filled_shares,
-                        market_slug=order_result.market_slug,
-                    )
-                    follow_up_intents.append(sell_intent)
-                    sell_review = await self._trading_service.sell(
-                        sell_intent,
-                        position=_snapshot_position(
-                            post_buy_snapshot,
-                            order_result.condition_id,
-                            order_result.token_id,
-                        ),
-                        open_orders=(
-                            post_buy_snapshot.open_orders_for_market(
-                                order_result.condition_id,
-                                order_result.token_id,
-                            )
-                            if post_buy_snapshot is not None
-                            else ()
-                        ),
-                        balance_usdc=_snapshot_balance(post_buy_snapshot),
-                        allowance_usdc=_snapshot_allowance(post_buy_snapshot),
-                        max_order_usdc=self._max_order_usdc,
-                        max_market_usdc=self._max_market_usdc,
-                        max_total_usdc=self._max_total_usdc,
-                        max_open_orders=self._max_open_orders,
-                    )
-                    follow_up_results.append(sell_review)
-                    follow_up_event = await self._publish(
-                        DomainEventType.EXIT_ORDER_SUBMITTED,
-                        trace_id=sell_intent.trace_id,
-                        market_slug=sell_intent.market_slug,
-                        condition_id=sell_intent.condition_id,
-                        token_id=sell_intent.token_id,
-                        reason=sell_review.order_result.reason if sell_review.order_result else "",
-                        payload={
-                            "origin": _SELF_ORIGIN,
-                            "source_order_result": _serialize_order_result(order_result),
-                            "sell_intent": _serialize_intent(sell_intent),
-                            "sell_review": _serialize_review(sell_review),
-                        },
-                    )
-                    if sell_review.order_result is not None:
-                        self._transition_from_order_result(sell_review.order_result)
-                        self._update_account_state_from_sell(
-                            sell_review.order_result,
-                            snapshot=post_buy_snapshot,
-                            intent=sell_intent,
-                        )
-                    result_event = follow_up_event
                 released_budget_usdc = _released_budget(order_result)
                 await self._publish(
                     DomainEventType.ORDER_STATE_UPDATED,
@@ -426,18 +353,18 @@ class StrategyWorker:
                         "order_result": _serialize_order_result(order_result),
                     },
                 )
-                self._update_account_state_from_buy(order_result, snapshot=snapshot)
                 self._transition_market_by_result(order_result, MarketLifecycle.ENTRY_READY)
-            elif order_result.has_resting_order or order_result.status == OrderResultStatus.LIVE:
+            elif _has_unexpected_resting_order(order_result):
                 await self._publish(
-                    DomainEventType.RESTING_BUY_DETECTED,
+                    DomainEventType.ORDER_STATE_UPDATED,
                     trace_id=order_result.trace_id,
                     market_slug=order_result.market_slug,
                     condition_id=order_result.condition_id,
                     token_id=order_result.token_id,
-                    reason=order_result.reason or "resting_buy_detected",
+                    reason=order_result.reason or "unexpected_resting_order",
                     payload={
                         "origin": _SELF_ORIGIN,
+                        "state": "unexpected_resting_order",
                         "order_result": _serialize_order_result(order_result),
                     },
                 )
@@ -448,7 +375,7 @@ class StrategyWorker:
                     order_id=order_result.order_id or f"{order_result.trace_id}:{order_result.condition_id}:{order_result.token_id}",
                     market_slug=order_result.market_slug,
                     idempotency_key=f"{order_result.trace_id}:{order_result.condition_id}:{order_result.token_id}:cancel",
-                    reason="resting_buy_detected",
+                    reason="unexpected_resting_order",
                 )
                 follow_up_intents.append(cancel_intent)
                 cancel_review = await self._trading_service.cancel(cancel_intent)
@@ -484,7 +411,7 @@ class StrategyWorker:
                         },
                     )
                     self._transition_from_order_result(cancel_review.order_result)
-                self._pause_market(order_result.condition_id, reason="resting_buy_detected")
+                self._pause_market(order_result.condition_id, reason="unexpected_resting_order")
             elif order_result.status in {OrderResultStatus.REJECTED, OrderResultStatus.FAILED, OrderResultStatus.UNKNOWN_TIMEOUT}:
                 await self._publish(
                     DomainEventType.ORDER_STATE_UPDATED,
@@ -499,7 +426,82 @@ class StrategyWorker:
                         "order_result": _serialize_order_result(order_result),
                     },
                 )
-                self._transition_market_by_result(order_result, MarketLifecycle.BUY_REJECTED)
+                self._transition_market_by_result(order_result, MarketLifecycle.ENTRY_REJECTED)
+
+        follow_up_decisions = self._strategy_service.decide_follow_up(
+            StrategyContext(
+                trace_id=order_result.trace_id,
+                market=self._strategy_service._resolve_market(
+                    condition_id=order_result.condition_id,
+                    token_id=order_result.token_id,
+                ),
+                token_id=order_result.token_id,
+                account_snapshot=active_snapshot,
+                position=_snapshot_position(
+                    active_snapshot,
+                    order_result.condition_id,
+                    order_result.token_id,
+                ),
+                open_orders=(
+                    active_snapshot.open_orders_for_market(
+                        order_result.condition_id,
+                        order_result.token_id,
+                    )
+                    if active_snapshot is not None
+                    else ()
+                ),
+                order_result=order_result,
+            )
+        )
+        for decision in follow_up_decisions:
+            intent = self._strategy_service.build_intent_from_decision(
+                trace_id=order_result.trace_id,
+                condition_id=order_result.condition_id,
+                market_slug=order_result.market_slug,
+                default_token_id=order_result.token_id,
+                decision=decision,
+            )
+            if intent is None:
+                continue
+            follow_up_intents.append(intent)
+            follow_up_review = await self._execute_managed_intent(
+                intent,
+                snapshot=active_snapshot,
+            )
+            follow_up_results.append(follow_up_review)
+            follow_up_event = await self._publish(
+                DomainEventType.ORDER_SUBMITTED,
+                trace_id=intent.trace_id,
+                market_slug=intent.market_slug,
+                condition_id=intent.condition_id,
+                token_id=intent.token_id,
+                reason="" if follow_up_review.order_result is None else follow_up_review.order_result.reason,
+                payload={
+                    "origin": _SELF_ORIGIN,
+                    "phase": "follow_up",
+                    "source_order_result": _serialize_order_result(order_result),
+                    "intent": _serialize_intent(intent),
+                    "review": _serialize_review(follow_up_review),
+                },
+            )
+            if follow_up_review.order_result is not None:
+                self._transition_from_order_result(follow_up_review.order_result)
+                if isinstance(intent, SellOrderIntent):
+                    self._update_account_state_from_sell(
+                        follow_up_review.order_result,
+                        snapshot=active_snapshot,
+                        intent=intent,
+                    )
+                self._update_account_state_from_order_result(
+                    follow_up_review.order_result,
+                    snapshot=active_snapshot,
+                )
+                active_snapshot = (
+                    self._account_state_store.snapshot()
+                    if self._account_state_store is not None
+                    else active_snapshot
+                )
+            result_event = follow_up_event
 
         self._update_account_state_from_order_result(order_result, snapshot=snapshot)
         return StrategyWorkerResult(
@@ -577,7 +579,7 @@ class StrategyWorker:
             allowance_usdc=self._allowance_usdc or Decimal("0"),
             positions=tuple(self._positions_provider()),
             open_orders=tuple(self._open_orders_provider()),
-            allow_new_buys=True,
+            allow_new_entries=True,
         )
 
     def _build_positions_provider(self) -> PositionsProvider:
@@ -611,10 +613,10 @@ class StrategyWorker:
             elif order_result.status == OrderResultStatus.NO_FILL:
                 self._transition_market_by_result(order_result, MarketLifecycle.ENTRY_READY)
             elif order_result.status in {OrderResultStatus.REJECTED, OrderResultStatus.FAILED, OrderResultStatus.UNKNOWN_TIMEOUT}:
-                self._transition_market_by_result(order_result, MarketLifecycle.BUY_REJECTED)
+                self._transition_market_by_result(order_result, MarketLifecycle.ENTRY_REJECTED)
         elif side == "SELL":
             if order_result.status in {OrderResultStatus.LIVE, OrderResultStatus.PARTIAL_FILL}:
-                self._transition_market_by_result(order_result, MarketLifecycle.EXIT_ORDER_OPEN)
+                self._transition_market_by_result(order_result, MarketLifecycle.FOLLOW_UP_ORDER_OPEN)
             elif order_result.status == OrderResultStatus.FULL_FILL:
                 self._transition_market_by_result(order_result, MarketLifecycle.POSITION_OPEN)
 
@@ -775,12 +777,11 @@ class StrategyWorker:
     ) -> None:
         if self._account_state_store is None:
             return
-        if order_result.side is not None and str(order_result.side).upper() == "BUY":
-            if order_result.status == OrderResultStatus.LIVE:
-                self._account_state_store.set_allow_new_buys(False)
-                self._pause_market(order_result.condition_id, reason="resting_buy_detected")
+        if _has_unexpected_resting_order(order_result):
+            self._account_state_store.set_allow_new_entries(False)
+            self._pause_market(order_result.condition_id, reason="unexpected_resting_order")
         if order_result.status in {OrderResultStatus.REJECTED, OrderResultStatus.FAILED, OrderResultStatus.UNKNOWN_TIMEOUT}:
-            self._account_state_store.set_allow_new_buys(True)
+            self._account_state_store.set_allow_new_entries(True)
         if snapshot is not None:
             self._account_state_store.update_balances(
                 balance_usdc=snapshot.balance_usdc,
@@ -800,6 +801,43 @@ class StrategyWorker:
             return None
         market = self._strategy_service._resolve_market(condition_id=condition_id, token_id=token_id)
         return market
+
+    async def _execute_managed_intent(
+        self,
+        intent: ManagedOrderIntent,
+        *,
+        snapshot: AccountSnapshot | None,
+    ) -> TradingReviewResult:
+        market = self._strategy_service._resolve_market(
+            condition_id=intent.condition_id,
+            token_id=intent.token_id,
+        )
+        if isinstance(intent, CancelOrderIntent):
+            return await self._trading_service.cancel(intent)
+        if isinstance(intent, ReplaceOrderIntent):
+            return await self._trading_service.replace(intent)
+        return await self._trading_service.review_intent(
+            intent,
+            market=market,
+            orderbook=self._strategy_service._lookup_orderbook(intent.token_id),
+            position=_snapshot_position(snapshot, intent.condition_id, intent.token_id),
+            open_orders=(
+                snapshot.open_orders_for_market(intent.condition_id, intent.token_id)
+                if snapshot is not None
+                else ()
+            ),
+            classification_passed=True,
+            balance_usdc=self._balance_usdc if self._balance_usdc is not None else _snapshot_balance(snapshot),
+            allowance_usdc=(
+                self._allowance_usdc if self._allowance_usdc is not None else _snapshot_allowance(snapshot)
+            ),
+            max_order_usdc=self._max_order_usdc,
+            max_market_usdc=self._max_market_usdc,
+            max_total_usdc=self._max_total_usdc,
+            max_open_orders=self._max_open_orders,
+            order_retry_limit=self._order_retry_limit,
+            operation=intent.side.value.lower(),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -869,7 +907,7 @@ def _serialize_snapshot(snapshot: AccountSnapshot | None) -> dict[str, object] |
         "balance_usdc": str(snapshot.balance_usdc),
         "allowance_usdc": str(snapshot.allowance_usdc),
         "user_ws_connected": snapshot.user_ws_connected,
-        "allow_new_buys": snapshot.allow_new_buys,
+        "allow_new_entries": snapshot.allow_new_entries,
         "paused_markets": list(snapshot.paused_markets),
         "last_reconcile_at": (
             None if snapshot.last_reconcile_at is None else snapshot.last_reconcile_at.isoformat()
@@ -1023,7 +1061,7 @@ def _coerce_order_result_from_event(event: DomainEvent) -> OrderResult | None:
         DomainEventType.ORDER_CANCELLED,
         DomainEventType.ORDER_STATE_UPDATED,
         DomainEventType.FILL_RECORDED,
-        DomainEventType.EXIT_ORDER_SUBMITTED,
+        DomainEventType.FOLLOW_UP_ORDER_SUBMITTED,
     }:
         return None
     status = _coerce_status(status_value, event.event_type)
@@ -1072,7 +1110,7 @@ def _coerce_status(
         return OrderResultStatus.CANCELLED
     if event_name == DomainEventType.ORDER_REJECTED.value:
         return OrderResultStatus.REJECTED
-    if event_name == DomainEventType.RESTING_BUY_DETECTED.value:
+    if event_name == DomainEventType.UNEXPECTED_RESTING_ORDER_DETECTED.value:
         return OrderResultStatus.LIVE
     return OrderResultStatus.UNKNOWN_TIMEOUT
 
@@ -1130,6 +1168,13 @@ def _released_budget(order_result: OrderResult) -> Decimal:
     if released < Decimal("0"):
         return Decimal("0")
     return released
+
+
+def _has_unexpected_resting_order(order_result: OrderResult) -> bool:
+    return (
+        order_result.order_type == OrderType.FAK
+        and (order_result.has_resting_order or order_result.status == OrderResultStatus.LIVE)
+    )
 
 
 def _spent_usdc(order_result: OrderResult) -> Decimal:

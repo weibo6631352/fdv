@@ -25,6 +25,12 @@ class MarketRegistrySnapshot:
                 return market
         return None
 
+    def get_by_token_id(self, token_id: str) -> Market | None:
+        for market in self.markets:
+            if market.no_token_id == token_id or market.yes_token_id == token_id:
+                return market
+        return None
+
     def get_by_slug(self, slug: str) -> Market | None:
         for market in self.markets:
             if market.market_slug == slug or market.event_slug == slug:
@@ -38,6 +44,7 @@ class MarketRegistry:
     def __init__(self) -> None:
         self._markets_by_condition_id: dict[str, Market] = {}
         self._condition_id_by_no_token_id: dict[str, str] = {}
+        self._condition_id_by_token_id: dict[str, str] = {}
         self._condition_id_by_slug: dict[str, str] = {}
         self._snapshot = MarketRegistrySnapshot(tuple())
         self._shard_locks: dict[str, Lock] = {}
@@ -60,6 +67,12 @@ class MarketRegistry:
 
     def get_by_no_token_id(self, no_token_id: str, *, timeout: float = 0.05) -> Market | None:
         condition_id = self._condition_id_by_no_token_id.get(no_token_id)
+        if condition_id is None:
+            return None
+        return self._markets_by_condition_id.get(condition_id)
+
+    def get_by_token_id(self, token_id: str, *, timeout: float = 0.05) -> Market | None:
+        condition_id = self._condition_id_by_token_id.get(token_id)
         if condition_id is None:
             return None
         return self._markets_by_condition_id.get(condition_id)
@@ -243,14 +256,22 @@ class MarketRegistry:
         with self._commit_lock:
             markets_by_condition_id = dict(self._markets_by_condition_id)
             condition_id_by_no_token_id = dict(self._condition_id_by_no_token_id)
+            condition_id_by_token_id = dict(self._condition_id_by_token_id)
             condition_id_by_slug = dict(self._condition_id_by_slug)
 
             previous = markets_by_condition_id.get(market.condition_id)
             if previous is not None:
-                self._detach_indexes(previous, condition_id_by_no_token_id, condition_id_by_slug)
+                self._detach_indexes(
+                    previous,
+                    condition_id_by_no_token_id,
+                    condition_id_by_token_id,
+                    condition_id_by_slug,
+                )
 
             markets_by_condition_id[market.condition_id] = market
             condition_id_by_no_token_id[market.no_token_id] = market.condition_id
+            condition_id_by_token_id[market.no_token_id] = market.condition_id
+            condition_id_by_token_id[market.yes_token_id] = market.condition_id
             condition_id_by_slug[market.market_slug] = market.condition_id
             if market.event_slug:
                 condition_id_by_slug[market.event_slug] = market.condition_id
@@ -258,6 +279,7 @@ class MarketRegistry:
             self._publish_state(
                 markets_by_condition_id,
                 condition_id_by_no_token_id,
+                condition_id_by_token_id,
                 condition_id_by_slug,
             )
             return market
@@ -275,11 +297,19 @@ class MarketRegistry:
             updated = updater(current)
             markets_by_condition_id = dict(self._markets_by_condition_id)
             condition_id_by_no_token_id = dict(self._condition_id_by_no_token_id)
+            condition_id_by_token_id = dict(self._condition_id_by_token_id)
             condition_id_by_slug = dict(self._condition_id_by_slug)
 
-            self._detach_indexes(current, condition_id_by_no_token_id, condition_id_by_slug)
+            self._detach_indexes(
+                current,
+                condition_id_by_no_token_id,
+                condition_id_by_token_id,
+                condition_id_by_slug,
+            )
             markets_by_condition_id[condition_id] = updated
             condition_id_by_no_token_id[updated.no_token_id] = updated.condition_id
+            condition_id_by_token_id[updated.no_token_id] = updated.condition_id
+            condition_id_by_token_id[updated.yes_token_id] = updated.condition_id
             condition_id_by_slug[updated.market_slug] = updated.condition_id
             if updated.event_slug:
                 condition_id_by_slug[updated.event_slug] = updated.condition_id
@@ -287,6 +317,7 @@ class MarketRegistry:
             self._publish_state(
                 markets_by_condition_id,
                 condition_id_by_no_token_id,
+                condition_id_by_token_id,
                 condition_id_by_slug,
             )
             return updated
@@ -299,13 +330,20 @@ class MarketRegistry:
 
             markets_by_condition_id = dict(self._markets_by_condition_id)
             condition_id_by_no_token_id = dict(self._condition_id_by_no_token_id)
+            condition_id_by_token_id = dict(self._condition_id_by_token_id)
             condition_id_by_slug = dict(self._condition_id_by_slug)
 
-            self._detach_indexes(current, condition_id_by_no_token_id, condition_id_by_slug)
+            self._detach_indexes(
+                current,
+                condition_id_by_no_token_id,
+                condition_id_by_token_id,
+                condition_id_by_slug,
+            )
             markets_by_condition_id.pop(condition_id, None)
             self._publish_state(
                 markets_by_condition_id,
                 condition_id_by_no_token_id,
+                condition_id_by_token_id,
                 condition_id_by_slug,
             )
             return current
@@ -314,10 +352,14 @@ class MarketRegistry:
         self,
         market: Market,
         condition_id_by_no_token_id: dict[str, str],
+        condition_id_by_token_id: dict[str, str],
         condition_id_by_slug: dict[str, str],
     ) -> None:
         if condition_id_by_no_token_id.get(market.no_token_id) == market.condition_id:
             condition_id_by_no_token_id.pop(market.no_token_id, None)
+        for token_id in (market.no_token_id, market.yes_token_id):
+            if condition_id_by_token_id.get(token_id) == market.condition_id:
+                condition_id_by_token_id.pop(token_id, None)
         if condition_id_by_slug.get(market.market_slug) == market.condition_id:
             condition_id_by_slug.pop(market.market_slug, None)
         if market.event_slug and condition_id_by_slug.get(market.event_slug) == market.condition_id:
@@ -327,10 +369,12 @@ class MarketRegistry:
         self,
         markets_by_condition_id: dict[str, Market],
         condition_id_by_no_token_id: dict[str, str],
+        condition_id_by_token_id: dict[str, str],
         condition_id_by_slug: dict[str, str],
     ) -> None:
         self._markets_by_condition_id = markets_by_condition_id
         self._condition_id_by_no_token_id = condition_id_by_no_token_id
+        self._condition_id_by_token_id = condition_id_by_token_id
         self._condition_id_by_slug = condition_id_by_slug
         self._snapshot = MarketRegistrySnapshot(tuple(markets_by_condition_id.values()))
 

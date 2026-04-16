@@ -42,7 +42,7 @@ def test_build_runtime_wires_m2_components() -> None:
     assert runtime.strategy_worker is not None
     assert runtime.account_state_store is not None
     assert runtime.account_state_store.snapshot().user_ws_connected is False
-    assert runtime.account_state_store.snapshot().allow_new_buys is False
+    assert runtime.account_state_store.snapshot().allow_new_entries is False
     assert runtime.account_state_store.snapshot().last_reconcile_at is None
     assert runtime.order_executor is not None
     assert runtime.reconcile_service is not None
@@ -108,7 +108,7 @@ def test_build_runtime_binds_user_event_outbox_sink_with_trimmed_payload() -> No
                     "token_id": "no-token-500m",
                     "side": "BUY",
                     "order_type": "FAK",
-                    "price": "0.60",
+                    "price": "0.43",
                 },
                 "snapshot": {"positions": []},
             },
@@ -145,7 +145,7 @@ def test_build_runtime_binds_balance_event_outbox_sink() -> None:
                 "balance_usdc": "120",
                 "allowance_usdc": "90",
                 "user_ws_connected": True,
-                "allow_new_buys": True,
+                "allow_new_entries": True,
             },
         )
         await runtime.event_bus.publish(OutboxPriority.P0, event)
@@ -177,7 +177,7 @@ def test_build_runtime_binds_strategy_orderbook_port() -> None:
             no_token_id="no-token-1",
             yes_token_id="yes-token-1",
             category="Crypto",
-            matched_keywords=("fdv", "500m"),
+            matched_keywords=("threshold", "target"),
             trading_status=TradingStatus.ELIGIBLE,
         )
         runtime.market_ws_worker.track_market(market)
@@ -186,7 +186,7 @@ def test_build_runtime_binds_strategy_orderbook_port() -> None:
                 "type": "best_bid_ask",
                 "token_id": market.no_token_id,
                 "best_bid": "0.55",
-                "best_ask": "0.60",
+                "best_ask": "0.43",
                 "best_bid_size": "100",
                 "best_ask_size": "200",
             }
@@ -197,7 +197,7 @@ def test_build_runtime_binds_strategy_orderbook_port() -> None:
         assert ports.market is not None
         snapshot = ports.market.get_orderbook(market.no_token_id)
         assert snapshot is not None
-        assert snapshot.best_ask == Decimal("0.60")
+        assert snapshot.best_ask == Decimal("0.43")
 
     asyncio.run(run())
 
@@ -237,13 +237,13 @@ def test_execute_discovery_query_uses_keyset_cursor_pagination() -> None:
             gamma,
             DiscoveryQuery(
                 endpoint=DiscoveryEndpoint.EVENTS_KEYSET,
-                params={"active": True, "closed": False, "title_search": "fdv", "limit": 100},
+                params={"active": True, "closed": False, "title_search": "threshold", "limit": 100},
                 max_pages=2,
             ),
         )
 
         assert [payload["condition_id"] for payload in payloads] == ["condition-1", "condition-2"]
-        assert gamma.calls[0][0]["title_search"] == "fdv"
+        assert gamma.calls[0][0]["title_search"] == "threshold"
         assert "after_cursor" not in gamma.calls[0][0]
         assert gamma.calls[1][0]["after_cursor"] == "cursor-2"
 

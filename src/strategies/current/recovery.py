@@ -1,8 +1,4 @@
-"""当前策略的恢复与修复语义。
-
-这个文件负责回答一个问题：
-当账户状态、挂单状态和市场状态不一致时，策略希望框架怎么修。
-"""
+"""当前策略的恢复与修复语义。"""
 
 from __future__ import annotations
 
@@ -10,30 +6,15 @@ from decimal import Decimal
 
 from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.domain.order import OrderSide
-from strategy_sdk import RecoveryDecision, StrategyContext
+from strategy_sdk import RecoveryDecision, StrategyContext, StrategyDecision
+
+from strategies.current.config import CurrentStrategyConfig
 
 
-def decide_recovery(context: StrategyContext) -> RecoveryDecision:
-    """根据当前热状态生成恢复计划。
-
-    参数：
-        context:
-            当前 market 的策略上下文。这里主要使用：
-            - ``market``：当前市场状态
-            - ``account_snapshot``：账户热状态
-            - ``position``：当前持仓
-            - ``open_orders``：当前挂单
-
-    返回：
-        一个 ``RecoveryDecision``，描述需要取消哪些 BUY、目标 SELL 数量、
-        以及是否应该暂停该 market 的进一步交易。
-
-    当前默认规则：
-        - 所有仍然 open 的 BUY 都应被取消；
-        - 持仓应当由 SELL 覆盖；
-        - market 已暂停/关闭/已结算时，恢复流程也应要求暂停交易。
-    """
-
+def decide_recovery(
+    config: CurrentStrategyConfig,
+    context: StrategyContext,
+) -> RecoveryDecision:
     if context.market is None:
         return RecoveryDecision(reason="missing_market_state")
 
@@ -52,13 +33,42 @@ def decide_recovery(context: StrategyContext) -> RecoveryDecision:
             context.market.no_token_id,
         )
 
-    cancel_order_ids = tuple(
-        order_id
-        for order in open_orders
-        for order_id in (_order_identifier(order),)
-        if order_id is not None and _is_open_buy(order)
+    actions: list[StrategyDecision] = []
+    for order in open_orders:
+        order_id = _order_identifier(order)
+        if order_id is None or not _is_open_entry_order(order):
+            continue
+        actions.append(
+            StrategyDecision.cancel(
+                reason="open_entry_order_detected",
+                token_id=order.token_id,
+                order_id=order_id,
+                market_slug=order.market_slug or context.market.market_slug,
+            )
+        )
+
+    open_exit_shares = sum(
+        (
+            _open_order_shares(order)
+            for order in open_orders
+            if _is_open_exit_order(order)
+        ),
+        start=Decimal("0"),
     )
-    pause_market = context.market.trading_status in {
+    if position is not None:
+        uncovered_shares = position.shares - open_exit_shares
+        if uncovered_shares > Decimal("0"):
+            actions.append(
+                StrategyDecision.sell(
+                    reason="recovery_exit_shortage",
+                    token_id=position.token_id,
+                    price=config.exit_no_price,
+                    size_shares=uncovered_shares,
+                    market_slug=position.market_slug or context.market.market_slug,
+                )
+            )
+
+    pause_trading = context.market.trading_status in {
         TradingStatus.PAUSED,
         TradingStatus.CLOSED,
         TradingStatus.RESOLVED,
@@ -67,20 +77,27 @@ def decide_recovery(context: StrategyContext) -> RecoveryDecision:
     )
     return RecoveryDecision(
         reason="strategy_recovery",
-        target_sell_size_shares=position.shares if position is not None else Decimal("0"),
-        cancel_order_ids=cancel_order_ids,
-        pause_market=pause_market,
-        pause_reason="market_not_tradable" if pause_market else "",
+        actions=tuple(actions),
+        pause_trading=pause_trading,
+        pause_reason="market_not_tradable" if pause_trading else "",
     )
 
 
 def _order_identifier(order) -> str | None:
-    """提取订单在恢复流程里的稳定标识。"""
-
     return order.order_id or order.idempotency_key
 
 
-def _is_open_buy(order) -> bool:
-    """判断订单是否是仍需处理的 open BUY。"""
-
+def _is_open_entry_order(order) -> bool:
     return order.side == OrderSide.BUY and order.open
+
+
+def _is_open_exit_order(order) -> bool:
+    return order.side == OrderSide.SELL and order.open
+
+
+def _open_order_shares(order) -> Decimal:
+    if order.remaining_shares is not None:
+        return max(order.remaining_shares, Decimal("0"))
+    if order.size_shares is not None:
+        return max(order.size_shares, Decimal("0"))
+    return Decimal("0")

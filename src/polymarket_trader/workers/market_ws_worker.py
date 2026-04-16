@@ -10,11 +10,9 @@ from uuid import uuid4
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from polymarket_trader.domain.market import Market
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
-from polymarket_trader.domain.strategy_profile import StrategyRuntimeProfile
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
 
-_DEFAULT_RUNTIME_PROFILE = StrategyRuntimeProfile()
 _FEE_RATE_DENOMINATOR = Decimal("1000")
 
 
@@ -211,7 +209,6 @@ class _BookState:
     snapshot: OrderbookSnapshot
     last_sequence: int | None = None
     needs_rest_snapshot: bool = False
-    entry_price_touched: bool = False
     resolved: bool = False
     subscribed_at: datetime | None = None
     last_message_at: datetime | None = None
@@ -229,12 +226,11 @@ class MarketWsResultSummary:
     reason: str
     event_types: tuple[str, ...]
     last_sequence: int | None
-    entry_price_touched: bool
     resolved: bool
     needs_rest_snapshot: bool
     best_bid: Decimal | None
     best_ask: Decimal | None
-    buyable_no_depth: Decimal
+    ask_depth: Decimal
     created_at: datetime = field(default_factory=_utc_now)
 
 
@@ -247,7 +243,6 @@ class MarketWsSubscriptionStatus:
     last_message_at: datetime | None
     last_rest_snapshot_at: datetime | None
     last_sequence: int | None
-    entry_price_touched: bool
     resolved: bool
     needs_rest_snapshot: bool
     last_error: str | None
@@ -259,7 +254,6 @@ class MarketWsWorkerStatus:
     subscription_count: int
     tracked_token_ids: tuple[str, ...]
     subscribed_token_ids: tuple[str, ...]
-    entry_price_touched_token_ids: tuple[str, ...]
     resolved_token_ids: tuple[str, ...]
     needs_rest_snapshot_token_ids: tuple[str, ...]
     last_message_at: datetime | None
@@ -283,7 +277,6 @@ class MarketWsWorker:
         *,
         event_bus: EventBus | None = None,
         registry: MarketRegistry | None = None,
-        entry_price_max: Decimal = _DEFAULT_RUNTIME_PROFILE.entry_no_price_max,
         rest_snapshot_loader: Callable[
             [str],
             Awaitable[OrderbookSnapshot | Mapping[str, Any]],
@@ -292,7 +285,6 @@ class MarketWsWorker:
     ) -> None:
         self._event_bus = event_bus
         self._registry = registry
-        self._entry_price_max = entry_price_max
         self._rest_snapshot_loader = rest_snapshot_loader
         self._states: dict[str, _BookState] = {}
         self._tracked_markets: dict[str, Market] = {}
@@ -473,7 +465,6 @@ class MarketWsWorker:
             snapshot=snapshot_model,
             last_sequence=_extract_sequence(snapshot) if isinstance(snapshot, Mapping) else None,
             needs_rest_snapshot=False,
-            entry_price_touched=current.entry_price_touched if current is not None else False,
             resolved=current.resolved if current is not None else False,
             subscribed_at=current.subscribed_at if current is not None else None,
             last_message_at=_utc_now(),
@@ -495,7 +486,6 @@ class MarketWsWorker:
         subscriptions: list[MarketWsSubscriptionStatus] = []
         tracked_token_ids = tuple(sorted(self._tracked_markets.keys()))
         subscribed_token_ids: list[str] = []
-        entry_price_touched_token_ids: list[str] = []
         resolved_token_ids: list[str] = []
         needs_rest_snapshot_token_ids: list[str] = []
         last_error: str | None = self._last_error
@@ -509,8 +499,6 @@ class MarketWsWorker:
                 continue
             if state.subscribed_at is not None:
                 subscribed_token_ids.append(token_id)
-            if state.entry_price_touched:
-                entry_price_touched_token_ids.append(token_id)
             if state.resolved:
                 resolved_token_ids.append(token_id)
             if state.needs_rest_snapshot:
@@ -530,7 +518,6 @@ class MarketWsWorker:
                     last_message_at=state.last_message_at,
                     last_rest_snapshot_at=state.last_rest_snapshot_at,
                     last_sequence=state.last_sequence,
-                    entry_price_touched=state.entry_price_touched,
                     resolved=state.resolved,
                     needs_rest_snapshot=state.needs_rest_snapshot,
                     last_error=state.last_error,
@@ -550,7 +537,6 @@ class MarketWsWorker:
             subscription_count=len(subscribed_token_ids),
             tracked_token_ids=tracked_token_ids,
             subscribed_token_ids=tuple(subscribed_token_ids),
-            entry_price_touched_token_ids=tuple(entry_price_touched_token_ids),
             resolved_token_ids=tuple(resolved_token_ids),
             needs_rest_snapshot_token_ids=tuple(needs_rest_snapshot_token_ids),
             last_message_at=last_message_at,
@@ -572,7 +558,7 @@ class MarketWsWorker:
         state = self._states.get(token_id)
         if state is None:
             return Decimal("0")
-        return state.snapshot.buyable_ask_depth(price_limit or self._entry_price_max)
+        return state.snapshot.buyable_ask_depth(price_limit)
 
     async def _apply_book_message(
         self,
@@ -809,9 +795,7 @@ class MarketWsWorker:
                 "source": source,
                 "snapshot": self._snapshot_payload(snapshot),
                 "spread": self._serialize_decimal(snapshot.spread),
-                "buyable_no_depth": self._serialize_decimal(
-                    snapshot.buyable_ask_depth(self._entry_price_max)
-                ),
+                "ask_depth": self._serialize_decimal(snapshot.buyable_ask_depth()),
                 "snapshot_time": snapshot.snapshot_time.isoformat(),
                 "needs_rest_snapshot": state.needs_rest_snapshot,
             },
@@ -849,12 +833,11 @@ class MarketWsWorker:
             reason=reason,
             event_types=event_types,
             last_sequence=state.last_sequence,
-            entry_price_touched=state.entry_price_touched,
             resolved=state.resolved,
             needs_rest_snapshot=state.needs_rest_snapshot,
             best_bid=snapshot.best_bid,
             best_ask=snapshot.best_ask,
-            buyable_no_depth=snapshot.buyable_ask_depth(self._entry_price_max),
+            ask_depth=snapshot.buyable_ask_depth(),
         )
         state.last_message_at = snapshot.received_at
         state.last_result = result
@@ -897,12 +880,8 @@ class MarketWsWorker:
         for token_id in candidates:
             if token_id in self._tracked_markets or token_id in self._states:
                 return token_id
-            if self._registry is not None and self._registry.get_by_no_token_id(token_id) is not None:
+            if self._registry is not None and self._registry.get_by_token_id(token_id) is not None:
                 return token_id
-            if self._registry is not None:
-                snapshot = self._registry.snapshot()
-                if any(market.yes_token_id == token_id for market in snapshot.markets):
-                    return token_id
         return candidates[0]
 
     def _resolve_market(self, message: Mapping[str, Any], token_id: str) -> Market | None:
@@ -916,15 +895,10 @@ class MarketWsWorker:
                 if market is not None:
                     self._tracked_markets[token_id] = market
                     return market
-            market = self._registry.get_by_no_token_id(token_id)
+            market = self._registry.get_by_token_id(token_id)
             if market is not None:
                 self._tracked_markets[token_id] = market
                 return market
-            snapshot = self._registry.snapshot()
-            for candidate in snapshot.markets:
-                if candidate.yes_token_id == token_id:
-                    self._tracked_markets[token_id] = candidate
-                    return candidate
             if market_slug:
                 market = self._registry.get_by_slug(str(market_slug))
                 if market is not None:
@@ -1051,9 +1025,7 @@ class MarketWsWorker:
             "last_trade_price": self._serialize_decimal(snapshot.last_trade_price),
             "tick_size": self._serialize_decimal(snapshot.tick_size),
             "spread": self._serialize_decimal(snapshot.spread),
-            "buyable_no_depth": self._serialize_decimal(
-                snapshot.buyable_ask_depth(self._entry_price_max),
-            ),
+            "ask_depth": self._serialize_decimal(snapshot.buyable_ask_depth()),
             "received_at": snapshot.received_at.isoformat(),
             "snapshot_time": snapshot.snapshot_time.isoformat(),
         }

@@ -106,7 +106,7 @@ def test_event_bus_mirrors_supported_domain_events_and_trims_user_payloads() -> 
                     "token_id": "token",
                     "side": "BUY",
                     "order_type": "FAK",
-                    "price": "0.60",
+                    "price": "0.43",
                 },
                 "open_orders": [{"order_id": "order-1"}],
                 "snapshot": {"open_orders": [{"order_id": "order-1"}]},

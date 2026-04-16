@@ -8,17 +8,13 @@ from polymarket_trader.infra.outbox import LocalOutbox, build_domain_event_outbo
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
 from polymarket_trader.workers.market_discovery_worker import MarketDiscoveryWorker
-from strategy_sdk.models import StrategyRuntimeProfile, StrategySpec, UniverseDecision
+from strategy_sdk.models import StrategySpec, UniverseDecision
 
 
 class _RejectingStrategy:
     @property
     def spec(self):
         return StrategySpec(name="rejecting")
-
-    @property
-    def runtime_profile(self):
-        return StrategyRuntimeProfile()
 
     def build_discovery_queries(self):
         return ()
@@ -49,10 +45,6 @@ class _AcceptingStrategy:
     @property
     def spec(self):
         return StrategySpec(name="accepting")
-
-    @property
-    def runtime_profile(self):
-        return StrategyRuntimeProfile()
 
     def build_discovery_queries(self):
         return ()
@@ -87,10 +79,6 @@ class _SwitchingStrategy:
     @property
     def spec(self):
         return StrategySpec(name="switching")
-
-    @property
-    def runtime_profile(self):
-        return StrategyRuntimeProfile()
 
     def build_discovery_queries(self):
         return ()
@@ -137,8 +125,8 @@ def test_market_discovery_worker_skips_untracked_filtered_out_markets() -> None:
                             {
                                 "conditionId": "condition-1",
                                 "slug": "sample-market-a",
-                                "eventTitle": "Sample FDV Event",
-                                "question": "Will this project hit $500M FDV?",
+                                "eventTitle": "Sample Threshold Event",
+                                "question": "Will this project hit the target threshold?",
                                 "tags": [{"label": "Crypto", "slug": "crypto"}],
                                 "clobTokenIds": ["yes-1", "no-1"],
                                 "orderPriceMinTickSize": "0.01",
@@ -180,8 +168,8 @@ def test_market_discovery_worker_skips_duplicate_market_payloads() -> None:
                 {
                     "conditionId": "condition-1",
                     "slug": "sample-market-a",
-                    "eventTitle": "Sample FDV Event",
-                    "question": "Will this project hit $500M FDV?",
+                    "eventTitle": "Sample Threshold Event",
+                    "question": "Will this project hit the target threshold?",
                     "tags": [{"label": "Crypto", "slug": "crypto"}],
                     "clobTokenIds": ["yes-1", "no-1"],
                     "orderPriceMinTickSize": "0.01",
@@ -220,8 +208,8 @@ def test_market_discovery_worker_replays_duplicate_payload_when_tracking_state_c
                 {
                     "conditionId": "condition-1",
                     "slug": "sample-market-a",
-                    "eventTitle": "Sample FDV Event",
-                    "question": "Will this project hit $500M FDV?",
+                    "eventTitle": "Sample Threshold Event",
+                    "question": "Will this project hit the target threshold?",
                     "tags": [{"label": "Crypto", "slug": "crypto"}],
                     "clobTokenIds": ["yes-1", "no-1"],
                     "orderPriceMinTickSize": "0.01",
@@ -261,8 +249,8 @@ def test_market_discovery_worker_treats_fee_schedule_change_as_market_update() -
                 {
                     "conditionId": "condition-1",
                     "slug": "sample-market-a",
-                    "eventTitle": "Sample FDV Event",
-                    "question": "Will this project hit $500M FDV?",
+                    "eventTitle": "Sample Threshold Event",
+                    "question": "Will this project hit the target threshold?",
                     "tags": [{"label": "Crypto", "slug": "crypto"}],
                     "clobTokenIds": ["yes-1", "no-1"],
                     "orderPriceMinTickSize": "0.01",
@@ -281,8 +269,8 @@ def test_market_discovery_worker_treats_fee_schedule_change_as_market_update() -
                 {
                     "conditionId": "condition-1",
                     "slug": "sample-market-a",
-                    "eventTitle": "Sample FDV Event",
-                    "question": "Will this project hit $500M FDV?",
+                    "eventTitle": "Sample Threshold Event",
+                    "question": "Will this project hit the target threshold?",
                     "tags": [{"label": "Crypto", "slug": "crypto"}],
                     "clobTokenIds": ["yes-1", "no-1"],
                     "orderPriceMinTickSize": "0.01",

@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from polymarket_trader.domain.allocation import AllocationMarketSnapshot, AllocationPlan, equal_weight_budget
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
-from strategy_sdk import StrategyRuntimeProfile
 
 
 def _market(condition_id: str, market_slug: str, no_token_id: str) -> Market:
@@ -28,9 +27,9 @@ def _snapshot(market: Market) -> AllocationMarketSnapshot:
     orderbook = OrderbookSnapshot(
         token_id=market.no_token_id,
         best_bid=Decimal("0.55"),
-        best_ask=Decimal("0.60"),
+        best_ask=Decimal("0.43"),
         bids=(PriceLevel(price=Decimal("0.55"), size=Decimal("100")),),
-        asks=(PriceLevel(price=Decimal("0.60"), size=Decimal("100")),),
+        asks=(PriceLevel(price=Decimal("0.43"), size=Decimal("100")),),
         received_at=datetime.now(timezone.utc),
         market_slug=market.market_slug,
         condition_id=market.condition_id,
@@ -40,13 +39,13 @@ def _snapshot(market: Market) -> AllocationMarketSnapshot:
     )
     return AllocationMarketSnapshot(
         market=market,
+        token_id=market.no_token_id,
         orderbook=orderbook,
-        classification_passed=True,
         tradable=True,
         market_active=True,
         market_open=True,
         clob_enabled=True,
-        best_ask=Decimal("0.60"),
+        best_ask=Decimal("0.43"),
         liquidity_usdc=Decimal("60"),
         spread=Decimal("0.05"),
     )
@@ -68,11 +67,6 @@ def test_equal_weight_plan_respects_per_market_cap_and_releases_budget() -> None
         max_order_usdc=Decimal("100"),
         max_market_usdc=Decimal("20"),
         max_total_usdc=Decimal("100"),
-        runtime_profile=StrategyRuntimeProfile(
-            entry_no_price_max=Decimal("0.60"),
-            min_liquidity_usdc=Decimal("5"),
-            max_spread=Decimal("0.10"),
-        ),
     )
 
     assert plan.eligible_market_count == 2

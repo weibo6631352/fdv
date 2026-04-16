@@ -135,14 +135,14 @@
 - `blocking_issues`
 - `warnings`
 - `runtime.user_ws_connected`
-- `runtime.allow_new_buys`
+- `runtime.allow_new_entries`
 - `runtime.last_reconcile_at`
 - `runtime.blocking_reasons`
 
 说明：
 
 - 该接口是运维判断“现在能不能自动下单”的首选入口。
-- `allow_new_buys=false` 会明确表现为阻塞项。
+- `allow_new_entries=false` 会明确表现为阻塞项。
 
 ### 3.3 `GET /runtime`
 
@@ -211,7 +211,6 @@
 - `best_bid`
 - `spread`
 - `fee_preview`
-- `entry_price_touched`
 
 说明：
 
@@ -484,7 +483,7 @@
 - `pause_count`
 - `last_reconcile_at`
 - `user_ws_connected`
-- `allow_new_buys`
+- `allow_new_entries`
 - `markets_tracked`
 - `recent_allocations`
 
@@ -677,7 +676,7 @@
 ```json
 {
   "market_slug": "sample-market-a",
-  "new_price": "0.70",
+  "new_price": "0.78",
   "operator": "manual",
   "reason": "admin_reprice",
   "trace_id": "trace-reprice"

@@ -666,7 +666,7 @@ class AdminService:
                 "pause_count": len(account.paused_markets),
                 "last_reconcile_at": _jsonable(account.last_reconcile_at),
                 "user_ws_connected": account.user_ws_connected,
-                "allow_new_buys": account.allow_new_buys,
+                "allow_new_entries": account.allow_new_entries,
                 "markets_tracked": len(registry.markets),
                 "recent_allocations": [],
             }
@@ -685,7 +685,7 @@ class AdminService:
             "pause_count": len(account.paused_markets),
             "last_reconcile_at": _jsonable(account.last_reconcile_at),
             "user_ws_connected": account.user_ws_connected,
-            "allow_new_buys": account.allow_new_buys,
+            "allow_new_entries": account.allow_new_entries,
             "markets_tracked": len(registry.markets),
             "recent_allocations": [
                 self._serialize_allocation(allocation) for allocation in allocations.items
@@ -929,7 +929,7 @@ class AdminService:
                 "ready_to_trade": bool(readiness.get("ready")),
                 "automatic_trading_enabled": bool(payload.get("automatic_trading_enabled")),
                 "user_ws_connected": bool(user_ws.get("connected", account.get("user_ws_connected", False))),
-                "allow_new_buys": bool(account.get("allow_new_buys", False)),
+                "allow_new_entries": bool(account.get("allow_new_entries", False)),
                 "last_reconcile_at": readiness.get("last_reconcile_at") or account.get("last_reconcile_at"),
                 "portfolio_budget_usdc": _decimal_text(getattr(self._settings(), "portfolio_budget_usdc", None)),
                 "queue_depth": payload.get("queue_depths"),
@@ -948,7 +948,7 @@ class AdminService:
         ready_to_trade = bool(readiness.get("ready_to_trade"))
         if account.last_reconcile_at is None:
             phase = "recovering_snapshot"
-        elif not account.user_ws_connected or not account.allow_new_buys:
+        elif not account.user_ws_connected or not account.allow_new_entries:
             phase = "paused"
         elif persistence is not None and (
             getattr(persistence, "last_error", None) is not None
@@ -959,9 +959,9 @@ class AdminService:
             phase = "trading_enabled"
         return {
             "phase": phase,
-            "ready_to_trade": ready_to_trade and account.user_ws_connected and account.allow_new_buys,
+            "ready_to_trade": ready_to_trade and account.user_ws_connected and account.allow_new_entries,
             "user_ws_connected": account.user_ws_connected,
-            "allow_new_buys": account.allow_new_buys,
+            "allow_new_entries": account.allow_new_entries,
             "last_reconcile_at": _jsonable(account.last_reconcile_at),
             "portfolio_budget_usdc": _decimal_text(getattr(self._settings(), "portfolio_budget_usdc", None)),
             "queue_depth": _jsonable(event_bus) if event_bus is not None else None,
@@ -1016,7 +1016,7 @@ class AdminService:
 
         user_ws_connected = bool(runtime_snapshot.get("user_ws_connected"))
         last_reconcile_at = runtime_snapshot.get("last_reconcile_at")
-        allow_new_buys = bool(runtime_snapshot.get("allow_new_buys"))
+        allow_new_entries = bool(runtime_snapshot.get("allow_new_entries"))
         has_runtime_client_blocker = {
             "trading_client_not_ready",
             "trading_client_unavailable",
@@ -1034,9 +1034,9 @@ class AdminService:
                 "reconcile_pending",
                 "首次 reconcile 未完成，禁止自动下单",
             )
-        if expose_runtime_account_blockers and not allow_new_buys and user_ws_connected and last_reconcile_at is not None:
+        if expose_runtime_account_blockers and not allow_new_entries and user_ws_connected and last_reconcile_at is not None:
             append_issue(
-                "allow_new_buys",
+                "allow_new_entries",
                 "buy_gate_closed",
                 "自动买入闸门关闭",
             )
@@ -1159,7 +1159,7 @@ class AdminService:
             "fills": len(account.fills),
             "paused_markets": list(account.paused_markets),
             "pause_reasons": [list(item) for item in account.pause_reasons],
-            "allow_new_buys": account.allow_new_buys,
+            "allow_new_entries": account.allow_new_entries,
             "user_ws_connected": account.user_ws_connected,
             "last_reconcile_at": _jsonable(account.last_reconcile_at),
         }
@@ -1172,7 +1172,7 @@ class AdminService:
             "open_orders": [_jsonable(order) for order in account.open_orders],
             "fills": [_jsonable(fill) for fill in account.fills],
             "user_ws_connected": account.user_ws_connected,
-            "allow_new_buys": account.allow_new_buys,
+            "allow_new_entries": account.allow_new_entries,
             "paused_markets": list(account.paused_markets),
             "pause_reasons": [list(item) for item in account.pause_reasons],
             "last_reconcile_at": _jsonable(account.last_reconcile_at),
@@ -1257,9 +1257,6 @@ class AdminService:
                     market=market,
                     orderbook=yes_orderbook,
                 )
-            ),
-            "entry_price_touched": bool(
-                orderbook is not None and orderbook.no_entry_touched(Decimal("0.60"))
             ),
         }
 
@@ -1712,14 +1709,9 @@ class AdminService:
                 if market is not None:
                     return market
             if token_id is not None:
-                market = registry.get_by_no_token_id(token_id)
+                market = registry.get_by_token_id(token_id)
                 if market is not None:
                     return market
-                if hasattr(registry, "snapshot"):
-                    snapshot = registry.snapshot()
-                    for candidate in snapshot.markets:
-                        if candidate.yes_token_id == token_id:
-                            return candidate
             if market_slug is not None:
                 market = registry.get_by_slug(market_slug)
                 if market is not None:

@@ -925,7 +925,7 @@ class AccountSnapshotModel(Base, TimestampMixin):
     balance_usdc: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False, default=Decimal("0"))
     allowance_usdc: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False, default=Decimal("0"))
     user_ws_connected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    allow_new_buys: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    allow_new_entries: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     paused_markets: Mapped[list[str]] = mapped_column(
         JSONB,
         nullable=False,
@@ -965,7 +965,7 @@ class AccountSnapshotModel(Base, TimestampMixin):
             "balance_usdc": str(snapshot.balance_usdc),
             "allowance_usdc": str(snapshot.allowance_usdc),
             "user_ws_connected": snapshot.user_ws_connected,
-            "allow_new_buys": snapshot.allow_new_buys,
+            "allow_new_entries": snapshot.allow_new_entries,
             "paused_markets": list(snapshot.paused_markets),
             "pause_reasons": [list(item) for item in snapshot.pause_reasons],
             "last_reconcile_at": _json_safe(snapshot.last_reconcile_at),
@@ -976,7 +976,7 @@ class AccountSnapshotModel(Base, TimestampMixin):
             balance_usdc=snapshot.balance_usdc,
             allowance_usdc=snapshot.allowance_usdc,
             user_ws_connected=snapshot.user_ws_connected,
-            allow_new_buys=snapshot.allow_new_buys,
+            allow_new_entries=snapshot.allow_new_entries,
             paused_markets=list(snapshot.paused_markets),
             pause_reasons=[list(item) for item in snapshot.pause_reasons],
             last_reconcile_at=snapshot.last_reconcile_at,
@@ -988,7 +988,7 @@ class AccountSnapshotModel(Base, TimestampMixin):
             balance_usdc=_decimal(self.balance_usdc) or Decimal("0"),
             allowance_usdc=_decimal(self.allowance_usdc) or Decimal("0"),
             user_ws_connected=bool(self.user_ws_connected),
-            allow_new_buys=bool(self.allow_new_buys),
+            allow_new_entries=bool(self.allow_new_entries),
             paused_markets=_tuple_from_sequence(self.paused_markets),
             pause_reasons=_pair_tuple_from_sequence(self.pause_reasons),
             last_reconcile_at=(

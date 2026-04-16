@@ -82,7 +82,7 @@ def test_parse_ws_messages_flattens_array_frame_and_infers_book_type() -> None:
                 "market": "condition-1",
                 "asset_id": "token-1",
                 "bids": [{"price": "0.55", "size": "10"}],
-                "asks": [{"price": "0.60", "size": "12"}],
+                "asks": [{"price": "0.43", "size": "12"}],
                 "timestamp": "1757908892351",
             }
         ],
@@ -117,7 +117,7 @@ def test_gamma_event_to_raw_market_events_inherits_parent_event_context() -> Non
         {
             "id": "event-1",
             "slug": "sample-event",
-            "title": "Sample FDV Event",
+            "title": "Sample Threshold Event",
             "tags": [
                 {
                     "label": "Crypto",
@@ -140,7 +140,7 @@ def test_gamma_event_to_raw_market_events_inherits_parent_event_context() -> Non
     )
 
     assert len(raw_events) == 1
-    assert raw_events[0].payload["eventTitle"] == "Sample FDV Event"
+    assert raw_events[0].payload["eventTitle"] == "Sample Threshold Event"
     assert raw_events[0].payload["eventSlug"] == "sample-event"
     assert raw_events[0].payload["eventId"] == "event-1"
     assert raw_events[0].payload["tags"] == [{"label": "Crypto", "slug": "crypto"}]

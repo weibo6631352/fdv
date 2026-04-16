@@ -11,7 +11,6 @@ from strategy_sdk.models import (
     EntrySizing,
     RecoveryDecision,
     StrategyContext,
-    StrategyRuntimeProfile,
     StrategyDecision,
     StrategySpec,
     UniverseDecision,
@@ -24,9 +23,6 @@ class StrategyModule(Protocol):
     @property
     def spec(self) -> StrategySpec: ...
 
-    @property
-    def runtime_profile(self) -> StrategyRuntimeProfile: ...
-
     def build_discovery_queries(self) -> tuple[DiscoveryQuery, ...]: ...
 
     def select_market(self, market: Market) -> UniverseDecision: ...
@@ -38,6 +34,8 @@ class StrategyModule(Protocol):
     def decide_exit(self, context: StrategyContext) -> StrategyDecision: ...
 
     def decide_recovery(self, context: StrategyContext) -> RecoveryDecision: ...
+
+    def decide_follow_up(self, context: StrategyContext) -> tuple[StrategyDecision, ...]: ...
 
     def should_keep_tracking(
         self,

@@ -261,7 +261,7 @@ def _snapshot_to_payload(snapshot: AccountSnapshot) -> dict[str, Any]:
         "balance_usdc": str(snapshot.balance_usdc),
         "allowance_usdc": str(snapshot.allowance_usdc),
         "user_ws_connected": snapshot.user_ws_connected,
-        "allow_new_buys": snapshot.allow_new_buys,
+        "allow_new_entries": snapshot.allow_new_entries,
         "paused_markets": snapshot.paused_markets,
         "pause_reasons": snapshot.pause_reasons,
         "last_reconcile_at": (
@@ -295,7 +295,7 @@ class UserWsResultSummary:
     message_type: str
     event_count: int
     connected: bool
-    allow_new_buys: bool
+    allow_new_entries: bool
     condition_id: str | None
     token_id: str | None
     market_slug: str | None
@@ -320,7 +320,7 @@ class UserWsSubscriptionStatus:
 @dataclass(frozen=True, slots=True)
 class UserWsWorkerStatus:
     connected: bool
-    allow_new_buys: bool
+    allow_new_entries: bool
     subscribed_condition_ids: tuple[str, ...]
     subscription_count: int
     last_message_at: datetime | None
@@ -377,7 +377,7 @@ class UserWsWorker:
         )
         return UserWsWorkerStatus(
             connected=account_snapshot.user_ws_connected,
-            allow_new_buys=account_snapshot.allow_new_buys,
+            allow_new_entries=account_snapshot.allow_new_entries,
             subscribed_condition_ids=subscribed_condition_ids,
             subscription_count=len(subscribed_condition_ids),
             last_message_at=self._last_message_at,
@@ -579,7 +579,7 @@ class UserWsWorker:
                     "balance_usdc": str(snapshot.balance_usdc),
                     "allowance_usdc": str(snapshot.allowance_usdc),
                     "user_ws_connected": snapshot.user_ws_connected,
-                    "allow_new_buys": snapshot.allow_new_buys,
+                    "allow_new_entries": snapshot.allow_new_entries,
                     "paused_markets": list(snapshot.paused_markets),
                     "pause_reasons": [list(item) for item in snapshot.pause_reasons],
                     "last_reconcile_at": (
@@ -775,7 +775,7 @@ class UserWsWorker:
             message_type=message_type,
             event_count=len(events),
             connected=result.connected,
-            allow_new_buys=snapshot.allow_new_buys,
+            allow_new_entries=snapshot.allow_new_entries,
             condition_id=events[0].condition_id if events else None,
             token_id=events[0].token_id if events else None,
             market_slug=events[0].market_slug if events else None,

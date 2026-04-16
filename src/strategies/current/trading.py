@@ -6,11 +6,17 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
-from polymarket_trader.domain.allocation import Allocation, AllocationMarketSnapshot, AllocationPlan
+from polymarket_trader.domain.allocation import (
+    Allocation,
+    AllocationMarketSnapshot,
+    AllocationPlan,
+    current_exposure_usdc,
+)
 from polymarket_trader.domain.market import TradingStatus
-from strategy_sdk import EntrySizing, StrategyContext, StrategyDecision, StrategyRuntimeProfile
+from strategy_sdk import EntryCandidate, EntrySizing, StrategyContext, StrategyDecision
 
 from strategies.current.config import CurrentStrategyConfig
 from strategies.current.universe import select_market
@@ -41,7 +47,7 @@ def size_entry(config: CurrentStrategyConfig, context: StrategyContext) -> Entry
     if portfolio_budget_usdc is None:
         return _empty_sizing(context, reason="missing_portfolio_budget")
 
-    candidate_snapshots = _candidate_snapshots(config, context)
+    candidate_snapshots = _candidate_snapshots(context)
     if not candidate_snapshots:
         return EntrySizing(
             allocation_plan=AllocationPlan(
@@ -68,23 +74,46 @@ def size_entry(config: CurrentStrategyConfig, context: StrategyContext) -> Entry
     if max_total_usdc is None:
         return _empty_sizing(context, reason="missing_max_total_usdc")
 
-    plan = AllocationPlan.equal_weight(
+    eligible_snapshots: list[AllocationMarketSnapshot] = []
+    skipped_allocations: dict[tuple[str, str], Allocation] = {}
+    for snapshot in candidate_snapshots:
+        buyable_liquidity_usdc = _ask_depth_notional(
+            snapshot.orderbook,
+            price_cap=config.entry_no_price_max,
+        )
+        skip_reason = _allocation_skip_reason(
+            config,
+            snapshot,
+            buyable_liquidity_usdc=buyable_liquidity_usdc,
+        )
+        if skip_reason:
+            skipped_allocations[(snapshot.condition_id, snapshot.token_id)] = _skipped_allocation(
+                snapshot,
+                reason=skip_reason,
+            )
+            continue
+        eligible_snapshots.append(replace(snapshot, liquidity_usdc=buyable_liquidity_usdc))
+
+    eligible_plan = AllocationPlan.equal_weight(
         trace_id=context.trace_id,
         portfolio_budget_usdc=portfolio_budget_usdc,
-        markets=candidate_snapshots,
+        markets=tuple(eligible_snapshots),
         available_usdc=available_usdc,
         max_order_usdc=max_order_usdc,
         max_market_usdc=max_market_usdc,
         max_total_usdc=max_total_usdc,
-        runtime_profile=StrategyRuntimeProfile(
-            entry_no_price_max=config.entry_no_price_max,
-            min_liquidity_usdc=config.min_liquidity_usdc,
-            max_spread=config.max_spread,
-        ),
+    )
+    plan = _merge_allocation_plan(
+        trace_id=context.trace_id,
+        portfolio_budget_usdc=portfolio_budget_usdc,
+        candidate_snapshots=candidate_snapshots,
+        eligible_plan=eligible_plan,
+        skipped_allocations=skipped_allocations,
     )
     allocation = _pick_allocation(
         plan.allocations,
         context.market.condition_id if context.market is not None else None,
+        context.token_id or (context.orderbook.token_id if context.orderbook is not None else None),
     )
     return EntrySizing(
         allocation_plan=plan,
@@ -124,6 +153,7 @@ def decide_entry(config: CurrentStrategyConfig, context: StrategyContext) -> Str
 
     return StrategyDecision.buy(
         reason="strategy_entry",
+        token_id=context.token_id or context.orderbook.token_id,
         price=config.entry_no_price_max,
         amount_usdc=amount_usdc,
         market_slug=context.market.market_slug,
@@ -158,6 +188,11 @@ def decide_exit(config: CurrentStrategyConfig, context: StrategyContext) -> Stra
 
     return StrategyDecision.sell(
         reason="strategy_exit",
+        token_id=(
+            context.token_id
+            or (context.position.token_id if context.position is not None else None)
+            or _metadata_text(context, "token_id")
+        ),
         price=config.exit_no_price,
         size_shares=uncovered_shares,
         market_slug=(
@@ -191,44 +226,35 @@ def _empty_sizing(context: StrategyContext, *, reason: str) -> EntrySizing:
 
 
 def _candidate_snapshots(
-    config: CurrentStrategyConfig,
     context: StrategyContext,
 ) -> tuple[AllocationMarketSnapshot, ...]:
     """从上下文中提取候选市场快照。
 
     参数：
-        config:
-            当前策略配置。只有在缺少候选列表时，才会用于构造 fallback snapshot。
         context:
-            策略上下文，优先从 ``metadata['candidate_snapshots']`` 里取候选市场。
+            策略上下文，优先使用框架传入的 ``entry_candidates``。
 
     返回：
         一组 ``AllocationMarketSnapshot``。
 
     说明：
-        正常路径下，框架会把候选市场列表放在 metadata 里。
+        正常路径下，框架会把候选市场列表放在 ``StrategyContext.entry_candidates``。
         如果当前调用点没有提供这个列表，这里会退化为只用当前 market
         生成一个 fallback snapshot，保证逻辑仍可运行。
     """
 
-    raw_value = context.metadata.get("candidate_snapshots")
-    if isinstance(raw_value, tuple):
-        return tuple(snapshot for snapshot in raw_value if isinstance(snapshot, AllocationMarketSnapshot))
-    if isinstance(raw_value, list):
-        return tuple(snapshot for snapshot in raw_value if isinstance(snapshot, AllocationMarketSnapshot))
-    fallback = _fallback_snapshot(config, context)
+    if context.entry_candidates:
+        return tuple(_entry_candidate_to_snapshot(candidate) for candidate in context.entry_candidates)
+    fallback = _fallback_snapshot(context)
     return () if fallback is None else (fallback,)
 
 
 def _fallback_snapshot(
-    config: CurrentStrategyConfig,
     context: StrategyContext,
 ) -> AllocationMarketSnapshot | None:
     """在缺少候选市场列表时，为当前 market 构造一个最小快照。
 
     参数：
-        config:
-            当前策略配置。
         context:
             当前策略上下文，要求至少包含 market 和 orderbook。
 
@@ -239,14 +265,12 @@ def _fallback_snapshot(
 
     if context.market is None or context.orderbook is None:
         return None
-    universe_decision = select_market(config, context.market)
     return AllocationMarketSnapshot(
         market=context.market,
+        token_id=context.token_id or context.orderbook.token_id,
         orderbook=context.orderbook,
         position=context.position,
         open_orders=context.open_orders,
-        classification_passed=universe_decision.selected,
-        classification_reason=None if universe_decision.selected else universe_decision.reason,
         tradable=context.market.trading_status == TradingStatus.ELIGIBLE,
         risk_allowed=True,
         market_active=context.market.trading_status == TradingStatus.ELIGIBLE,
@@ -255,35 +279,156 @@ def _fallback_snapshot(
         resolved=context.market.trading_status == TradingStatus.RESOLVED,
         cancelled=False,
         archived=context.market.trading_status == TradingStatus.CLOSED,
-        liquidity_usdc=_ask_depth_notional(context.orderbook, price_cap=config.entry_no_price_max),
+        liquidity_usdc=_ask_depth_notional(context.orderbook),
         spread=context.orderbook.spread,
         best_ask=context.orderbook.best_ask,
         best_ask_size=context.orderbook.best_ask_size,
-        idempotency_key=f"{context.trace_id}:{context.market.condition_id}:{context.market.no_token_id}",
+        idempotency_key=(
+            f"{context.trace_id}:{context.market.condition_id}:{context.token_id or context.orderbook.token_id}"
+        ),
     )
 
 
-def _ask_depth_notional(orderbook, *, price_cap: Decimal) -> Decimal:
+def _entry_candidate_to_snapshot(candidate: EntryCandidate) -> AllocationMarketSnapshot:
+    return AllocationMarketSnapshot(
+        market=candidate.market,
+        token_id=candidate.token_id,
+        orderbook=candidate.orderbook,
+        position=candidate.position,
+        open_orders=candidate.open_orders,
+        tradable=candidate.market.trading_status == TradingStatus.ELIGIBLE,
+        risk_allowed=True,
+        market_active=candidate.market.trading_status == TradingStatus.ELIGIBLE,
+        market_open=candidate.market.trading_status == TradingStatus.ELIGIBLE,
+        clob_enabled=True,
+        resolved=candidate.market.trading_status == TradingStatus.RESOLVED,
+        cancelled=False,
+        archived=candidate.market.trading_status == TradingStatus.CLOSED,
+        liquidity_usdc=_ask_depth_notional(candidate.orderbook),
+        spread=candidate.orderbook.spread,
+        best_ask=candidate.orderbook.best_ask,
+        best_ask_size=candidate.orderbook.best_ask_size,
+        idempotency_key=candidate.idempotency_key,
+    )
+
+
+def _allocation_skip_reason(
+    config: CurrentStrategyConfig,
+    snapshot: AllocationMarketSnapshot,
+    *,
+    buyable_liquidity_usdc: Decimal,
+) -> str:
+    universe_decision = select_market(config, snapshot.market)
+    if not universe_decision.selected:
+        return universe_decision.reason or "market_out_of_universe"
+    if snapshot.token_id != snapshot.market.no_token_id:
+        return "unsupported_outcome"
+    if not snapshot.tradable:
+        return "market_not_tradable"
+    if not snapshot.market_active:
+        return "market_not_active"
+    if not snapshot.market_open:
+        return "market_not_open"
+    if not snapshot.clob_enabled:
+        return "clob_disabled"
+    if snapshot.resolved:
+        return "market_resolved"
+    if snapshot.cancelled:
+        return "market_cancelled"
+    if snapshot.archived:
+        return "market_archived"
+    if not snapshot.risk_allowed:
+        return "risk_limit_reached"
+
+    best_ask = snapshot.best_ask if snapshot.best_ask is not None else (
+        snapshot.orderbook.best_ask if snapshot.orderbook is not None else None
+    )
+    if best_ask is None:
+        return "missing_best_ask"
+    if best_ask > config.entry_no_price_max:
+        return "price_above_entry_max"
+
+    spread = snapshot.spread if snapshot.spread is not None else (
+        snapshot.orderbook.spread if snapshot.orderbook is not None else None
+    )
+    if config.max_spread is not None and spread is not None and spread > config.max_spread:
+        return "spread_above_max"
+
+    if buyable_liquidity_usdc < config.min_liquidity_usdc:
+        return "liquidity_below_min"
+
+    return ""
+
+
+def _skipped_allocation(
+    snapshot: AllocationMarketSnapshot,
+    *,
+    reason: str,
+) -> Allocation:
+    return Allocation(
+        condition_id=snapshot.condition_id,
+        target_budget_usdc=Decimal("0"),
+        buy_budget_usdc=Decimal("0"),
+        market_slug=snapshot.market_slug,
+        token_id=snapshot.token_id,
+        current_exposure_usdc=current_exposure_usdc(snapshot.position, snapshot.open_orders),
+        released_budget_usdc=Decimal("0"),
+        reason=reason,
+        idempotency_key=snapshot.idempotency_key,
+        release_reason=reason,
+    )
+
+
+def _merge_allocation_plan(
+    *,
+    trace_id: str,
+    portfolio_budget_usdc: Decimal,
+    candidate_snapshots: tuple[AllocationMarketSnapshot, ...],
+    eligible_plan: AllocationPlan,
+    skipped_allocations: dict[tuple[str, str], Allocation],
+) -> AllocationPlan:
+    allocation_map = {
+        (allocation.condition_id, allocation.token_id or ""): allocation
+        for allocation in eligible_plan.allocations
+    }
+    allocation_map.update(skipped_allocations)
+    ordered_allocations: list[Allocation] = []
+    for snapshot in candidate_snapshots:
+        allocation = allocation_map.get((snapshot.condition_id, snapshot.token_id))
+        if allocation is not None:
+            ordered_allocations.append(allocation)
+    return AllocationPlan(
+        trace_id=trace_id,
+        total_budget_usdc=portfolio_budget_usdc,
+        allocations=tuple(ordered_allocations),
+        budget_changes=eligible_plan.budget_changes,
+        reason=eligible_plan.reason,
+    )
+
+
+def _ask_depth_notional(orderbook, *, price_cap: Decimal | None = None) -> Decimal:
     """计算价格上限内的 ask 侧深度总额。
 
     参数：
         orderbook:
             当前盘口快照。
         price_cap:
-            允许吃单的最高价格。高于这个价格的 ask 不计入深度。
+            可选价格上限。未提供时统计全部 ask 深度。
 
     返回：
         在价格上限内可立即成交的深度总额，单位 USDC。
     """
 
+    if orderbook is None:
+        return Decimal("0")
     depth_usdc = Decimal("0")
     levels = orderbook.asks
     if not levels and orderbook.best_ask is not None and orderbook.best_ask_size is not None:
-        if orderbook.best_ask <= price_cap:
+        if price_cap is None or orderbook.best_ask <= price_cap:
             return orderbook.best_ask * orderbook.best_ask_size
         return Decimal("0")
     for level in levels:
-        if level.price <= price_cap:
+        if price_cap is None or level.price <= price_cap:
             depth_usdc += level.price * level.size
     return depth_usdc
 
@@ -291,13 +436,14 @@ def _ask_depth_notional(orderbook, *, price_cap: Decimal) -> Decimal:
 def _pick_allocation(
     allocations: tuple[Allocation, ...],
     condition_id: str | None,
+    token_id: str | None,
 ) -> Allocation | None:
     """从分配结果中挑出当前目标 market 的那一项。"""
 
-    if condition_id is None:
+    if condition_id is None or token_id is None:
         return None
     for allocation in allocations:
-        if allocation.condition_id == condition_id:
+        if allocation.condition_id == condition_id and allocation.token_id == token_id:
             return allocation
     return None
 

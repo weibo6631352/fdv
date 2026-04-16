@@ -38,13 +38,10 @@ class OrderbookSnapshot:
         return self.received_at
 
     def buyable_ask_depth(self, max_price: Decimal | None = None) -> Decimal:
-        # NO 仓位的买入深度只看 ask 侧：价格不高于阈值的挂单都算作可成交深度。
+        # 买入深度只看 ask 侧；调用方可按需传入价格上限做额外筛选。
         total = Decimal("0")
         for level in self.asks:
             if max_price is not None and level.price > max_price:
                 continue
             total += level.size
         return total
-
-    def no_entry_touched(self, price_limit: Decimal) -> bool:
-        return self.best_ask is not None and self.best_ask <= price_limit

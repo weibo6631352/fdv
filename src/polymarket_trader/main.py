@@ -225,7 +225,6 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         ports=strategy_ports,
         config_path=settings.strategy_config_path,
     )
-    profile = strategy.runtime_profile
     execution_client = (
         PolymarketOrderExecutionClient(trading_client)
         if trading_client is not None
@@ -247,7 +246,6 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     market_ws_worker = MarketWsWorker(
         event_bus=event_bus,
         registry=registry,
-        entry_price_max=profile.entry_no_price_max,
         rest_snapshot_loader=load_market_rest_snapshot,
     )
     bind_strategy_orderbook_reader(strategy_ports, market_ws_worker.snapshot)
@@ -261,11 +259,9 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         strategy_module=strategy,
         registry=registry,
         orderbook_reader=market_ws_worker.snapshot,
-        runtime_profile=profile,
     )
     trading_service = TradingService(
         executor=order_executor,
-        runtime_profile=profile,
     )
     user_ws_worker = UserWsWorker(
         event_bus=event_bus,

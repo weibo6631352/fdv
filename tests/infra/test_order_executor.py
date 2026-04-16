@@ -25,7 +25,7 @@ def test_order_executor_records_outbox_before_returning_result() -> None:
                 condition_id="condition",
                 token_id="token",
                 market_slug="sample-market-a",
-                price=Decimal("0.60"),
+                price=Decimal("0.43"),
                 amount_usdc=Decimal("10"),
             )
         )

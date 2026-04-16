@@ -13,7 +13,6 @@ from strategy_sdk.models import (
     RecoveryDecision,
     StrategyContext,
     StrategyDecision,
-    StrategyRuntimeProfile,
     StrategySpec,
     UniverseDecision,
 )
@@ -25,14 +24,6 @@ class _CustomSizingStrategy:
         return StrategySpec(
             name="custom",
             capabilities=("universe", "sizing", "entry", "exit", "recovery"),
-        )
-
-    @property
-    def runtime_profile(self) -> StrategyRuntimeProfile:
-        return StrategyRuntimeProfile(
-            entry_no_price_max=Decimal("0.60"),
-            min_liquidity_usdc=Decimal("5"),
-            max_spread=Decimal("0.10"),
         )
 
     def select_market(self, market: Market) -> UniverseDecision:
@@ -64,7 +55,8 @@ class _CustomSizingStrategy:
         amount_usdc = Decimal(str(context.metadata["buy_budget_usdc"]))
         return StrategyDecision.buy(
             reason="custom_entry",
-            price=Decimal("0.60"),
+            token_id=context.token_id or context.market.no_token_id,
+            price=Decimal("0.43"),
             amount_usdc=amount_usdc,
             market_slug=context.market.market_slug,
         )
@@ -75,6 +67,9 @@ class _CustomSizingStrategy:
     def decide_recovery(self, context: StrategyContext) -> RecoveryDecision:
         return RecoveryDecision(reason="noop_recovery")
 
+    def decide_follow_up(self, context: StrategyContext) -> tuple[StrategyDecision, ...]:
+        return ()
+
 
 def test_strategy_service_uses_strategy_sizing_policy() -> None:
     registry = MarketRegistry()
@@ -84,7 +79,7 @@ def test_strategy_service_uses_strategy_sizing_policy() -> None:
         no_token_id="no-1",
         yes_token_id="yes-1",
         category="Crypto",
-        matched_keywords=("fdv", "500m"),
+        matched_keywords=("threshold", "target"),
         trading_status=TradingStatus.ELIGIBLE,
     )
     secondary = Market(
@@ -93,7 +88,7 @@ def test_strategy_service_uses_strategy_sizing_policy() -> None:
         no_token_id="no-2",
         yes_token_id="yes-2",
         category="Crypto",
-        matched_keywords=("fdv", "500m"),
+        matched_keywords=("threshold", "target"),
         trading_status=TradingStatus.ELIGIBLE,
     )
     registry.upsert(primary)
@@ -131,9 +126,9 @@ def _snapshot(market: Market) -> OrderbookSnapshot:
     return OrderbookSnapshot(
         token_id=market.no_token_id,
         best_bid=Decimal("0.55"),
-        best_ask=Decimal("0.60"),
+        best_ask=Decimal("0.43"),
         bids=(PriceLevel(price=Decimal("0.55"), size=Decimal("100")),),
-        asks=(PriceLevel(price=Decimal("0.60"), size=Decimal("100")),),
+        asks=(PriceLevel(price=Decimal("0.43"), size=Decimal("100")),),
         received_at=datetime.now(timezone.utc),
         market_slug=market.market_slug,
         condition_id=market.condition_id,

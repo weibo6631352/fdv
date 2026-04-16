@@ -15,7 +15,7 @@
 - 缺失交易字段的 market 会被拒绝。
 - 只有 universe 选择通过且风控放行的 market 才能进入可交易集合。
 - 非目标 universe 的 market 会被当前策略排除。
-- `NO best ask > 0.60` 不触发买入。
+- 超过策略入场价格上限的 `NO best ask` 不触发买入。
 - FAK partial fill 只对成交 shares 挂 SELL。
 - FAK no fill 会释放预算并重新分配。
 - open BUY 异常会触发 cancel。

@@ -37,7 +37,7 @@ def test_market_ws_worker_emits_orderbook_updates_to_trading_lane() -> None:
                 "type": "best_bid_ask",
                 "token_id": market.no_token_id,
                 "best_bid": "0.55",
-                "best_ask": "0.60",
+                "best_ask": "0.43",
                 "best_bid_size": "100",
                 "best_ask_size": "200",
             }
@@ -327,7 +327,7 @@ def test_market_ws_worker_overwrites_latest_snapshot() -> None:
                 "type": "best_bid_ask",
                 "token_id": market.no_token_id,
                 "best_bid": "0.56",
-                "best_ask": "0.60",
+                "best_ask": "0.43",
                 "best_bid_size": "110",
                 "best_ask_size": "210",
             }
@@ -357,7 +357,10 @@ def test_market_ws_worker_overwrites_latest_snapshot() -> None:
         assert snapshot is not None
         assert snapshot.best_bid == Decimal("0.55")
         assert snapshot.best_ask == Decimal("0.59")
-        assert worker.status_snapshot().entry_price_touched_token_ids == ()
+        assert worker.status_snapshot().tracked_token_ids == (
+            market.no_token_id,
+            market.yes_token_id,
+        )
 
     asyncio.run(run())
 
@@ -384,7 +387,10 @@ def test_market_ws_worker_routes_orderbook_updates_to_trading_queue() -> None:
         assert [str(event.event_type) for event in events] == [
             DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
         ]
-        assert worker.status_snapshot().entry_price_touched_token_ids == ()
+        assert worker.status_snapshot().tracked_token_ids == (
+            market.no_token_id,
+            market.yes_token_id,
+        )
         assert event_bus.trading_queue_depth() == 1
         assert event_bus.maintenance_queue_depth() == 0
 

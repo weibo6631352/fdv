@@ -72,12 +72,12 @@ def _snapshot(
 def _entry_event(market: Market, *, trace_id: str) -> DomainEvent:
     return DomainEvent(
         trace_id=trace_id,
-        event_type=DomainEventType.ENTRY_PRICE_TOUCHED,
+        event_type=DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED,
         event_id=f"{trace_id}-event",
         market_slug=market.market_slug,
         condition_id=market.condition_id,
         token_id=market.no_token_id,
-        reason="no_best_ask_touched",
+        reason="orderbook_snapshot_updated",
     )
 
 
@@ -201,7 +201,7 @@ def test_strategy_service_allocates_equally_across_eligible_markets() -> None:
     assert plan.intent.amount_usdc == Decimal("50")
 
 
-def test_strategy_worker_turns_entry_price_touch_into_risk_result() -> None:
+def test_strategy_worker_turns_orderbook_update_into_risk_result() -> None:
     async def run() -> None:
         event_bus = EventBus()
         registry = MarketRegistry()
@@ -220,10 +220,7 @@ def test_strategy_worker_turns_entry_price_touch_into_risk_result() -> None:
         strategy_worker = StrategyWorker(
             event_bus=event_bus,
             strategy_service=strategy_service,
-            trading_service=TradingService(
-                executor=executor,
-                runtime_profile=strategy.runtime_profile,
-            ),
+            trading_service=TradingService(executor=executor),
             account_state_store=account_state_store,
             portfolio_budget_usdc=Decimal("100"),
             available_usdc=Decimal("100"),
@@ -288,10 +285,7 @@ def test_strategy_worker_partial_fill_only_sells_filled_shares() -> None:
         )
         strategy_worker = StrategyWorker(
             strategy_service=strategy_service,
-            trading_service=TradingService(
-                executor=executor,
-                runtime_profile=strategy.runtime_profile,
-            ),
+            trading_service=TradingService(executor=executor),
             account_state_store=account_state_store,
             portfolio_budget_usdc=Decimal("100"),
             available_usdc=Decimal("100"),
@@ -362,10 +356,7 @@ def test_strategy_worker_tracks_live_follow_up_sell_in_hot_state() -> None:
         )
         strategy_worker = StrategyWorker(
             strategy_service=strategy_service,
-            trading_service=TradingService(
-                executor=executor,
-                runtime_profile=strategy.runtime_profile,
-            ),
+            trading_service=TradingService(executor=executor),
             account_state_store=account_state_store,
             portfolio_budget_usdc=Decimal("100"),
             available_usdc=Decimal("100"),
@@ -442,10 +433,7 @@ def test_strategy_worker_no_fill_releases_budget_for_next_market() -> None:
         )
         strategy_worker = StrategyWorker(
             strategy_service=strategy_service,
-            trading_service=TradingService(
-                executor=executor,
-                runtime_profile=strategy.runtime_profile,
-            ),
+            trading_service=TradingService(executor=executor),
             account_state_store=account_state_store,
             portfolio_budget_usdc=Decimal("100"),
             available_usdc=Decimal("100"),
@@ -469,7 +457,7 @@ def test_strategy_worker_no_fill_releases_budget_for_next_market() -> None:
         assert any(
             event.event_type == DomainEventType.ORDER_NO_FILL for event in first_result.emitted_events
         )
-        assert account_state_store.snapshot().allow_new_buys is True
+        assert account_state_store.snapshot().allow_new_entries is True
         assert account_state_store.snapshot().balance_usdc == Decimal("100")
 
         second_result = await strategy_worker.process_event(

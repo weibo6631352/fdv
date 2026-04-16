@@ -73,9 +73,9 @@ def test_supervisor_pauses_low_priority_when_trading_queue_backlog_exceeds_thres
             "P0",
             DomainEvent(
                 trace_id="trace-1",
-                event_type=DomainEventType.ENTRY_PRICE_TOUCHED,
+                event_type=DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED,
                 event_id="event-1",
-                reason="entry",
+                reason="orderbook",
             ),
         )
         await event_bus.publish(

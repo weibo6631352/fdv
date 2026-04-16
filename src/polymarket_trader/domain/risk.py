@@ -9,7 +9,6 @@ from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.order import Order, OrderIntent, OrderSide, OrderStatus
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.domain.position import Position
-from polymarket_trader.domain.strategy_profile import StrategyRuntimeProfile
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,14 +64,12 @@ class RiskManager:
         open_orders_count: int | None = None,
         retry_count: int = 0,
         order_retry_limit: int | None = None,
-        runtime_profile: StrategyRuntimeProfile | None = None,
         max_order_usdc: Decimal | None = None,
         max_market_usdc: Decimal | None = None,
         max_total_usdc: Decimal | None = None,
         max_open_orders: int | None = None,
         min_order_size: Decimal | None = None,
     ) -> RiskCheckResult:
-        profile = runtime_profile or StrategyRuntimeProfile()
         # 这里只读本地快照和热状态；P0 路径不允许为了下单临时打 REST 或查数据库。
         open_orders = tuple(open_orders)
         if portfolio_total_invested_usdc is None and allocation_plan is not None:
@@ -208,18 +205,6 @@ class RiskManager:
                 checks=checks,
                 name="price_gate",
                 reason="price_invalid",
-                field="intent.price",
-                value=intent.price,
-                suggested_action="reject",
-                retryable=False,
-            )
-
-        if intent.side == OrderSide.BUY and intent.price > profile.entry_no_price_max:
-            return self._fail(
-                trace_id=intent.trace_id,
-                checks=checks,
-                name="price_gate",
-                reason="price_above_entry_max",
                 field="intent.price",
                 value=intent.price,
                 suggested_action="reject",
@@ -381,38 +366,7 @@ class RiskManager:
             )
 
         if orderbook is not None:
-            spread = orderbook.spread
-            if (
-                profile.max_spread is not None
-                and spread is not None
-                and spread > profile.max_spread
-            ):
-                return self._fail(
-                    trace_id=intent.trace_id,
-                    checks=checks,
-                    name="spread_gate",
-                    reason="spread_too_wide",
-                    field="orderbook.spread",
-                    value={"spread": spread, "max_spread": profile.max_spread},
-                    suggested_action="wait",
-                    retryable=True,
-                )
-
             depth_usdc = _orderbook_depth_usdc(orderbook, price_cap=intent.price)
-            if depth_usdc < profile.min_liquidity_usdc:
-                return self._fail(
-                    trace_id=intent.trace_id,
-                    checks=checks,
-                    name="liquidity_gate",
-                    reason="liquidity_insufficient",
-                    field="orderbook.depth_usdc",
-                    value={
-                        "depth_usdc": depth_usdc,
-                        "min_liquidity_usdc": profile.min_liquidity_usdc,
-                    },
-                    suggested_action="wait",
-                    retryable=True,
-                )
             if depth_usdc < notional_usdc:
                 return self._fail(
                     trace_id=intent.trace_id,

@@ -45,11 +45,11 @@ def test_user_ws_worker_tracks_balance_position_and_connection_state() -> None:
         assert position_result.events[0].event_type == DomainEventType.POSITION_UPDATED
 
         disconnected = await worker.set_connection_state(False, trace_id="trace-disconnect")
-        assert disconnected.snapshot.allow_new_buys is False
+        assert disconnected.snapshot.allow_new_entries is False
 
         reconnected = await worker.set_connection_state(True, trace_id="trace-reconnect")
         assert reconnected.snapshot.user_ws_connected is True
-        assert reconnected.snapshot.allow_new_buys is False
+        assert reconnected.snapshot.allow_new_entries is False
 
     asyncio.run(run())
 
@@ -61,21 +61,21 @@ def test_user_ws_worker_requires_reconcile_after_reconnect_before_buying_resumes
 
         await worker.set_connection_state(True, trace_id="trace-reconnect")
         assert store.snapshot().user_ws_connected is True
-        assert store.snapshot().allow_new_buys is False
+        assert store.snapshot().allow_new_entries is False
         assert store.snapshot().last_reconcile_at is None
 
         store.mark_reconciled()
         assert store.snapshot().last_reconcile_at is not None
-        assert store.snapshot().allow_new_buys is True
+        assert store.snapshot().allow_new_entries is True
 
         await worker.set_connection_state(False, trace_id="trace-disconnect")
         assert store.snapshot().user_ws_connected is False
-        assert store.snapshot().allow_new_buys is False
+        assert store.snapshot().allow_new_entries is False
         assert store.snapshot().last_reconcile_at is None
 
         await worker.set_connection_state(True, trace_id="trace-reconnect-again")
         assert store.snapshot().user_ws_connected is True
-        assert store.snapshot().allow_new_buys is False
+        assert store.snapshot().allow_new_entries is False
         assert store.snapshot().last_reconcile_at is None
 
     asyncio.run(run())

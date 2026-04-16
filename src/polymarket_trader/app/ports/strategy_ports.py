@@ -43,7 +43,7 @@ class MarketDataPort:
             if market is not None:
                 return market
         if token_id is not None:
-            return self._registry.get_by_no_token_id(token_id)
+            return self._registry.get_by_token_id(token_id)
         return None
 
     def list_markets(self) -> tuple[Market, ...]:
@@ -91,8 +91,8 @@ class RuntimeStatePort:
     def is_market_paused(self, condition_id: str) -> bool:
         return self._snapshot_provider().is_market_paused(condition_id)
 
-    def can_open_new_buys(self) -> bool:
-        return self._snapshot_provider().allow_new_buys
+    def can_open_new_entries(self) -> bool:
+        return self._snapshot_provider().allow_new_entries
 
 
 class OrderHistoryPort:

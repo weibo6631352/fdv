@@ -22,7 +22,6 @@ from polymarket_trader.domain.order import (
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.domain.position import Position
 from polymarket_trader.domain.risk import RiskCheckResult, RiskManager
-from strategy_sdk import StrategyRuntimeProfile
 
 
 class TradingService:
@@ -32,11 +31,9 @@ class TradingService:
         self,
         *,
         risk_manager: RiskManager | None = None,
-        runtime_profile: StrategyRuntimeProfile | None = None,
         executor: object | None = None,
     ) -> None:
         self._risk_manager = risk_manager or RiskManager()
-        self._runtime_profile = runtime_profile or StrategyRuntimeProfile()
         self._executor = executor
 
     async def review_intent(
@@ -92,7 +89,6 @@ class TradingService:
             open_orders_count=open_orders_count,
             retry_count=retry_count,
             order_retry_limit=order_retry_limit,
-            runtime_profile=self._runtime_profile,
             max_order_usdc=max_order_usdc,
             max_market_usdc=max_market_usdc,
             max_total_usdc=max_total_usdc,

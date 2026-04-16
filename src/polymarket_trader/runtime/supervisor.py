@@ -342,7 +342,7 @@ class Supervisor:
             RuntimePhase.TRADING_ENABLED,
         }
         automatic_trading_enabled = (
-            ready and _bool(account_snapshot, "allow_new_buys", user_ws_connected)
+            ready and _bool(account_snapshot, "allow_new_entries", user_ws_connected)
         )
         return ReadinessSnapshot(
             phase=self._phase,

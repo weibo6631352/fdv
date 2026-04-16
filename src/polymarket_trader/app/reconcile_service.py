@@ -6,6 +6,7 @@ from decimal import Decimal
 from enum import StrEnum
 from uuid import uuid4
 
+from polymarket_trader.app.strategy_service import decision_to_managed_intent
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.order import (
     BuyOrderIntent,
@@ -16,17 +17,15 @@ from polymarket_trader.domain.order import (
     SellOrderIntent,
 )
 from polymarket_trader.domain.position import Position
-from polymarket_trader.domain.strategy import StrategyEngine
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistrySnapshot
-from strategy_sdk import StrategyAction, StrategyContext, StrategyDecision, StrategyModule
+from strategy_sdk import StrategyContext, StrategyModule
 
 
 class ReconcileActionType(StrEnum):
-    CANCEL_OPEN_BUY = "cancel_open_buy"
-    SUBMIT_MISSING_SELL = "submit_missing_sell"
-    REPLACE_OPEN_SELL = "replace_open_sell"
-    CANCEL_EXCESS_SELL = "cancel_excess_sell"
+    CANCEL_ORDER = "cancel_order"
+    SUBMIT_ORDER = "submit_order"
+    REPLACE_ORDER = "replace_order"
     PAUSE_TRADING = "pause_trading"
 
 
@@ -42,10 +41,6 @@ def _order_open_size(order: Order) -> Decimal:
     if order.amount_usdc is not None:
         return max(order.amount_usdc, Decimal("0"))
     return Decimal("0")
-
-
-def _order_created_at(order: Order) -> datetime:
-    return order.created_at or datetime.max.replace(tzinfo=timezone.utc)
 
 
 def _normalize_order_id(order: Order) -> str:
@@ -71,9 +66,7 @@ class ReconcileAction:
 
     @property
     def priority(self) -> int:
-        if self.action_type == ReconcileActionType.PAUSE_TRADING:
-            return 1
-        return 2
+        return 1 if self.action_type == ReconcileActionType.PAUSE_TRADING else 2
 
     @property
     def merge_key(self) -> str:
@@ -93,8 +86,7 @@ class ReconcileMarketPlan:
     trace_id: str
     market: Market
     position: Position | None
-    open_buy_orders: tuple[Order, ...]
-    open_sell_orders: tuple[Order, ...]
+    open_orders: tuple[Order, ...]
     actions: tuple[ReconcileAction, ...]
     pause_trading: bool
     pause_reason: str | None = None
@@ -122,16 +114,14 @@ class ReconcilePlan:
 
 
 class ReconcileService:
-    """Builds reconcile diffs and strategy-driven repair intents from hot snapshots."""
+    """Builds strategy-driven reconcile diffs from hot snapshots."""
 
     def __init__(
         self,
         *,
         strategy_module: StrategyModule,
-        strategy_engine: StrategyEngine | None = None,
     ) -> None:
         self._strategy_module = strategy_module
-        self._strategy_engine = strategy_engine or StrategyEngine()
 
     def build_reconcile_plan(
         self,
@@ -173,175 +163,53 @@ class ReconcileService:
         trace_id: str | None = None,
     ) -> ReconcileMarketPlan:
         trace_id = trace_id or uuid4().hex
-        position = account_snapshot.get_position(market.condition_id, market.no_token_id)
-        open_buy_orders = account_snapshot.open_buy_orders_for_market(
+        token_id = market.no_token_id
+        position = account_snapshot.get_position(market.condition_id, token_id)
+        open_orders = account_snapshot.open_orders_for_market(
             market.condition_id,
-            market.no_token_id,
-        )
-        open_sell_orders = account_snapshot.open_sell_orders_for_market(
-            market.condition_id,
-            market.no_token_id,
+            token_id,
         )
         recovery = self._strategy_module.decide_recovery(
             StrategyContext(
                 trace_id=trace_id,
                 market=market,
+                token_id=token_id,
                 account_snapshot=account_snapshot,
                 position=position,
-                open_orders=tuple((*open_buy_orders, *open_sell_orders)),
+                open_orders=open_orders,
             )
         )
 
         pause_trading = (
             market.trading_status in {TradingStatus.PAUSED, TradingStatus.CLOSED, TradingStatus.RESOLVED}
             or account_snapshot.is_market_paused(market.condition_id)
-            or recovery.pause_market
+            or recovery.pause_trading
         )
         pause_reason = recovery.pause_reason or _pause_reason(market, account_snapshot)
 
-        actions: list[ReconcileAction] = []
-        cancel_order_ids = set(recovery.cancel_order_ids)
-        replace_requests = {
-            request.order_id: request
-            for request in recovery.replace_requests
-            if request.order_id
+        order_index = {
+            _normalize_order_id(order): order
+            for order in open_orders
         }
-
-        for order in open_buy_orders:
-            order_id = _normalize_order_id(order)
-            if cancel_order_ids and order_id not in cancel_order_ids:
+        actions: list[ReconcileAction] = []
+        for decision in recovery.actions:
+            intent = decision_to_managed_intent(
+                trace_id=trace_id,
+                condition_id=market.condition_id,
+                market_slug=market.market_slug,
+                default_token_id=token_id,
+                decision=decision,
+            )
+            if intent is None:
                 continue
-            actions.append(
-                ReconcileAction(
-                    action_type=ReconcileActionType.CANCEL_OPEN_BUY,
-                    trace_id=trace_id,
-                    condition_id=market.condition_id,
-                    token_id=market.no_token_id,
-                    market_slug=market.market_slug,
-                    reason=order.reason or "open_buy_detected",
-                    source_order_id=order_id,
-                    source_order_side=order.side,
-                    intent=self._strategy_engine.build_cancel_intent(
-                        trace_id=trace_id,
-                        condition_id=market.condition_id,
-                        no_token_id=market.no_token_id,
-                        order_id=order_id,
-                        market_slug=market.market_slug,
-                        reason=order.reason or "open_buy_detected",
-                    ),
-                )
-            )
-
-        planned_open_sell_shares = sum((_order_open_size(order) for order in open_sell_orders), Decimal("0"))
-        replaced_open_sell_shares = Decimal("0")
-        replacement_sell_shares = Decimal("0")
-        replace_candidates: list[tuple[Order, object]] = []
-        for order in open_sell_orders:
-            order_id = _normalize_order_id(order)
-            replace_request = replace_requests.get(order_id)
-            if replace_request is None:
-                continue
-            replace_candidates.append((order, replace_request))
-            replaced_open_sell_shares += _order_open_size(order)
-            replacement_sell_shares += max(replace_request.size_shares, Decimal("0"))
-        if replace_candidates:
-            planned_open_sell_shares = max(
-                planned_open_sell_shares - replaced_open_sell_shares + replacement_sell_shares,
-                Decimal("0"),
-            )
-
-        for order, replace_request in replace_candidates:
-            order_id = _normalize_order_id(order)
-            replace_reason = replace_request.reason or "sell_replace_requested"
-            actions.append(
-                ReconcileAction(
-                    action_type=ReconcileActionType.REPLACE_OPEN_SELL,
-                    trace_id=trace_id,
-                    condition_id=market.condition_id,
-                    token_id=market.no_token_id,
-                    market_slug=market.market_slug,
-                    reason=replace_reason,
-                    source_order_id=order_id,
-                    source_order_side=order.side,
-                    target_size_shares=replace_request.size_shares,
-                    target_notional_usdc=replace_request.size_shares * replace_request.new_price,
-                    intent=self._strategy_engine.build_replace_intent(
-                        trace_id=trace_id,
-                        condition_id=market.condition_id,
-                        no_token_id=market.no_token_id,
-                        order_id=order_id,
-                        new_price=replace_request.new_price,
-                        size_shares=replace_request.size_shares,
-                        market_slug=market.market_slug,
-                        reason=replace_reason,
-                    ),
-                )
-            )
-
-        target_sell_shares = max(recovery.target_sell_size_shares, Decimal("0"))
-        open_sell_shares = planned_open_sell_shares
-
-        shortage = max(target_sell_shares - open_sell_shares, Decimal("0"))
-        if shortage > Decimal("0"):
-            sell_intent = _decision_to_sell_intent(
+            action = _action_from_intent(
                 trace_id=trace_id,
                 market=market,
-                decision=self._strategy_module.decide_exit(
-                    StrategyContext(
-                        trace_id=trace_id,
-                        market=market,
-                        account_snapshot=account_snapshot,
-                        position=position,
-                        open_orders=open_sell_orders,
-                        metadata={"size_shares": shortage},
-                    )
-                ),
+                intent=intent,
+                reason=decision.reason,
+                order_index=order_index,
             )
-            if sell_intent is not None:
-                actions.append(
-                    ReconcileAction(
-                        action_type=ReconcileActionType.SUBMIT_MISSING_SELL,
-                        trace_id=trace_id,
-                    condition_id=market.condition_id,
-                    token_id=market.no_token_id,
-                    market_slug=market.market_slug,
-                    reason="sell_coverage_short",
-                    target_size_shares=shortage,
-                    target_notional_usdc=shortage * sell_intent.price,
-                        intent=sell_intent,
-                    )
-                )
-
-        excess = max(open_sell_shares - target_sell_shares, Decimal("0"))
-        if excess > Decimal("0"):
-            sell_orders_for_cancellation = tuple(
-                order
-                for order in open_sell_orders
-                if _normalize_order_id(order) not in replace_requests
-            )
-            for order in self._select_sell_cancellations(sell_orders_for_cancellation, excess):
-                order_id = _normalize_order_id(order)
-                actions.append(
-                    ReconcileAction(
-                        action_type=ReconcileActionType.CANCEL_EXCESS_SELL,
-                        trace_id=trace_id,
-                        condition_id=market.condition_id,
-                        token_id=market.no_token_id,
-                        market_slug=market.market_slug,
-                        reason="sell_coverage_excess",
-                        source_order_id=order_id,
-                        source_order_side=order.side,
-                        target_size_shares=_order_open_size(order),
-                        intent=self._strategy_engine.build_cancel_intent(
-                            trace_id=trace_id,
-                            condition_id=market.condition_id,
-                            no_token_id=market.no_token_id,
-                            order_id=order_id,
-                            market_slug=market.market_slug,
-                            reason="sell_coverage_excess",
-                        ),
-                    )
-                )
+            actions.append(action)
 
         if pause_trading:
             actions.append(
@@ -349,7 +217,7 @@ class ReconcileService:
                     action_type=ReconcileActionType.PAUSE_TRADING,
                     trace_id=trace_id,
                     condition_id=market.condition_id,
-                    token_id=market.no_token_id,
+                    token_id=token_id,
                     market_slug=market.market_slug,
                     reason="market_not_tradable",
                     pause_reason=pause_reason,
@@ -360,39 +228,67 @@ class ReconcileService:
             trace_id=trace_id,
             market=market,
             position=position,
-            open_buy_orders=open_buy_orders,
-            open_sell_orders=open_sell_orders,
+            open_orders=open_orders,
             actions=tuple(actions),
             pause_trading=pause_trading,
             pause_reason=pause_reason,
         )
 
-    def _select_sell_cancellations(
-        self,
-        open_sell_orders: tuple[Order, ...],
-        excess: Decimal,
-    ) -> tuple[Order, ...]:
-        selected: list[Order] = []
-        remaining_excess = excess
-        for order in sorted(
-            open_sell_orders,
-            key=lambda item: (
-                _order_open_size(item),
-                _order_created_at(item),
-                _normalize_order_id(item),
-            ),
-        ):
-            if remaining_excess <= Decimal("0"):
-                break
-            selected.append(order)
-            remaining_excess -= _order_open_size(order)
-        return tuple(selected)
 
-
-def _position_shares(position: Position | None) -> Decimal:
-    if position is None:
-        return Decimal("0")
-    return max(position.shares, Decimal("0"))
+def _action_from_intent(
+    *,
+    trace_id: str,
+    market: Market,
+    intent: BuyOrderIntent | SellOrderIntent | CancelOrderIntent | ReplaceOrderIntent,
+    reason: str,
+    order_index: dict[str, Order],
+) -> ReconcileAction:
+    if isinstance(intent, CancelOrderIntent):
+        source = order_index.get(intent.order_id)
+        return ReconcileAction(
+            action_type=ReconcileActionType.CANCEL_ORDER,
+            trace_id=trace_id,
+            condition_id=intent.condition_id,
+            token_id=intent.token_id,
+            market_slug=intent.market_slug,
+            reason=reason,
+            source_order_id=intent.order_id,
+            source_order_side=None if source is None else source.side,
+            target_size_shares=None if source is None else _order_open_size(source),
+            intent=intent,
+        )
+    if isinstance(intent, ReplaceOrderIntent):
+        source = order_index.get(intent.order_id)
+        return ReconcileAction(
+            action_type=ReconcileActionType.REPLACE_ORDER,
+            trace_id=trace_id,
+            condition_id=intent.condition_id,
+            token_id=intent.token_id,
+            market_slug=intent.market_slug,
+            reason=reason,
+            source_order_id=intent.order_id,
+            source_order_side=None if source is None else source.side,
+            target_size_shares=intent.size_shares,
+            target_notional_usdc=intent.size_shares * intent.new_price,
+            intent=intent,
+        )
+    target_notional_usdc = getattr(intent, "amount_usdc", None)
+    if target_notional_usdc is None and getattr(intent, "price", None) is not None:
+        size_shares = getattr(intent, "size_shares", None)
+        if size_shares is not None:
+            target_notional_usdc = intent.price * size_shares
+    return ReconcileAction(
+        action_type=ReconcileActionType.SUBMIT_ORDER,
+        trace_id=trace_id,
+        condition_id=intent.condition_id,
+        token_id=intent.token_id,
+        market_slug=intent.market_slug or market.market_slug,
+        reason=reason,
+        source_order_side=intent.side,
+        target_size_shares=getattr(intent, "size_shares", None),
+        target_notional_usdc=target_notional_usdc,
+        intent=intent,
+    )
 
 
 def _pause_reason(market: Market, account_snapshot: AccountSnapshot) -> str:
@@ -405,23 +301,3 @@ def _pause_reason(market: Market, account_snapshot: AccountSnapshot) -> str:
     if account_snapshot.is_market_paused(market.condition_id):
         return dict(account_snapshot.pause_reasons).get(market.condition_id, "manual_pause")
     return ""
-
-
-def _decision_to_sell_intent(
-    *,
-    trace_id: str,
-    market: Market,
-    decision: StrategyDecision,
-) -> SellOrderIntent | None:
-    if decision.action != StrategyAction.SELL:
-        return None
-    if decision.price is None or decision.size_shares is None or decision.size_shares <= Decimal("0"):
-        return None
-    return SellOrderIntent(
-        trace_id=trace_id,
-        condition_id=market.condition_id,
-        token_id=market.no_token_id,
-        price=decision.price,
-        size_shares=decision.size_shares,
-        market_slug=decision.market_slug or market.market_slug,
-    )

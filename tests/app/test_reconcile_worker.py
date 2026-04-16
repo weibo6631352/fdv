@@ -27,10 +27,8 @@ from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
 from strategy_sdk.models import (
     RecoveryDecision,
-    RecoveryReplaceRequest,
     StrategyContext,
     StrategyDecision,
-    StrategyRuntimeProfile,
     StrategySpec,
     UniverseDecision,
 )
@@ -100,10 +98,6 @@ class _ReplaceRecoveryStrategy:
             capabilities=("universe", "entry", "exit", "recovery"),
         )
 
-    @property
-    def runtime_profile(self) -> StrategyRuntimeProfile:
-        return StrategyRuntimeProfile()
-
     def build_discovery_queries(self) -> tuple[object, ...]:
         return ()
 
@@ -122,16 +116,20 @@ class _ReplaceRecoveryStrategy:
     def decide_recovery(self, context: StrategyContext) -> RecoveryDecision:
         return RecoveryDecision(
             reason="replace_existing_sell",
-            target_sell_size_shares=Decimal("5"),
-            replace_requests=(
-                RecoveryReplaceRequest(
-                    order_id="sell-1",
-                    new_price=Decimal("0.72"),
-                    size_shares=Decimal("5"),
+            actions=(
+                StrategyDecision.replace(
                     reason="repriced",
+                    token_id=context.token_id,
+                    order_id="sell-1",
+                    price=Decimal("0.81"),
+                    size_shares=Decimal("5"),
+                    market_slug=context.market.market_slug if context.market is not None else None,
                 ),
             ),
         )
+
+    def decide_follow_up(self, context: StrategyContext) -> tuple[StrategyDecision, ...]:
+        return ()
 
 
 class _StubGammaMarket:
@@ -206,13 +204,13 @@ def test_reconcile_worker_cancels_open_buy_and_backfills_missing_sell() -> None:
         registry = MarketRegistry()
         market = Market(
             condition_id="condition",
-            market_slug="token-500m-fdv",
+            market_slug="token-threshold-market",
             no_token_id="token",
             yes_token_id="yes-token",
             tick_size=Decimal("0.01"),
             min_order_size=Decimal("1"),
-            event_title="Will token FDV reach a threshold?",
-            market_question="Will this project hit $500M FDV?",
+            event_title="Will token reach a threshold?",
+            market_question="Will this project hit the target threshold?",
             category="Crypto",
             trading_status=TradingStatus.ELIGIBLE,
         )
@@ -236,7 +234,7 @@ def test_reconcile_worker_cancels_open_buy_and_backfills_missing_sell() -> None:
                 market_slug=market.market_slug,
                 side=OrderSide.BUY,
                 order_type=OrderType.FAK,
-                price=Decimal("0.60"),
+                price=Decimal("0.43"),
                 amount_usdc=Decimal("3"),
                 order_id="buy-1",
                 status=OrderStatus.LIVE,
@@ -259,8 +257,8 @@ def test_reconcile_worker_cancels_open_buy_and_backfills_missing_sell() -> None:
 
         assert result.plan.has_changes
         action_types = {action.action_type for action in result.plan.market_plans[0].actions}
-        assert ReconcileActionType.CANCEL_OPEN_BUY in action_types
-        assert ReconcileActionType.SUBMIT_MISSING_SELL in action_types
+        assert ReconcileActionType.CANCEL_ORDER in action_types
+        assert ReconcileActionType.SUBMIT_ORDER in action_types
 
     asyncio.run(run())
 
@@ -270,21 +268,21 @@ def test_reconcile_worker_refreshes_market_fee_fields() -> None:
         registry = MarketRegistry()
         current_market = Market(
             condition_id="condition",
-            market_slug="token-500m-fdv",
+            market_slug="token-threshold-market",
             no_token_id="token",
             yes_token_id="yes-token",
             tick_size=Decimal("0.01"),
             min_order_size=Decimal("1"),
             category="Crypto",
-            event_title="Will token FDV reach a threshold?",
-            market_question="Will this project hit $500M FDV?",
+            event_title="Will token reach a threshold?",
+            market_question="Will this project hit the target threshold?",
             trading_status=TradingStatus.ELIGIBLE,
         )
         registry.upsert(current_market)
 
         refreshed_market = Market(
             condition_id="condition",
-            market_slug="token-500m-fdv",
+            market_slug="token-threshold-market",
             no_token_id="token",
             yes_token_id="yes-token",
             tick_size=Decimal("0.01"),
@@ -293,8 +291,8 @@ def test_reconcile_worker_refreshes_market_fee_fields() -> None:
             fees_enabled=True,
             maker_base_fee_bps=0,
             category="Crypto",
-            event_title="Will token FDV reach a threshold?",
-            market_question="Will this project hit $500M FDV?",
+            event_title="Will token reach a threshold?",
+            market_question="Will this project hit the target threshold?",
             trading_status=TradingStatus.ELIGIBLE,
         )
         orderbook_snapshot = OrderbookSnapshot(
@@ -304,7 +302,7 @@ def test_reconcile_worker_refreshes_market_fee_fields() -> None:
             bids=(PriceLevel(price=Decimal("0.55"), size=Decimal("100")),),
             asks=(PriceLevel(price=Decimal("0.59"), size=Decimal("200")),),
             received_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            market_slug="token-500m-fdv",
+            market_slug="token-threshold-market",
             condition_id="condition",
             best_bid_size=Decimal("100"),
             best_ask_size=Decimal("200"),
@@ -343,22 +341,22 @@ def test_reconcile_worker_keeps_gamma_fee_schedule_without_fetching_fee_rate() -
         registry = MarketRegistry()
         current_market = Market(
             condition_id="condition",
-            market_slug="token-500m-fdv",
+            market_slug="token-threshold-market",
             no_token_id="token",
             yes_token_id="yes-token",
             tick_size=Decimal("0.01"),
             min_order_size=Decimal("1"),
             neg_risk=False,
             category="Crypto",
-            event_title="Will token FDV reach a threshold?",
-            market_question="Will this project hit $500M FDV?",
+            event_title="Will token reach a threshold?",
+            market_question="Will this project hit the target threshold?",
             trading_status=TradingStatus.ELIGIBLE,
         )
         registry.upsert(current_market)
 
         refreshed_market = Market(
             condition_id="condition",
-            market_slug="token-500m-fdv",
+            market_slug="token-threshold-market",
             no_token_id="token",
             yes_token_id="yes-token",
             tick_size=Decimal("0.01"),
@@ -369,8 +367,8 @@ def test_reconcile_worker_keeps_gamma_fee_schedule_without_fetching_fee_rate() -
             taker_base_fee_bps=72,
             fee_rate_bps=72,
             category="Crypto",
-            event_title="Will token FDV reach a threshold?",
-            market_question="Will this project hit $500M FDV?",
+            event_title="Will token reach a threshold?",
+            market_question="Will this project hit the target threshold?",
             trading_status=TradingStatus.ELIGIBLE,
         )
         orderbook_snapshot = OrderbookSnapshot(
@@ -380,7 +378,7 @@ def test_reconcile_worker_keeps_gamma_fee_schedule_without_fetching_fee_rate() -
             bids=(PriceLevel(price=Decimal("0.55"), size=Decimal("100")),),
             asks=(PriceLevel(price=Decimal("0.59"), size=Decimal("200")),),
             received_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            market_slug="token-500m-fdv",
+            market_slug="token-threshold-market",
             condition_id="condition",
             best_bid_size=Decimal("100"),
             best_ask_size=Decimal("200"),
@@ -416,13 +414,13 @@ def test_reconcile_worker_executes_replace_requests_and_keeps_sell_coverage() ->
         registry = MarketRegistry()
         market = Market(
             condition_id="condition",
-            market_slug="token-500m-fdv",
+            market_slug="token-threshold-market",
             no_token_id="token",
             yes_token_id="yes-token",
             tick_size=Decimal("0.01"),
             min_order_size=Decimal("1"),
-            event_title="Will token FDV reach a threshold?",
-            market_question="Will this project hit $500M FDV?",
+            event_title="Will token reach a threshold?",
+            market_question="Will this project hit the target threshold?",
             category="Crypto",
             trading_status=TradingStatus.ELIGIBLE,
         )
@@ -447,7 +445,7 @@ def test_reconcile_worker_executes_replace_requests_and_keeps_sell_coverage() ->
                 market_slug=market.market_slug,
                 side=OrderSide.SELL,
                 order_type=OrderType.GTC,
-                price=Decimal("0.70"),
+                price=Decimal("0.78"),
                 size_shares=Decimal("5"),
                 remaining_shares=Decimal("5"),
                 notional_usdc=Decimal("3.5"),
@@ -471,11 +469,11 @@ def test_reconcile_worker_executes_replace_requests_and_keeps_sell_coverage() ->
 
         assert result.plan.has_changes
         action_types = {action.action_type for action in result.plan.market_plans[0].actions}
-        assert action_types == {ReconcileActionType.REPLACE_OPEN_SELL}
+        assert action_types == {ReconcileActionType.REPLACE_ORDER}
         assert len(executor.replaced_intents) == 1
         replace_intent = executor.replaced_intents[0]
         assert replace_intent.order_id == "sell-1"
-        assert replace_intent.new_price == Decimal("0.72")
+        assert replace_intent.new_price == Decimal("0.81")
         assert replace_intent.size_shares == Decimal("5")
 
         snapshot = account_state_store.snapshot()
@@ -485,7 +483,7 @@ def test_reconcile_worker_executes_replace_requests_and_keeps_sell_coverage() ->
         open_sell_orders = snapshot.open_sell_orders_for_market(market.condition_id, market.no_token_id)
         assert len(open_sell_orders) == 1
         assert open_sell_orders[0].order_id == "sell-2"
-        assert open_sell_orders[0].price == Decimal("0.72")
+        assert open_sell_orders[0].price == Decimal("0.81")
         assert open_sell_orders[0].remaining_shares == Decimal("5")
 
     asyncio.run(run())
@@ -524,13 +522,13 @@ def test_reconcile_worker_prunes_strategy_filtered_market_after_flattening() -> 
         registry = MarketRegistry()
         market = Market(
             condition_id="condition",
-            market_slug="token-500m-fdv",
+            market_slug="token-threshold-market",
             no_token_id="token",
             yes_token_id="yes-token",
             tick_size=Decimal("0.01"),
             min_order_size=Decimal("1"),
-            event_title="Will token FDV reach a threshold?",
-            market_question="Will this project hit $500M FDV?",
+            event_title="Will token reach a threshold?",
+            market_question="Will this project hit the target threshold?",
             category="Crypto",
             trading_status=TradingStatus.PAUSED,
             reject_reason="strategy_filtered_out",
@@ -561,13 +559,13 @@ def test_reconcile_worker_emits_observe_events_without_requeueing_maintenance() 
         registry = MarketRegistry()
         market = Market(
             condition_id="condition",
-            market_slug="token-500m-fdv",
+            market_slug="token-threshold-market",
             no_token_id="token",
             yes_token_id="yes-token",
             tick_size=Decimal("0.01"),
             min_order_size=Decimal("1"),
-            event_title="Will token FDV reach a threshold?",
-            market_question="Will this project hit $500M FDV?",
+            event_title="Will token reach a threshold?",
+            market_question="Will this project hit the target threshold?",
             category="Crypto",
             trading_status=TradingStatus.ELIGIBLE,
         )

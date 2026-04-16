@@ -29,7 +29,6 @@ _ACCOUNT_EVENT_TYPES = {
 _ORDERBOOK_EVENT_TYPES = {
     DomainEventType.ORDERBOOK.value,
     DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
-    DomainEventType.ENTRY_PRICE_TOUCHED.value,
 }
 _ORDER_EVENT_TYPES = {
     DomainEventType.ORDER_CREATED.value,
@@ -43,7 +42,7 @@ _ORDER_EVENT_TYPES = {
     DomainEventType.ORDER_CANCEL_REQUESTED.value,
     DomainEventType.ORDER_CANCELLED.value,
     DomainEventType.REPLACE_ORDER_SUBMITTED.value,
-    DomainEventType.RESTING_BUY_DETECTED.value,
+    DomainEventType.UNEXPECTED_RESTING_ORDER_DETECTED.value,
 }
 _FILL_EVENT_TYPES = {
     DomainEventType.FILL_RECORDED.value,
@@ -760,7 +759,7 @@ class PersistenceWorker:
             "balance_usdc": _safe_first_payload_value(payload, "balance_usdc"),
             "allowance_usdc": _safe_first_payload_value(payload, "allowance_usdc"),
             "user_ws_connected": _safe_first_payload_value(payload, "user_ws_connected"),
-            "allow_new_buys": _safe_first_payload_value(payload, "allow_new_buys"),
+            "allow_new_entries": _safe_first_payload_value(payload, "allow_new_entries"),
             "paused_markets": _safe_first_payload_value(payload, "paused_markets"),
             "pause_reasons": _safe_first_payload_value(payload, "pause_reasons"),
             "last_reconcile_at": _safe_first_payload_value(payload, "last_reconcile_at"),

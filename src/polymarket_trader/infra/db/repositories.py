@@ -805,7 +805,7 @@ class AccountSnapshotRepository(BaseRepository):
                 "balance_usdc",
                 "allowance_usdc",
                 "user_ws_connected",
-                "allow_new_buys",
+                "allow_new_entries",
                 "paused_markets",
                 "pause_reasons",
                 "last_reconcile_at",

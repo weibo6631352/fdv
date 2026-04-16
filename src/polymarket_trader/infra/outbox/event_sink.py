@@ -70,7 +70,7 @@ def _project_payload(event_type: str, payload: Mapping[str, Any]) -> dict[str, A
             "balance_usdc",
             "allowance_usdc",
             "user_ws_connected",
-            "allow_new_buys",
+            "allow_new_entries",
             "paused_markets",
             "pause_reasons",
             "last_reconcile_at",

@@ -15,7 +15,6 @@ from strategy_sdk import (
     StrategyDecision,
     StrategyModule,
     StrategyPorts,
-    StrategyRuntimeProfile,
     StrategySpec,
     UniverseDecision,
 )
@@ -79,12 +78,6 @@ class CurrentStrategy:
                 "tracking",
             ),
         )
-        self._runtime_profile = StrategyRuntimeProfile(
-            entry_no_price_max=config.entry_no_price_max,
-            min_liquidity_usdc=config.min_liquidity_usdc,
-            max_spread=config.max_spread,
-        )
-
     @property
     def spec(self) -> StrategySpec:
         """返回策略元信息。
@@ -93,16 +86,6 @@ class CurrentStrategy:
         """
 
         return self._spec
-
-    @property
-    def runtime_profile(self) -> StrategyRuntimeProfile:
-        """返回运行时 profile。
-
-        这些值不是直接做交易决策，而是给框架热路径提供公共阈值，
-        比如盘口 watcher 和 risk gate 需要提前知道的价格/深度/spread 门槛。
-        """
-
-        return self._runtime_profile
 
     @property
     def ports(self) -> StrategyPorts:
@@ -142,7 +125,28 @@ class CurrentStrategy:
     def decide_recovery(self, context: StrategyContext) -> RecoveryDecision:
         """根据热状态生成恢复语义。"""
 
-        return decide_recovery(context)
+        return decide_recovery(self._config, context)
+
+    def decide_follow_up(self, context: StrategyContext) -> tuple[StrategyDecision, ...]:
+        """根据成交结果生成后续动作。"""
+
+        if context.order_result is None:
+            return ()
+        if context.order_result.side is None or context.order_result.side.value != "BUY":
+            return ()
+        if context.order_result.matched_shares <= 0:
+            return ()
+        return (
+            StrategyDecision.sell(
+                reason="strategy_exit",
+                token_id=context.order_result.token_id,
+                price=self._config.exit_no_price,
+                size_shares=context.order_result.matched_shares,
+                market_slug=context.order_result.market_slug or (
+                    context.market.market_slug if context.market is not None else None
+                ),
+            ),
+        )
 
     def should_keep_tracking(
         self,

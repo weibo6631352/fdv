@@ -386,7 +386,7 @@ def _orderbook(market: Market) -> OrderbookSnapshot:
 
 def _reconcile_result(market: Market) -> object:
     action = ReconcileAction(
-        action_type=ReconcileActionType.CANCEL_OPEN_BUY,
+        action_type=ReconcileActionType.CANCEL_ORDER,
         trace_id="trace-reconcile",
         condition_id=market.condition_id,
         token_id=market.no_token_id,
@@ -403,8 +403,7 @@ def _reconcile_result(market: Market) -> object:
                 trace_id="trace-reconcile",
                 market=market,
                 position=None,
-                open_buy_orders=(),
-                open_sell_orders=(),
+                open_orders=(),
                 actions=(action,),
                 pause_trading=False,
             ),
@@ -452,7 +451,7 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
             market_slug=market.market_slug,
             side=OrderSide.BUY,
             order_type=OrderType.FAK,
-            price=Decimal("0.60"),
+            price=Decimal("0.43"),
             amount_usdc=Decimal("10"),
             order_id="buy-1",
             status=OrderStatus.LIVE,
@@ -469,7 +468,7 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
             market_slug=market.market_slug,
             side=OrderSide.SELL,
             order_type=OrderType.GTC,
-            price=Decimal("0.70"),
+            price=Decimal("0.78"),
             size_shares=Decimal("5"),
             order_id="sell-1",
             status=OrderStatus.LIVE,
@@ -488,7 +487,7 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
             order_id="sell-1",
             trade_id="trade-1",
             side="SELL",
-            price=Decimal("0.70"),
+            price=Decimal("0.78"),
             size=Decimal("5"),
             notional_usdc=Decimal("3.5"),
             confirmed_at=datetime(2026, 1, 1, 12, 0, 30, tzinfo=timezone.utc),
@@ -659,7 +658,6 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert markets["items"][0]["yes_fee_preview"]["basis_size_shares"] == "100"
         assert markets["items"][0]["yes_fee_preview"]["buy"]["fee_usdc"] == "0.12375"
         assert markets["items"][0]["yes_fee_preview"]["sell"]["fee_usdc"] == "0.59375"
-        assert markets["items"][0]["entry_price_touched"] is True
         assert market_detail["market"]["condition_id"] == "condition-500m"
         assert market_detail["market"]["market_slug"] == "sample-market-a"
         assert market_detail["market"]["icon_url"] == "https://example.com/icon.png"
@@ -698,7 +696,7 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert fills["total"] == 1
         assert fills["items"][0]["trade_id"] == "trade-1"
 
-        assert portfolio["allow_new_buys"] is True
+        assert portfolio["allow_new_entries"] is True
         assert portfolio["markets_tracked"] == 1
         assert portfolio["position_count"] == 1
 
@@ -763,7 +761,7 @@ def test_admin_api_supports_reconcile_and_cancel_replace_sell_routes() -> None:
             "/orders/cancel-replace-sell",
             json={
                 "market_slug": "sample-market-a",
-                "new_price": "0.70",
+                "new_price": "0.78",
                 "operator": "manual",
                 "reason": "admin_reprice",
                 "trace_id": "trace-reprice",
@@ -774,7 +772,7 @@ def test_admin_api_supports_reconcile_and_cancel_replace_sell_routes() -> None:
         reconcile_payload = reconcile_response.json()
         assert reconcile_payload["status"] == "ok"
         assert reconcile_payload["plan"]["total_actions"] == 1
-        assert reconcile_payload["plan"]["market_plans"][0]["actions"][0]["action_type"] == "cancel_open_buy"
+        assert reconcile_payload["plan"]["market_plans"][0]["actions"][0]["action_type"] == "cancel_order"
         assert runtime.reconcile_worker.calls == [("trace-manual-reconcile", ("condition-500m",))]
 
         assert cancel_replace_response.status_code == 200
@@ -782,7 +780,7 @@ def test_admin_api_supports_reconcile_and_cancel_replace_sell_routes() -> None:
         assert cancel_replace_payload["status"] == "ok"
         assert cancel_replace_payload["cancelled_orders"][0]["order_result"]["status"] == "cancelled"
         assert cancel_replace_payload["replace_order_submitted"]["status"] == "live"
-        assert cancel_replace_payload["replace_order_submitted"]["price"] == "0.70"
+        assert cancel_replace_payload["replace_order_submitted"]["price"] == "0.78"
         assert runtime.trading_service.cancel_calls
         assert runtime.trading_service.sell_calls
 

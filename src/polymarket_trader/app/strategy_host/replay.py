@@ -62,7 +62,6 @@ def run_entry_replay(
         strategy_module=strategy,
         registry=registry,
         orderbook_reader=orderbooks.get,
-        runtime_profile=strategy.runtime_profile,
     ).build_entry_plan(
         condition_id=_text(target, "condition_id"),
         token_id=_text(target, "token_id"),

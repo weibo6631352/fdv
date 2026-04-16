@@ -428,7 +428,7 @@ def _account_snapshot_from_record(record: Mapping[str, Any]) -> AccountSnapshot 
         balance_usdc=balance_usdc,
         allowance_usdc=allowance_usdc,
         user_ws_connected=_bool(record.get("user_ws_connected"), False),
-        allow_new_buys=_bool(record.get("allow_new_buys"), False),
+        allow_new_entries=_bool(record.get("allow_new_entries"), False),
         paused_markets=_string_tuple(record.get("paused_markets")),
         pause_reasons=_pair_tuple(record.get("pause_reasons")),
         last_reconcile_at=_datetime(record.get("last_reconcile_at")),

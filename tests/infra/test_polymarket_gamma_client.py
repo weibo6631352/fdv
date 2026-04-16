@@ -51,7 +51,7 @@ async def test_gamma_client_list_events_by_params_passes_through_official_query_
                 "active": True,
                 "closed": False,
                 "tag_slug": "crypto",
-                "title_search": "fdv",
+                "title_search": "threshold",
                 "limit": 50,
                 "offset": 10,
             }
@@ -61,7 +61,7 @@ async def test_gamma_client_list_events_by_params_passes_through_official_query_
     assert request.url.params.get("active") == "true"
     assert request.url.params.get("closed") == "false"
     assert request.url.params.get("tag_slug") == "crypto"
-    assert request.url.params.get("title_search") == "fdv"
+    assert request.url.params.get("title_search") == "threshold"
     assert request.url.params.get("limit") == "50"
     assert request.url.params.get("offset") == "10"
     assert len(events) == 1
@@ -102,13 +102,13 @@ async def test_gamma_client_list_events_keyset_by_params_returns_cursor() -> Non
             {
                 "active": True,
                 "closed": False,
-                "title_search": "fdv",
+                "title_search": "threshold",
                 "limit": 100,
             }
         )
 
     request = requests[0]
-    assert request.url.params.get("title_search") == "fdv"
+    assert request.url.params.get("title_search") == "threshold"
     assert request.url.params.get("limit") == "100"
     assert len(events) == 1
     assert next_cursor == "cursor-2"

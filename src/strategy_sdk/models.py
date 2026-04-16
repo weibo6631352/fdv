@@ -8,12 +8,9 @@ from typing import Any, Mapping, Protocol
 
 from polymarket_trader.domain.allocation import Allocation, AllocationPlan
 from polymarket_trader.domain.market import Market
-from polymarket_trader.domain.order import Order
+from polymarket_trader.domain.order import Order, OrderResult, OrderType
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.domain.position import Position
-from polymarket_trader.domain.strategy_profile import StrategyRuntimeProfile as _StrategyRuntimeProfile
-
-StrategyRuntimeProfile = _StrategyRuntimeProfile
 
 
 class StrategyAction(StrEnum):
@@ -36,7 +33,7 @@ class AccountSnapshotView(Protocol):
     allowance_usdc: Decimal
     positions: tuple[Position, ...]
     open_orders: tuple[Order, ...]
-    allow_new_buys: bool
+    allow_new_entries: bool
     paused_markets: tuple[str, ...]
     last_reconcile_at: datetime | None
 
@@ -99,22 +96,41 @@ class UniverseDecision:
 class StrategyContext:
     trace_id: str
     market: Market | None = None
+    token_id: str | None = None
     orderbook: OrderbookSnapshot | None = None
     account_snapshot: AccountSnapshotView | None = None
     position: Position | None = None
     open_orders: tuple[Order, ...] = ()
+    entry_candidates: tuple["EntryCandidate", ...] = ()
+    order_result: OrderResult | None = None
     now: datetime | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class EntryCandidate:
+    market: Market
+    token_id: str
+    orderbook: OrderbookSnapshot
+    position: Position | None = None
+    open_orders: tuple[Order, ...] = ()
+    idempotency_key: str | None = None
+
+    @property
+    def condition_id(self) -> str:
+        return self.market.condition_id
 
 
 @dataclass(frozen=True, slots=True)
 class StrategyDecision:
     action: StrategyAction
     reason: str = ""
+    token_id: str | None = None
     price: Decimal | None = None
     amount_usdc: Decimal | None = None
     size_shares: Decimal | None = None
     order_id: str | None = None
+    order_type: OrderType | None = None
     market_slug: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -132,16 +148,20 @@ class StrategyDecision:
         cls,
         *,
         reason: str,
+        token_id: str | None,
         price: Decimal,
         amount_usdc: Decimal,
+        order_type: OrderType | None = None,
         market_slug: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> "StrategyDecision":
         return cls(
             action=StrategyAction.BUY,
             reason=reason,
+            token_id=token_id,
             price=price,
             amount_usdc=amount_usdc,
+            order_type=order_type,
             market_slug=market_slug,
             metadata=metadata or {},
         )
@@ -151,16 +171,20 @@ class StrategyDecision:
         cls,
         *,
         reason: str,
+        token_id: str | None,
         price: Decimal,
         size_shares: Decimal,
+        order_type: OrderType | None = None,
         market_slug: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> "StrategyDecision":
         return cls(
             action=StrategyAction.SELL,
             reason=reason,
+            token_id=token_id,
             price=price,
             size_shares=size_shares,
+            order_type=order_type,
             market_slug=market_slug,
             metadata=metadata or {},
         )
@@ -170,6 +194,7 @@ class StrategyDecision:
         cls,
         *,
         reason: str,
+        token_id: str | None,
         order_id: str,
         market_slug: str | None = None,
         metadata: Mapping[str, Any] | None = None,
@@ -177,6 +202,7 @@ class StrategyDecision:
         return cls(
             action=StrategyAction.CANCEL,
             reason=reason,
+            token_id=token_id,
             order_id=order_id,
             market_slug=market_slug,
             metadata=metadata or {},
@@ -187,6 +213,7 @@ class StrategyDecision:
         cls,
         *,
         reason: str,
+        token_id: str | None,
         order_id: str,
         price: Decimal,
         size_shares: Decimal,
@@ -196,6 +223,7 @@ class StrategyDecision:
         return cls(
             action=StrategyAction.REPLACE,
             reason=reason,
+            token_id=token_id,
             price=price,
             size_shares=size_shares,
             order_id=order_id,
@@ -217,22 +245,12 @@ class EntrySizing:
 
 
 @dataclass(frozen=True, slots=True)
-class RecoveryReplaceRequest:
-    order_id: str
-    new_price: Decimal
-    size_shares: Decimal
-    reason: str = ""
-
-
-@dataclass(frozen=True, slots=True)
 class RecoveryDecision:
     reason: str = ""
-    target_sell_size_shares: Decimal = Decimal("0")
-    cancel_order_ids: tuple[str, ...] = ()
-    replace_requests: tuple[RecoveryReplaceRequest, ...] = ()
-    pause_market: bool = False
+    actions: tuple[StrategyDecision, ...] = ()
+    pause_trading: bool = False
     pause_reason: str = ""
 
     @property
     def has_actions(self) -> bool:
-        return bool(self.cancel_order_ids or self.replace_requests or self.pause_market)
+        return bool(self.actions or self.pause_trading)

@@ -3,12 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from polymarket_trader.domain.allocation import AllocationMarketSnapshot
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
 from polymarket_trader.runtime.account_state import AccountSnapshot
-from strategy_sdk.models import DiscoveryEndpoint, StrategyAction, StrategyContext
+from strategy_sdk.models import DiscoveryEndpoint, EntryCandidate, StrategyAction, StrategyContext
 from strategies.current.strategy import build_strategy
 
 
@@ -56,6 +55,7 @@ def test_current_strategy_can_decide_entry() -> None:
         StrategyContext(
             trace_id="trace-1",
             market=market,
+            token_id=market.no_token_id,
             orderbook=orderbook,
             metadata={"amount_usdc": Decimal("25")},
         )
@@ -114,12 +114,21 @@ def test_current_strategy_sizes_entry_from_candidate_snapshots() -> None:
         StrategyContext(
             trace_id="trace-sizing",
             market=primary,
+            token_id=primary.no_token_id,
             orderbook=primary_orderbook,
-            metadata={
-                "candidate_snapshots": (
-                    AllocationMarketSnapshot(market=primary, orderbook=primary_orderbook),
-                    AllocationMarketSnapshot(market=secondary, orderbook=secondary_orderbook),
+            entry_candidates=(
+                EntryCandidate(
+                    market=primary,
+                    token_id=primary.no_token_id,
+                    orderbook=primary_orderbook,
                 ),
+                EntryCandidate(
+                    market=secondary,
+                    token_id=secondary.no_token_id,
+                    orderbook=secondary_orderbook,
+                ),
+            ),
+            metadata={
                 "portfolio_budget_usdc": Decimal("100"),
                 "available_usdc": Decimal("100"),
                 "max_order_usdc": Decimal("100"),
@@ -167,5 +176,7 @@ def test_current_strategy_recovery_returns_target_sell_and_pause_state() -> None
         )
     )
 
-    assert recovery.target_sell_size_shares == Decimal("12")
-    assert recovery.pause_market is True
+    assert len(recovery.actions) == 1
+    assert recovery.actions[0].action == StrategyAction.SELL
+    assert recovery.actions[0].size_shares == Decimal("12")
+    assert recovery.pause_trading is True

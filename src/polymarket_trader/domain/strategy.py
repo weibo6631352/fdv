@@ -8,6 +8,7 @@ from polymarket_trader.domain.order import (
     ReplaceOrderIntent,
     SellOrderIntent,
 )
+from polymarket_trader.domain.order import OrderType
 
 
 class StrategyEngine:
@@ -18,17 +19,19 @@ class StrategyEngine:
         *,
         trace_id: str,
         condition_id: str,
-        no_token_id: str,
+        token_id: str,
         price: Decimal,
         amount_usdc: Decimal,
+        order_type: OrderType = OrderType.FAK,
         market_slug: str | None = None,
     ) -> BuyOrderIntent:
         return BuyOrderIntent(
             trace_id=trace_id,
             condition_id=condition_id,
-            token_id=no_token_id,
+            token_id=token_id,
             price=price,
             amount_usdc=amount_usdc,
+            order_type=order_type,
             market_slug=market_slug,
         )
 
@@ -37,17 +40,19 @@ class StrategyEngine:
         *,
         trace_id: str,
         condition_id: str,
-        no_token_id: str,
+        token_id: str,
         price: Decimal,
         size_shares: Decimal,
+        order_type: OrderType = OrderType.GTC,
         market_slug: str | None = None,
     ) -> SellOrderIntent:
         return SellOrderIntent(
             trace_id=trace_id,
             condition_id=condition_id,
-            token_id=no_token_id,
+            token_id=token_id,
             price=price,
             size_shares=size_shares,
+            order_type=order_type,
             market_slug=market_slug,
         )
 
@@ -56,7 +61,7 @@ class StrategyEngine:
         *,
         trace_id: str,
         condition_id: str,
-        no_token_id: str,
+        token_id: str,
         order_id: str,
         market_slug: str | None = None,
         reason: str = "",
@@ -64,7 +69,7 @@ class StrategyEngine:
         return CancelOrderIntent(
             trace_id=trace_id,
             condition_id=condition_id,
-            token_id=no_token_id,
+            token_id=token_id,
             order_id=order_id,
             market_slug=market_slug,
             reason=reason,
@@ -75,7 +80,7 @@ class StrategyEngine:
         *,
         trace_id: str,
         condition_id: str,
-        no_token_id: str,
+        token_id: str,
         order_id: str,
         size_shares: Decimal,
         market_slug: str | None = None,
@@ -85,7 +90,7 @@ class StrategyEngine:
         return ReplaceOrderIntent(
             trace_id=trace_id,
             condition_id=condition_id,
-            token_id=no_token_id,
+            token_id=token_id,
             order_id=order_id,
             new_price=new_price,
             size_shares=size_shares,
