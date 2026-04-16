@@ -5,6 +5,7 @@
 
 ## 怎么看
 
+- 看仓库级开发规则和重构准则：看 [../AGENTS.md](../AGENTS.md)
 - 改策略规则：看 [需求文档](./需求文档.md) 和 [设计文档](./设计文档.md)
 - 看全量市场 discovery 改造方案：看 [全量市场发现改造计划](./全量市场发现改造计划.md)
 - 看运行配置：看 [config.md](./config.md)
@@ -15,6 +16,7 @@
 
 ## 文档索引
 
+- [../AGENTS.md](../AGENTS.md)：Codex rules、分层边界和重构迁移准则
 - [api.md](./api.md)：Admin API
 - [config.md](./config.md)：配置说明
 - [frontend-开发清单.md](./frontend-开发清单.md)：前端边界、开发清单和模块拆分
