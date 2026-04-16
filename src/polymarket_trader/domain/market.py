@@ -16,11 +16,16 @@ class TradingStatus(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class MarketOutcome:
+    token_id: str
+    outcome: str
+
+
+@dataclass(frozen=True, slots=True)
 class Market:
     condition_id: str
     market_slug: str
-    no_token_id: str
-    yes_token_id: str | None = None
+    outcomes: tuple[MarketOutcome, ...]
     market_name: str | None = None
     market_question: str | None = None
     event_id: str | None = None
@@ -41,6 +46,33 @@ class Market:
     matched_keywords: tuple[str, ...] = field(default_factory=tuple)
     trading_status: TradingStatus = TradingStatus.CANDIDATE
     reject_reason: str | None = None
+
+    @property
+    def token_ids(self) -> tuple[str, ...]:
+        return tuple(outcome.token_id for outcome in self.outcomes)
+
+    def get_outcome_by_token_id(self, token_id: str) -> MarketOutcome | None:
+        for outcome in self.outcomes:
+            if outcome.token_id == token_id:
+                return outcome
+        return None
+
+    def get_outcome(self, outcome_name: str) -> MarketOutcome | None:
+        normalized = outcome_name.strip().upper()
+        for outcome in self.outcomes:
+            if outcome.outcome.strip().upper() == normalized:
+                return outcome
+        return None
+
+    def find_token_id(self, outcome_name: str) -> str | None:
+        outcome = self.get_outcome(outcome_name)
+        return None if outcome is None else outcome.token_id
+
+    def require_token_id(self, outcome_name: str) -> str:
+        token_id = self.find_token_id(outcome_name)
+        if token_id is None:
+            raise ValueError(f"market is missing outcome {outcome_name}")
+        return token_id
 
     def with_trading_status(
         self,
@@ -118,8 +150,7 @@ class Market:
         category: str | None = None,
         tags: tuple[str, ...] | None = None,
         matched_keywords: tuple[str, ...] | None = None,
-        yes_token_id: str | None = None,
-        no_token_id: str | None = None,
+        outcomes: tuple[MarketOutcome, ...] | None = None,
         neg_risk: bool | None = None,
     ) -> "Market":
         return replace(
@@ -136,7 +167,6 @@ class Market:
             matched_keywords=(
                 self.matched_keywords if matched_keywords is None else matched_keywords
             ),
-            yes_token_id=self.yes_token_id if yes_token_id is None else yes_token_id,
-            no_token_id=self.no_token_id if no_token_id is None else no_token_id,
+            outcomes=self.outcomes if outcomes is None else outcomes,
             neg_risk=self.neg_risk if neg_risk is None else neg_risk,
         )

@@ -9,12 +9,13 @@ from polymarket_trader.domain.position import Position
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from strategy_sdk.models import EntryCandidate, EntrySizing, StrategyAction, StrategyContext
 from strategies.current.strategy import build_strategy as build_current_strategy
+from tests.helpers.markets import build_binary_market
 
 
 def test_strategy_contract_positive_path() -> None:
     strategy = build_current_strategy()
     assert strategy.build_discovery_queries()
-    market = Market(
+    market = build_binary_market(
         condition_id="condition-current",
         market_slug="slug-current",
         no_token_id="no-current",
@@ -27,7 +28,7 @@ def test_strategy_contract_positive_path() -> None:
 
     received_at = datetime.now(timezone.utc)
     orderbook = OrderbookSnapshot(
-        token_id=market.no_token_id,
+        token_id=market.require_token_id("NO"),
         best_bid=Decimal("0.55"),
         best_ask=Decimal("0.60"),
         bids=(PriceLevel(price=Decimal("0.55"), size=Decimal("100")),),
@@ -41,7 +42,7 @@ def test_strategy_contract_positive_path() -> None:
     )
     position = Position(
         condition_id=market.condition_id,
-        token_id=market.no_token_id,
+        token_id=market.require_token_id("NO"),
         shares=Decimal("10"),
         cost_usdc=Decimal("5"),
         market_slug=market.market_slug,
@@ -58,12 +59,12 @@ def test_strategy_contract_positive_path() -> None:
         StrategyContext(
             trace_id="trace-contract",
             market=market,
-            token_id=market.no_token_id,
+            token_id=market.require_token_id("NO"),
             orderbook=orderbook,
             entry_candidates=(
                 EntryCandidate(
                     market=market,
-                    token_id=market.no_token_id,
+                    token_id=market.require_token_id("NO"),
                     orderbook=orderbook,
                 ),
             ),
@@ -84,7 +85,7 @@ def test_strategy_contract_positive_path() -> None:
         StrategyContext(
             trace_id="trace-contract",
             market=market,
-            token_id=market.no_token_id,
+            token_id=market.require_token_id("NO"),
             orderbook=orderbook,
             metadata={"amount_usdc": Decimal("10")},
         )

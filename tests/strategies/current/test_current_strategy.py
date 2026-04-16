@@ -9,6 +9,11 @@ from polymarket_trader.domain.position import Position
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from strategy_sdk.models import DiscoveryEndpoint, EntryCandidate, StrategyAction, StrategyContext
 from strategies.current.strategy import build_strategy
+from tests.helpers.markets import build_binary_market
+
+
+def _no_token_id(market: Market) -> str:
+    return market.require_token_id("NO")
 
 
 def test_current_strategy_builds_remote_discovery_query() -> None:
@@ -29,7 +34,7 @@ def test_current_strategy_builds_remote_discovery_query() -> None:
 
 def test_current_strategy_can_decide_entry() -> None:
     strategy = build_strategy()
-    market = Market(
+    market = build_binary_market(
         condition_id="condition-1",
         market_slug="slug-1",
         no_token_id="no-1",
@@ -55,7 +60,7 @@ def test_current_strategy_can_decide_entry() -> None:
         StrategyContext(
             trace_id="trace-1",
             market=market,
-            token_id=market.no_token_id,
+            token_id=_no_token_id(market),
             orderbook=orderbook,
             metadata={"amount_usdc": Decimal("25")},
         )
@@ -68,7 +73,7 @@ def test_current_strategy_can_decide_entry() -> None:
 
 def test_current_strategy_sizes_entry_from_candidate_snapshots() -> None:
     strategy = build_strategy()
-    primary = Market(
+    primary = build_binary_market(
         condition_id="condition-1",
         market_slug="slug-1",
         no_token_id="no-1",
@@ -78,7 +83,7 @@ def test_current_strategy_sizes_entry_from_candidate_snapshots() -> None:
         category="Crypto",
         trading_status=TradingStatus.ELIGIBLE,
     )
-    secondary = Market(
+    secondary = build_binary_market(
         condition_id="condition-2",
         market_slug="slug-2",
         no_token_id="no-2",
@@ -114,7 +119,7 @@ def test_current_strategy_sizes_entry_from_candidate_snapshots() -> None:
         StrategyContext(
             trace_id="trace-sizing",
             market=primary,
-            token_id=primary.no_token_id,
+            token_id=_no_token_id(primary),
             orderbook=primary_orderbook,
             portfolio_budget_usdc=Decimal("100"),
             available_usdc=Decimal("100"),
@@ -124,12 +129,12 @@ def test_current_strategy_sizes_entry_from_candidate_snapshots() -> None:
             entry_candidates=(
                 EntryCandidate(
                     market=primary,
-                    token_id=primary.no_token_id,
+                    token_id=_no_token_id(primary),
                     orderbook=primary_orderbook,
                 ),
                 EntryCandidate(
                     market=secondary,
-                    token_id=secondary.no_token_id,
+                    token_id=_no_token_id(secondary),
                     orderbook=secondary_orderbook,
                 ),
             ),
@@ -143,7 +148,7 @@ def test_current_strategy_sizes_entry_from_candidate_snapshots() -> None:
 
 def test_current_strategy_recovery_returns_target_sell_and_pause_state() -> None:
     strategy = build_strategy()
-    market = Market(
+    market = build_binary_market(
         condition_id="condition-1",
         market_slug="slug-1",
         no_token_id="no-1",

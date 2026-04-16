@@ -11,6 +11,7 @@ from polymarket_trader.infra.db.repositories import (
     _market_matches_snapshot_filters,
     _sort_market_snapshots,
 )
+from tests.helpers.markets import build_binary_market
 
 
 def _market(
@@ -22,7 +23,7 @@ def _market(
     maker_base_fee_bps: int | None = None,
     fee_rate_updated_at: datetime | None = None,
 ) -> Market:
-    return Market(
+    return build_binary_market(
         condition_id=condition_id,
         market_slug=market_slug,
         no_token_id=f"no-{condition_id}",

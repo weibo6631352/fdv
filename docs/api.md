@@ -203,20 +203,16 @@
 
 - `market`
 - `tracked`
-- `orderbook`
-- `position`
-- `open_orders`
-- `open_order_count`
-- `best_ask`
-- `best_bid`
-- `spread`
-- `fee_preview`
+- `market.token_ids[]`
+- `market.outcomes[]`
+- `token_views[]`
 
 说明：
 
 - 当前不会在 handler 内现场请求外部费率接口。
 - 费率查询只使用本地缓存字段。
-- `fee_preview` 是热态派生视图，默认按 `100 shares` 结合 `best_ask` / `best_bid` 预估 taker 手续费。
+- `token_views[]` 是唯一主视图；每个 token view 都包含 `token_id`、`outcome`、`orderbook`、`position`、`open_orders`、`best_ask`、`best_bid`、`spread`、`fee_preview`。
+- `fee_preview` 是逐 token 的热态派生视图，默认按 `100 shares` 结合 `best_ask` / `best_bid` 预估 taker 手续费。
 
 ### 3.5 `GET /markets/detail`
 
@@ -238,7 +234,7 @@
 返回结构：
 
 - 与 `/markets.items[]` 单项结构一致。
-- `token_views[]` 是当前推荐读取的逐 token 视图；顶层 `orderbook` / `yes_orderbook` 等字段仍保留给现有调用方兼容使用。
+- `token_views[]` 是唯一正式的逐 token 视图；不再提供默认 `NO` 视图或 `yes_*` 兼容字段。
 
 ### 3.6 `GET /markets/orderbook`
 
@@ -255,7 +251,7 @@
 约束：
 
 - `token_id` 必填。
-- `market_slug` 和 `condition_id` 只作为附加定位信息，不再隐式回退到 `no_token_id`。
+- `market_slug` 和 `condition_id` 只作为附加定位信息，不再隐式推断默认 outcome。
 
 关键返回字段：
 
@@ -295,7 +291,7 @@
 约束：
 
 - `token_id` 必填。
-- `market_slug` 和 `condition_id` 只作为附加定位信息，不再隐式回退到 `no_token_id`。
+- `market_slug` 和 `condition_id` 只作为附加定位信息，不再隐式推断默认 outcome。
 
 关键返回字段：
 
@@ -733,7 +729,7 @@ Admin API 是人工查询和受控操作入口，不是交易策略入口。
 - runtime 查询
 - market / order / fill / position / portfolio 查询
 - 手动 reconcile
-- 手动 cancel + replace sell
+- 手动 replace 单个 open order
 
 禁止：
 

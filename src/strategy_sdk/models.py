@@ -58,6 +58,15 @@ class StrategySpec:
 
 
 @dataclass(frozen=True, slots=True)
+class MarketTokenView:
+    token_id: str
+    outcome: str
+    orderbook: OrderbookSnapshot | None = None
+    position: Position | None = None
+    open_orders: tuple[Order, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class DiscoveryQuery:
     """Strategy-provided remote discovery query."""
 
@@ -98,6 +107,7 @@ class StrategyContext:
     market: Market | None = None
     token_id: str | None = None
     orderbook: OrderbookSnapshot | None = None
+    market_token_views: tuple[MarketTokenView, ...] = ()
     account_snapshot: AccountSnapshotView | None = None
     position: Position | None = None
     open_orders: tuple[Order, ...] = ()

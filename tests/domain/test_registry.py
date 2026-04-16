@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.runtime.registry import MarketRegistry
+from tests.helpers.markets import build_binary_market
 
 
 def _market(
@@ -14,7 +15,7 @@ def _market(
     no_token_id: str = "no",
     event_slug: str = "token-event",
 ) -> Market:
-    return Market(
+    return build_binary_market(
         condition_id=condition_id,
         market_slug=market_slug,
         no_token_id=no_token_id,
@@ -37,7 +38,7 @@ def test_registry_snapshot_and_indexes_follow_latest_market_state() -> None:
     registry.upsert(market)
 
     assert registry.get_by_condition_id(market.condition_id) == market
-    assert registry.get_by_no_token_id(market.no_token_id) == market
+    assert registry.get_by_token_id(market.require_token_id("NO")) == market
     assert registry.get_by_slug(market.market_slug) == market
     assert registry.get_by_slug(market.event_slug or "") == market
     assert registry.snapshot().get_by_condition_id(market.condition_id) == market
@@ -55,10 +56,10 @@ def test_registry_updates_indexes_after_token_and_slug_change() -> None:
     registry.upsert(original)
     registry.reconcile(updated)
 
-    assert registry.get_by_no_token_id("no") is None
+    assert registry.get_by_token_id("no") is None
     assert registry.get_by_slug("sample-market-a") is None
     assert registry.get_by_slug("token-event") is None
-    assert registry.get_by_no_token_id(updated.no_token_id) == updated
+    assert registry.get_by_token_id(updated.require_token_id("NO")) == updated
     assert registry.get_by_slug(updated.market_slug) == updated
     assert registry.get_by_slug(updated.event_slug or "") == updated
 

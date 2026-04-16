@@ -22,10 +22,11 @@ class _Tracker:
     def untrack_market(self, token_id: str) -> None:
         self.untracked_token_ids.append(token_id)
 
-    def build_subscription_request(self, token_id: str) -> dict[str, object]:
+    def build_subscription_request(self, token_id: str | tuple[str, ...]) -> dict[str, object]:
+        token_ids = [token_id] if isinstance(token_id, str) else list(token_id)
         return {
             "channel": "market",
-            "token_ids": [token_id],
+            "token_ids": token_ids,
             "custom_feature_enabled": True,
         }
 
@@ -107,10 +108,11 @@ class _SwitchingStrategy:
     def should_keep_tracking(self, market, account_snapshot):
         if account_snapshot is None:
             return True
-        position = account_snapshot.get_position(market.condition_id, market.no_token_id)
+        token_id = market.require_token_id("NO")
+        position = account_snapshot.get_position(market.condition_id, token_id)
         if position is not None and position.shares > 0:
             return True
-        return bool(account_snapshot.open_orders_for_market(market.condition_id, market.no_token_id))
+        return bool(account_snapshot.open_orders_for_market(market.condition_id, token_id))
 
     def build_filtered_tracking_market(self, candidate_market, *, existing_market, reason):
         return candidate_market.with_trading_status(
@@ -136,7 +138,9 @@ def test_market_service_ingests_market_into_registry_and_tracker() -> None:
     assert outcome.event.event_type == DomainEventType.MARKET_DISCOVERED
     assert registry.get_by_condition_id("condition") == outcome.market
     assert tracker.markets == [outcome.market]
-    assert outcome.subscription_request == tracker.build_subscription_request("no-condition")
+    assert outcome.subscription_request == tracker.build_subscription_request(
+        ("yes-condition", "no-condition")
+    )
 
 
 def test_market_service_marks_existing_market_as_updated() -> None:
@@ -269,6 +273,6 @@ def test_market_service_removes_filtered_existing_market_when_flat_and_orderless
     assert outcome.should_publish_event is True
     assert outcome.event.event_type == DomainEventType.MARKET_FILTERED_OUT
     assert registry.get_by_condition_id("condition") is None
-    assert tracker.untracked_token_ids == ["no-condition"]
+    assert tracker.untracked_token_ids == [("yes-condition", "no-condition")]
     assert outcome.event.payload["tracking_retained"] is False
     assert outcome.event.payload["tracked_market"] is None

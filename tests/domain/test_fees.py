@@ -10,6 +10,7 @@ from strategy_sdk import (
     build_taker_fee_preview as exported_build_taker_fee_preview,
     calculate_trade_fee as exported_calculate_trade_fee,
 )
+from tests.helpers.markets import build_binary_market
 
 
 def _market(
@@ -18,10 +19,11 @@ def _market(
     taker_base_fee_bps: int | None = 30,
     fee_rate_bps: int | None = 30,
 ) -> Market:
-    return Market(
+    return build_binary_market(
         condition_id="condition-1",
         market_slug="sample-market",
         no_token_id="no-token-1",
+        yes_token_id="yes-token-1",
         fees_enabled=fees_enabled,
         taker_base_fee_bps=taker_base_fee_bps,
         fee_rate_bps=fee_rate_bps,

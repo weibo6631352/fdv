@@ -19,6 +19,7 @@ from polymarket_trader.main import (
 )
 from polymarket_trader.runtime.event_bus import EventBus
 from strategy_sdk.models import DiscoveryEndpoint, DiscoveryQuery
+from tests.helpers.markets import build_binary_market
 
 
 def test_build_runtime_wires_m2_components() -> None:
@@ -171,7 +172,7 @@ def test_build_runtime_binds_strategy_orderbook_port() -> None:
             )
         )
 
-        market = Market(
+        market = build_binary_market(
             condition_id="condition-1",
             market_slug="sample-market-a",
             no_token_id="no-token-1",
@@ -184,7 +185,7 @@ def test_build_runtime_binds_strategy_orderbook_port() -> None:
         await runtime.market_ws_worker.handle_message(
             {
                 "type": "best_bid_ask",
-                "token_id": market.no_token_id,
+                "token_id": market.require_token_id("NO"),
                 "best_bid": "0.55",
                 "best_ask": "0.43",
                 "best_bid_size": "100",
@@ -195,7 +196,7 @@ def test_build_runtime_binds_strategy_orderbook_port() -> None:
         ports = getattr(runtime.strategy, "ports", None)
         assert ports is not None
         assert ports.market is not None
-        snapshot = ports.market.get_orderbook(market.no_token_id)
+        snapshot = ports.market.get_orderbook(market.require_token_id("NO"))
         assert snapshot is not None
         assert snapshot.best_ask == Decimal("0.43")
 

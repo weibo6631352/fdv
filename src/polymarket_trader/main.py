@@ -541,7 +541,7 @@ def _market_ws_subscription_token_ids(runtime: RuntimeComponents) -> tuple[str, 
             {
                 token_id
                 for market in runtime.registry.snapshot().markets
-                for token_id in (market.no_token_id, market.yes_token_id)
+                for token_id in market.token_ids
                 if token_id
             }
         )

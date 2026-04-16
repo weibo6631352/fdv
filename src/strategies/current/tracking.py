@@ -9,6 +9,8 @@ from __future__ import annotations
 from polymarket_trader.domain.market import Market, TradingStatus
 from strategy_sdk import AccountSnapshotView
 
+from strategies.current.outcomes import primary_token_id
+
 
 def should_keep_tracking(
     market: Market,
@@ -34,15 +36,18 @@ def should_keep_tracking(
     if account_snapshot is None:
         return True
 
-    position = account_snapshot.get_position(market.condition_id, market.no_token_id)
-    if position is not None and (
-        position.shares > 0
-        or position.open_buy_shares > 0
-        or position.open_sell_shares > 0
-        or position.pending_buy_shares > 0
-    ):
-        return True
-    return bool(account_snapshot.open_orders_for_market(market.condition_id, market.no_token_id))
+    for token_id in market.token_ids:
+        position = account_snapshot.get_position(market.condition_id, token_id)
+        if position is not None and (
+            position.shares > 0
+            or position.open_buy_shares > 0
+            or position.open_sell_shares > 0
+            or position.pending_buy_shares > 0
+        ):
+            return True
+        if account_snapshot.open_orders_for_market(market.condition_id, token_id):
+            return True
+    return False
 
 
 def build_filtered_tracking_market(

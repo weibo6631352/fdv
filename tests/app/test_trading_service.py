@@ -8,12 +8,13 @@ from polymarket_trader.app.trading_service import TradingService
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.order import BuyOrderIntent
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from tests.helpers.markets import build_binary_market
 
 
 def test_trading_service_reviews_intent_with_risk_manager() -> None:
     async def run() -> None:
         service = TradingService()
-        market = Market(
+        market = build_binary_market(
             condition_id="condition",
             market_slug="sample-market-a",
             no_token_id="no-token",
@@ -40,7 +41,7 @@ def test_trading_service_reviews_intent_with_risk_manager() -> None:
         intent = BuyOrderIntent(
             trace_id="trace",
             condition_id=market.condition_id,
-            token_id=market.no_token_id,
+            token_id=market.require_token_id("NO"),
             price=Decimal("0.43"),
             amount_usdc=Decimal("10"),
             market_slug=market.market_slug,

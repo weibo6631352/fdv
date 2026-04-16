@@ -16,6 +16,7 @@ from strategy_sdk.models import (
     StrategySpec,
     UniverseDecision,
 )
+from tests.helpers.markets import build_binary_market
 
 
 class _CustomSizingStrategy:
@@ -36,7 +37,7 @@ class _CustomSizingStrategy:
             target_budget_usdc=Decimal("33"),
             buy_budget_usdc=Decimal("33"),
             market_slug=context.market.market_slug,
-            token_id=context.market.no_token_id,
+            token_id=context.market.require_token_id("NO"),
             reason="custom_sizing",
         )
         return EntrySizing(
@@ -55,7 +56,7 @@ class _CustomSizingStrategy:
         assert context.amount_usdc is not None
         return StrategyDecision.buy(
             reason="custom_entry",
-            token_id=context.token_id or context.market.no_token_id,
+            token_id=context.token_id or context.market.require_token_id("NO"),
             price=Decimal("0.43"),
             amount_usdc=context.amount_usdc,
             market_slug=context.market.market_slug,
@@ -73,7 +74,7 @@ class _CustomSizingStrategy:
 
 def test_strategy_service_uses_strategy_sizing_policy() -> None:
     registry = MarketRegistry()
-    primary = Market(
+    primary = build_binary_market(
         condition_id="condition-1",
         market_slug="slug-1",
         no_token_id="no-1",
@@ -82,7 +83,7 @@ def test_strategy_service_uses_strategy_sizing_policy() -> None:
         matched_keywords=("threshold", "target"),
         trading_status=TradingStatus.ELIGIBLE,
     )
-    secondary = Market(
+    secondary = build_binary_market(
         condition_id="condition-2",
         market_slug="slug-2",
         no_token_id="no-2",
@@ -94,8 +95,8 @@ def test_strategy_service_uses_strategy_sizing_policy() -> None:
     registry.upsert(primary)
     registry.upsert(secondary)
     snapshots = {
-        primary.no_token_id: _snapshot(primary),
-        secondary.no_token_id: _snapshot(secondary),
+        primary.require_token_id("NO"): _snapshot(primary),
+        secondary.require_token_id("NO"): _snapshot(secondary),
     }
     service = StrategyService(
         strategy_module=_CustomSizingStrategy(),
@@ -105,7 +106,7 @@ def test_strategy_service_uses_strategy_sizing_policy() -> None:
 
     plan = service.build_entry_plan(
         condition_id=primary.condition_id,
-        token_id=primary.no_token_id,
+        token_id=primary.require_token_id("NO"),
         trace_id="trace-custom-sizing",
         portfolio_budget_usdc=Decimal("100"),
         available_usdc=Decimal("100"),
@@ -124,7 +125,7 @@ def test_strategy_service_uses_strategy_sizing_policy() -> None:
 
 def _snapshot(market: Market) -> OrderbookSnapshot:
     return OrderbookSnapshot(
-        token_id=market.no_token_id,
+        token_id=market.require_token_id("NO"),
         best_bid=Decimal("0.55"),
         best_ask=Decimal("0.43"),
         bids=(PriceLevel(price=Decimal("0.55"), size=Decimal("100")),),

@@ -294,12 +294,7 @@ class MarketWsWorker:
         self._last_error: str | None = None
 
     def track_market(self, market: Market) -> None:
-        # 框架层同时维护 YES / NO 两侧盘口；策略层继续只读取 NO。
-        tracked_token_ids = tuple(
-            token_id
-            for token_id in (market.no_token_id, market.yes_token_id)
-            if token_id
-        )
+        tracked_token_ids = market.token_ids
         for token_id in tracked_token_ids:
             self._tracked_markets[token_id] = market
         if self._registry is not None:
@@ -321,15 +316,26 @@ class MarketWsWorker:
                 ),
             )
 
-    def untrack_market(self, no_token_id: str) -> None:
-        token_id = str(no_token_id).strip()
-        if not token_id:
+    def untrack_market(self, token_ids: str | tuple[str, ...] | list[str]) -> None:
+        normalized_token_ids = (
+            tuple(str(item).strip() for item in token_ids if str(item).strip())
+            if isinstance(token_ids, (list, tuple))
+            else ((str(token_ids).strip(),) if str(token_ids).strip() else ())
+        )
+        if not normalized_token_ids:
             return
-        market = self._tracked_markets.get(token_id)
+        market = next(
+            (
+                self._tracked_markets.get(token_id)
+                for token_id in normalized_token_ids
+                if self._tracked_markets.get(token_id) is not None
+            ),
+            None,
+        )
         tracked_token_ids = (
-            tuple(item for item in (market.no_token_id, market.yes_token_id) if item)
+            market.token_ids
             if market is not None
-            else (token_id,)
+            else normalized_token_ids
         )
         for tracked_token_id in tracked_token_ids:
             self._tracked_markets.pop(tracked_token_id, None)
@@ -712,9 +718,7 @@ class MarketWsWorker:
         if market is not None and self._registry is not None:
             resolved_market = self._registry.mark_resolved(market.condition_id)
             if resolved_market is not None:
-                for tracked_token_id in (
-                    item for item in (resolved_market.no_token_id, resolved_market.yes_token_id) if item
-                ):
+                for tracked_token_id in resolved_market.token_ids:
                     self._tracked_markets[tracked_token_id] = resolved_market
                     tracked_state = self._states.get(tracked_token_id)
                     if tracked_state is not None:
@@ -1037,8 +1041,14 @@ class MarketWsWorker:
             "event_slug": market.event_slug,
             "event_id": market.event_id,
             "event_title": market.event_title,
-            "no_token_id": market.no_token_id,
-            "yes_token_id": market.yes_token_id,
+            "token_ids": list(market.token_ids),
+            "outcomes": [
+                {
+                    "token_id": outcome.token_id,
+                    "outcome": outcome.outcome,
+                }
+                for outcome in market.outcomes
+            ],
             "tick_size": self._serialize_decimal(market.tick_size),
             "min_order_size": self._serialize_decimal(market.min_order_size),
             "neg_risk": market.neg_risk,
@@ -1150,7 +1160,7 @@ class MarketWsWorker:
             trace_id=uuid4().hex,
             event_type=DomainEventType.MARKET_UPDATED,
             event_id=uuid4().hex,
-            token_id=market.no_token_id,
+            token_id=None,
             market_slug=market.market_slug,
             condition_id=market.condition_id,
             reason=reason,

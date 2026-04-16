@@ -9,7 +9,7 @@ from uuid import uuid4
 from polymarket_trader.app.strategy_service import StrategyEntryPlan, StrategyService
 from polymarket_trader.app.trading_service import TradingReviewResult, TradingService
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
-from polymarket_trader.domain.market import Market
+from polymarket_trader.domain.market import Market, MarketOutcome
 from polymarket_trader.domain.order import (
     BuyOrderIntent,
     CancelOrderIntent,
@@ -27,7 +27,7 @@ from polymarket_trader.domain.position import Position
 from polymarket_trader.domain.state_machine import MarketLifecycle
 from polymarket_trader.runtime.account_state import AccountSnapshot, AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
-from strategy_sdk import StrategyContext
+from strategy_sdk import MarketTokenView, StrategyContext
 
 PositionsProvider = Callable[[], Iterable[Position]]
 OpenOrdersProvider = Callable[[], Iterable[Order]]
@@ -428,14 +428,26 @@ class StrategyWorker:
                 )
                 self._transition_market_by_result(order_result, MarketLifecycle.ENTRY_REJECTED)
 
+        resolved_market = self._strategy_service._resolve_market(
+            condition_id=order_result.condition_id,
+            token_id=order_result.token_id,
+        )
         follow_up_decisions = self._strategy_service.decide_follow_up(
             StrategyContext(
                 trace_id=order_result.trace_id,
-                market=self._strategy_service._resolve_market(
-                    condition_id=order_result.condition_id,
-                    token_id=order_result.token_id,
-                ),
+                market=resolved_market,
                 token_id=order_result.token_id,
+                market_token_views=tuple(
+                    MarketTokenView(
+                        token_id=outcome.token_id,
+                        outcome=outcome.outcome,
+                    )
+                    for outcome in (
+                        ()
+                        if resolved_market is None
+                        else resolved_market.outcomes
+                    )
+                ),
                 account_snapshot=active_snapshot,
                 position=_snapshot_position(
                     active_snapshot,
@@ -1211,7 +1223,12 @@ def _market_from_result(order_result: OrderResult) -> Market | None:
     return Market(
         condition_id=order_result.condition_id,
         market_slug=order_result.market_slug or order_result.token_id,
-        no_token_id=order_result.token_id,
+        outcomes=(
+            MarketOutcome(
+                token_id=order_result.token_id,
+                outcome="EXECUTED_OUTCOME",
+            ),
+        ),
     )
 
 

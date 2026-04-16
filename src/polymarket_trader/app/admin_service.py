@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import asyncio
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -13,7 +11,7 @@ from polymarket_trader.app.trading_service import TradingReviewResult, TradingSe
 from polymarket_trader.domain.allocation import Allocation
 from polymarket_trader.domain.events import AuditEvent, Fill, OutboxEvent
 from polymarket_trader.domain.fees import FeeQuote, TakerFeePreview, build_taker_fee_preview
-from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.market import Market, MarketOutcome, TradingStatus
 from polymarket_trader.domain.order import (
     Order,
     OrderResult,
@@ -82,9 +80,6 @@ def _page_payload(page: RepositoryPage[Any], *, serializer: Callable[[Any], Any]
         "limit": page.limit,
         "offset": page.offset,
     }
-
-
-_MARKET_LIST_YES_ORDERBOOK_CONCURRENCY = 8
 
 
 def _market_status_allowed_for_manual_order(market: Market) -> bool:
@@ -297,13 +292,11 @@ class AdminService:
                 sort_direction=sort_direction,
             )
             page = self._slice_sequence(markets, limit=limit, offset=offset)
-            yes_orderbooks = await self._resolve_yes_orderbooks(page.items)
             items = [
                 self._serialize_market_view(
                     market,
                     account_snapshot=account,
                     registry_snapshot=registry,
-                    yes_orderbook=yes_orderbooks.get(market.condition_id),
                 )
                 for market in page.items
             ]
@@ -331,13 +324,11 @@ class AdminService:
         page = await self._with_repositories(_query)
         registry = self._registry_snapshot()
         account = self._account_snapshot()
-        yes_orderbooks = await self._resolve_yes_orderbooks(page.items)
         items = [
             self._serialize_market_view(
                 market,
                 account_snapshot=account,
                 registry_snapshot=registry,
-                yes_orderbook=yes_orderbooks.get(market.condition_id),
             )
             for market in page.items
         ]
@@ -480,10 +471,7 @@ class AdminService:
             market = await self._with_repositories(_query)
         if market is None:
             return None
-        return self._serialize_market_view(
-            market,
-            yes_orderbook=await self._resolve_yes_orderbook(market),
-        )
+        return self._serialize_market_view(market)
 
     async def get_market_orderbook(
         self,
@@ -1164,107 +1152,45 @@ class AdminService:
             "last_reconcile_at": _jsonable(account.last_reconcile_at),
         }
 
-    async def _resolve_yes_orderbooks(
-        self,
-        markets: Sequence[Market],
-    ) -> dict[str, OrderbookSnapshot | None]:
-        if not markets:
-            return {}
-
-        semaphore = asyncio.Semaphore(_MARKET_LIST_YES_ORDERBOOK_CONCURRENCY)
-
-        async def _fetch(market: Market) -> tuple[str, OrderbookSnapshot | None]:
-            async with semaphore:
-                return market.condition_id, await self._resolve_yes_orderbook(market)
-
-        return {
-            condition_id: orderbook
-            for condition_id, orderbook in await asyncio.gather(*(_fetch(market) for market in markets))
-        }
-
-    async def _resolve_yes_orderbook(self, market: Market) -> OrderbookSnapshot | None:
-        if not market.yes_token_id:
-            return None
-        snapshot = self._market_ws_snapshot(market.yes_token_id)
-        if snapshot is not None and (
-            snapshot.best_bid is not None
-            or snapshot.best_ask is not None
-            or bool(snapshot.bids)
-            or bool(snapshot.asks)
-        ):
-            return snapshot
-        try:
-            orderbook = await self._clob_client().get_orderbook(
-                market.yes_token_id,
-                market_slug=market.market_slug,
-                condition_id=market.condition_id,
-            )
-        except Exception:
-            return None
-        return orderbook.to_snapshot()
-
     def _serialize_market_view(
         self,
         market: Market,
         *,
         account_snapshot: AccountSnapshot | None = None,
         registry_snapshot: MarketRegistrySnapshot | None = None,
-        yes_orderbook: OrderbookSnapshot | None = None,
     ) -> dict[str, Any]:
         if account_snapshot is None:
             account_snapshot = self._account_snapshot()
         if registry_snapshot is None:
             registry_snapshot = self._registry_snapshot()
-        no_view = self._serialize_token_view(
-            market,
-            token_id=market.no_token_id,
-            outcome="NO",
-            orderbook=self._market_ws_snapshot(market.no_token_id),
-            account_snapshot=account_snapshot,
-        )
-        yes_view = self._serialize_token_view(
-            market,
-            token_id=market.yes_token_id,
-            outcome="YES",
-            orderbook=yes_orderbook,
-            account_snapshot=account_snapshot,
-        )
-        token_views = [view for view in (no_view, yes_view) if view is not None]
+        token_views = [
+            self._serialize_token_view(
+                market,
+                outcome=outcome,
+                orderbook=self._market_ws_snapshot(outcome.token_id),
+                account_snapshot=account_snapshot,
+            )
+            for outcome in market.outcomes
+        ]
         return {
             "market": self._serialize_market(market),
             "tracked": registry_snapshot.get_by_condition_id(market.condition_id) is not None,
             "token_views": token_views,
-            "orderbook": None if no_view is None else no_view["orderbook"],
-            "position": None if no_view is None else no_view["position"],
-            "open_orders": [] if no_view is None else no_view["open_orders"],
-            "open_order_count": 0 if no_view is None else no_view["open_order_count"],
-            "best_ask": None if no_view is None else no_view["best_ask"],
-            "best_bid": None if no_view is None else no_view["best_bid"],
-            "spread": None if no_view is None else no_view["spread"],
-            "fee_preview": None if no_view is None else no_view["fee_preview"],
-            "yes_orderbook": None if yes_view is None else yes_view["orderbook"],
-            "yes_best_ask": None if yes_view is None else yes_view["best_ask"],
-            "yes_best_bid": None if yes_view is None else yes_view["best_bid"],
-            "yes_spread": None if yes_view is None else yes_view["spread"],
-            "yes_fee_preview": None if yes_view is None else yes_view["fee_preview"],
         }
 
     def _serialize_token_view(
         self,
         market: Market,
         *,
-        token_id: str | None,
-        outcome: str,
+        outcome: MarketOutcome,
         orderbook: OrderbookSnapshot | None,
         account_snapshot: AccountSnapshot,
-    ) -> dict[str, Any] | None:
-        if token_id is None:
-            return None
-        position = account_snapshot.get_position(market.condition_id, token_id)
-        open_orders = account_snapshot.open_orders_for_market(market.condition_id, token_id)
+    ) -> dict[str, Any]:
+        position = account_snapshot.get_position(market.condition_id, outcome.token_id)
+        open_orders = account_snapshot.open_orders_for_market(market.condition_id, outcome.token_id)
         return {
-            "token_id": token_id,
-            "outcome": outcome,
+            "token_id": outcome.token_id,
+            "outcome": outcome.outcome,
             "orderbook": self._serialize_orderbook(orderbook),
             "position": self._serialize_position(position) if position is not None else None,
             "open_orders": [self._serialize_order(order) for order in open_orders],
@@ -1287,8 +1213,14 @@ class AdminService:
             "event_slug": market.event_slug,
             "event_id": market.event_id,
             "event_title": market.event_title,
-            "no_token_id": market.no_token_id,
-            "yes_token_id": market.yes_token_id,
+            "token_ids": list(market.token_ids),
+            "outcomes": [
+                {
+                    "token_id": outcome.token_id,
+                    "outcome": outcome.outcome,
+                }
+                for outcome in market.outcomes
+            ],
             "icon_url": market.icon_url,
             "end_date": _jsonable(market.end_date),
             "tick_size": _decimal_text(market.tick_size),
@@ -1417,6 +1349,11 @@ class AdminService:
         return {
             "condition_id": position.condition_id,
             "token_id": position.token_id,
+            "outcome": self._resolve_outcome_name(
+                condition_id=position.condition_id,
+                token_id=position.token_id,
+                market_slug=position.market_slug,
+            ),
             "market_slug": position.market_slug,
             "shares": _decimal_text(position.shares),
             "cost_usdc": _decimal_text(position.cost_usdc),
@@ -1435,6 +1372,11 @@ class AdminService:
             "trace_id": order.trace_id,
             "condition_id": order.condition_id,
             "token_id": order.token_id,
+            "outcome": self._resolve_outcome_name(
+                condition_id=order.condition_id,
+                token_id=order.token_id,
+                market_slug=order.market_slug,
+            ),
             "market_slug": order.market_slug,
             "side": order.side.value,
             "order_type": order.order_type.value,
@@ -1462,6 +1404,11 @@ class AdminService:
             "market_slug": fill.market_slug,
             "condition_id": fill.condition_id,
             "token_id": fill.token_id,
+            "outcome": self._resolve_outcome_name(
+                condition_id=fill.condition_id,
+                token_id=fill.token_id,
+                market_slug=fill.market_slug,
+            ),
             "reason": fill.reason,
             "created_at": _jsonable(fill.created_at),
             "order_id": fill.order_id,
@@ -1521,6 +1468,11 @@ class AdminService:
             "condition_id": allocation.condition_id,
             "market_slug": allocation.market_slug,
             "token_id": allocation.token_id,
+            "outcome": self._resolve_outcome_name(
+                condition_id=allocation.condition_id,
+                token_id=allocation.token_id,
+                market_slug=allocation.market_slug,
+            ),
             "target_budget_usdc": _decimal_text(allocation.target_budget_usdc),
             "buy_budget_usdc": _decimal_text(allocation.buy_budget_usdc),
             "current_exposure_usdc": _decimal_text(allocation.current_exposure_usdc),
@@ -1529,6 +1481,28 @@ class AdminService:
             "release_reason": allocation.release_reason,
             "idempotency_key": allocation.idempotency_key,
         }
+
+    def _resolve_outcome_name(
+        self,
+        *,
+        condition_id: str | None,
+        token_id: str | None,
+        market_slug: str | None = None,
+    ) -> str | None:
+        if token_id is None:
+            return None
+        registry = self._registry_snapshot()
+        market = None
+        if condition_id is not None:
+            market = registry.get_by_condition_id(condition_id)
+        if market is None:
+            market = registry.get_by_token_id(token_id)
+        if market is None and market_slug is not None:
+            market = registry.get_by_slug(market_slug)
+        if market is None:
+            return None
+        outcome = market.get_outcome_by_token_id(token_id)
+        return None if outcome is None else outcome.outcome
 
     def _serialize_review(self, review: TradingReviewResult) -> dict[str, Any]:
         return {
@@ -1552,6 +1526,11 @@ class AdminService:
             "trace_id": result.trace_id,
             "condition_id": result.condition_id,
             "token_id": result.token_id,
+            "outcome": self._resolve_outcome_name(
+                condition_id=result.condition_id,
+                token_id=result.token_id,
+                market_slug=result.market_slug,
+            ),
             "market_slug": result.market_slug,
             "status": result.status.value,
             "order_id": result.order_id,

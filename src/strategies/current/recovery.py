@@ -9,6 +9,7 @@ from polymarket_trader.domain.order import OrderSide
 from strategy_sdk import RecoveryDecision, StrategyContext, StrategyDecision
 
 from strategies.current.config import CurrentStrategyConfig
+from strategies.current.outcomes import primary_token_id
 
 
 def decide_recovery(
@@ -18,19 +19,28 @@ def decide_recovery(
     if context.market is None:
         return RecoveryDecision(reason="missing_market_state")
 
+    try:
+        managed_token_id = primary_token_id(context.market)
+    except ValueError:
+        return RecoveryDecision(
+            reason="missing_primary_outcome",
+            pause_trading=True,
+            pause_reason="missing_primary_outcome",
+        )
+
     account_snapshot = context.account_snapshot
-    position = context.position
+    position = context.position if context.position is not None and context.position.token_id == managed_token_id else None
     if position is None and account_snapshot is not None:
         position = account_snapshot.get_position(
             context.market.condition_id,
-            context.market.no_token_id,
+            managed_token_id,
         )
 
-    open_orders = context.open_orders
+    open_orders = tuple(order for order in context.open_orders if order.token_id == managed_token_id)
     if not open_orders and account_snapshot is not None:
         open_orders = account_snapshot.open_orders_for_market(
             context.market.condition_id,
-            context.market.no_token_id,
+            managed_token_id,
         )
 
     actions: list[StrategyDecision] = []

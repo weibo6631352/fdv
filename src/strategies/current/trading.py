@@ -19,6 +19,7 @@ from polymarket_trader.domain.market import TradingStatus
 from strategy_sdk import EntryCandidate, EntrySizing, StrategyContext, StrategyDecision
 
 from strategies.current.config import CurrentStrategyConfig
+from strategies.current.outcomes import is_primary_token
 from strategies.current.universe import select_market
 
 
@@ -327,7 +328,7 @@ def _allocation_skip_reason(
     universe_decision = select_market(config, snapshot.market)
     if not universe_decision.selected:
         return universe_decision.reason or "market_out_of_universe"
-    if snapshot.token_id != snapshot.market.no_token_id:
+    if not is_primary_token(snapshot.market, snapshot.token_id):
         return "unsupported_outcome"
     if not snapshot.tradable:
         return "market_not_tradable"

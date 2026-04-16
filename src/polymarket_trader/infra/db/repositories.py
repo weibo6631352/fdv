@@ -209,8 +209,8 @@ class MarketRepository(BaseRepository):
                 "trace_id",
                 "source",
                 "market_slug",
-                "no_token_id",
-                "yes_token_id",
+                "token_ids",
+                "outcomes",
                 "market_name",
                 "market_question",
                 "event_id",
@@ -244,18 +244,8 @@ class MarketRepository(BaseRepository):
 
     async def get_by_token_id(self, token_id: str) -> Market | None:
         row = await self._session.scalar(
-            select(MarketModel).where(
-                (MarketModel.no_token_id == token_id) | (MarketModel.yes_token_id == token_id)
-            )
+            select(MarketModel).where(MarketModel.token_ids.contains([token_id]))
         )
-        return None if row is None else row.to_domain()
-
-    async def get_by_no_token_id(self, token_id: str) -> Market | None:
-        row = await self._session.scalar(select(MarketModel).where(MarketModel.no_token_id == token_id))
-        return None if row is None else row.to_domain()
-
-    async def get_by_yes_token_id(self, token_id: str) -> Market | None:
-        row = await self._session.scalar(select(MarketModel).where(MarketModel.yes_token_id == token_id))
         return None if row is None else row.to_domain()
 
     async def list_markets_snapshot(

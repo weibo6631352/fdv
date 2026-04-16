@@ -11,7 +11,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from polymarket_trader.domain.allocation import Allocation
 from polymarket_trader.domain.events import AuditEvent, Fill, OutboxEvent
-from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.market import Market, MarketOutcome, TradingStatus
 from polymarket_trader.domain.order import Order, OrderResult, OrderSide, OrderStatus, OrderType
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
@@ -210,8 +210,18 @@ class MarketModel(Base, TimestampMixin):
     source: Mapped[str | None] = mapped_column(String(32), index=True)
     condition_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     market_slug: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    no_token_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
-    yes_token_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    token_ids: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    outcomes: Mapped[list[dict[str, str]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
     market_name: Mapped[str | None] = mapped_column(String(512), index=True)
     market_question: Mapped[str | None] = mapped_column(Text)
     event_id: Mapped[str | None] = mapped_column(String(128), index=True)
@@ -263,8 +273,11 @@ class MarketModel(Base, TimestampMixin):
         payload = _json_mapping(raw_payload) if raw_payload is not None else {
             "condition_id": market.condition_id,
             "market_slug": market.market_slug,
-            "no_token_id": market.no_token_id,
-            "yes_token_id": market.yes_token_id,
+            "token_ids": list(market.token_ids),
+            "outcomes": [
+                {"token_id": outcome.token_id, "outcome": outcome.outcome}
+                for outcome in market.outcomes
+            ],
             "market_name": market.market_name,
             "market_question": market.market_question,
             "event_id": market.event_id,
@@ -291,8 +304,11 @@ class MarketModel(Base, TimestampMixin):
             source=source,
             condition_id=market.condition_id,
             market_slug=market.market_slug,
-            no_token_id=market.no_token_id,
-            yes_token_id=market.yes_token_id,
+            token_ids=list(market.token_ids),
+            outcomes=[
+                {"token_id": outcome.token_id, "outcome": outcome.outcome}
+                for outcome in market.outcomes
+            ],
             market_name=market.market_name,
             market_question=market.market_question,
             event_id=market.event_id,
@@ -320,8 +336,16 @@ class MarketModel(Base, TimestampMixin):
         return Market(
             condition_id=self.condition_id,
             market_slug=self.market_slug,
-            no_token_id=self.no_token_id,
-            yes_token_id=self.yes_token_id,
+            outcomes=tuple(
+                MarketOutcome(
+                    token_id=_text(item.get("token_id")) or "",
+                    outcome=_text(item.get("outcome")) or "",
+                )
+                for item in self.outcomes
+                if isinstance(item, Mapping)
+                and _text(item.get("token_id"))
+                and _text(item.get("outcome"))
+            ),
             market_name=self.market_name,
             market_question=self.market_question,
             event_id=self.event_id,

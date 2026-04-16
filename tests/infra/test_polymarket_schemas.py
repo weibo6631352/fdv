@@ -107,9 +107,8 @@ def test_normalize_gamma_market_reads_clob_token_ids() -> None:
         }
     )
 
-    assert dto.yes_token_id == "yes-1"
-    assert dto.no_token_id == "no-1"
-    assert dto.to_market().no_token_id == "no-1"
+    assert tuple(outcome.token_id for outcome in dto.outcomes) == ("yes-1", "no-1")
+    assert dto.to_market().require_token_id("NO") == "no-1"
 
 
 def test_gamma_event_to_raw_market_events_inherits_parent_event_context() -> None:

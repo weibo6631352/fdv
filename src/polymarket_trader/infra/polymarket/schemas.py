@@ -15,7 +15,7 @@ from uuid import uuid4
 import httpx
 
 from polymarket_trader.domain.events import Fill, sanitize_raw_response
-from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.market import Market, MarketOutcome, TradingStatus
 from polymarket_trader.domain.order import (
     Order as OrderRecord,
     OrderSide,
@@ -255,6 +255,24 @@ def _token_id_tuple(value: Any | None) -> tuple[str, ...]:
         return tuple(items)
     text = str(value).strip()
     return (text,) if text else ()
+
+
+def _market_outcomes(
+    token_ids: tuple[str, ...],
+    outcome_names: tuple[str, ...],
+) -> tuple[MarketOutcome, ...]:
+    if not token_ids:
+        return ()
+    resolved_names = list(outcome_names)
+    if len(resolved_names) < len(token_ids):
+        if not resolved_names and len(token_ids) == 2:
+            resolved_names = ["YES", "NO"]
+        while len(resolved_names) < len(token_ids):
+            resolved_names.append(f"OUTCOME_{len(resolved_names)}")
+    return tuple(
+        MarketOutcome(token_id=token_id, outcome=resolved_names[index])
+        for index, token_id in enumerate(token_ids)
+    )
 
 
 def _coerce_price_levels(value: Any) -> tuple[PriceLevel, ...]:
@@ -675,8 +693,7 @@ class GammaMarketDTO:
     event_slug: str | None = None
     icon_url: str | None = None
     end_date: datetime | None = None
-    yes_token_id: str | None = None
-    no_token_id: str | None = None
+    outcomes: tuple[MarketOutcome, ...] = field(default_factory=tuple)
     tick_size: Decimal | None = None
     min_order_size: Decimal | None = None
     neg_risk: bool = False
@@ -695,6 +712,7 @@ class GammaMarketDTO:
         event = next(iter(_iter_mappings(self.raw, "events")), None)
         fee_schedule = _maybe_mapping(_first_value(self.raw, "fee_schedule", "feeSchedule"))
         token_ids = _token_id_tuple(_first_value(self.raw, "clobTokenIds"))
+        outcome_names = _string_tuple(_first_value(self.raw, "outcomes"))
         raw_fees_enabled = _first_value(self.raw, "fees_enabled", "feesEnabled")
         fee_schedule_rate_bps = (
             _coerce_fee_rate_units(_first_value(fee_schedule, "rate", "base_fee", "baseFee"))
@@ -728,8 +746,11 @@ class GammaMarketDTO:
                 or _first_value(event or {}, "endDate", "end_date")
             ),
         )
-        object.__setattr__(self, "yes_token_id", self.yes_token_id or (token_ids[0] if len(token_ids) >= 1 else None))
-        object.__setattr__(self, "no_token_id", self.no_token_id or (token_ids[1] if len(token_ids) >= 2 else None))
+        object.__setattr__(
+            self,
+            "outcomes",
+            self.outcomes or _market_outcomes(token_ids, outcome_names),
+        )
         object.__setattr__(self, "tick_size", self.tick_size if self.tick_size is not None else _coerce_decimal(_first_value(self.raw, "orderPriceMinTickSize", "tick_size", "tickSize")))
         object.__setattr__(self, "min_order_size", self.min_order_size if self.min_order_size is not None else _coerce_decimal(_first_value(self.raw, "orderMinSize", "min_order_size", "minOrderSize")))
         object.__setattr__(self, "neg_risk", self.neg_risk or bool(_coerce_bool(_first_value(self.raw, "neg_risk", "negRisk"))))
@@ -778,7 +799,7 @@ class GammaMarketDTO:
         object.__setattr__(self, "raw_summary", summary)
 
     def to_market(self) -> Market:
-        if self.condition_id is None or self.market_slug is None or self.no_token_id is None:
+        if self.condition_id is None or self.market_slug is None or not self.outcomes:
             raise ValueError("gamma market payload missing required market identifiers")
         tick_size = self.tick_size or Decimal("0.01")
         min_order_size = self.min_order_size or Decimal("1")
@@ -790,8 +811,7 @@ class GammaMarketDTO:
         return Market(
             condition_id=self.condition_id,
             market_slug=self.market_slug,
-            no_token_id=self.no_token_id,
-            yes_token_id=self.yes_token_id,
+            outcomes=self.outcomes,
             market_name=self.title,
             market_question=self.question,
             event_id=self.event_id,

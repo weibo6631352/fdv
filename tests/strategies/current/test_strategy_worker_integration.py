@@ -26,6 +26,7 @@ from polymarket_trader.runtime.registry import MarketRegistry
 from strategies.current.strategy import build_strategy
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 from polymarket_trader.workers.strategy_worker import StrategyWorker
+from tests.helpers.markets import build_binary_market
 
 
 def _market(
@@ -34,7 +35,7 @@ def _market(
     token_id: str,
     market_slug: str,
 ) -> Market:
-    return Market(
+    return build_binary_market(
         condition_id=condition_id,
         market_slug=market_slug,
         no_token_id=token_id,
@@ -48,6 +49,10 @@ def _market(
     )
 
 
+def _no_token_id(market: Market) -> str:
+    return market.require_token_id("NO")
+
+
 def _snapshot(
     *,
     market: Market,
@@ -55,7 +60,7 @@ def _snapshot(
     best_ask: str = "0.60",
 ) -> OrderbookSnapshot:
     return OrderbookSnapshot(
-        token_id=market.no_token_id,
+        token_id=_no_token_id(market),
         best_bid=Decimal(best_bid),
         best_ask=Decimal(best_ask),
         bids=(PriceLevel(price=Decimal(best_bid), size=Decimal("100")),),
@@ -76,7 +81,7 @@ def _entry_event(market: Market, *, trace_id: str) -> DomainEvent:
         event_id=f"{trace_id}-event",
         market_slug=market.market_slug,
         condition_id=market.condition_id,
-        token_id=market.no_token_id,
+        token_id=_no_token_id(market),
         reason="orderbook_snapshot_updated",
     )
 
@@ -105,7 +110,7 @@ def _buy_result(
     return OrderResult(
         trace_id="trace-buy",
         condition_id=market.condition_id,
-        token_id=market.no_token_id,
+        token_id=_no_token_id(market),
         market_slug=market.market_slug,
         status=status,
         side=OrderSide.BUY,
@@ -136,7 +141,7 @@ def _sell_result(
     return OrderResult(
         trace_id="trace-sell",
         condition_id=market.condition_id,
-        token_id=market.no_token_id,
+        token_id=_no_token_id(market),
         market_slug=market.market_slug,
         status=status,
         side=OrderSide.SELL,
@@ -173,8 +178,8 @@ def test_strategy_service_allocates_equally_across_eligible_markets() -> None:
     registry.upsert(primary)
     registry.upsert(secondary)
     snapshots = {
-        primary.no_token_id: _snapshot(market=primary),
-        secondary.no_token_id: _snapshot(market=secondary),
+        _no_token_id(primary): _snapshot(market=primary),
+        _no_token_id(secondary): _snapshot(market=secondary),
     }
     service = StrategyService(
         strategy_module=strategy,
@@ -184,7 +189,7 @@ def test_strategy_service_allocates_equally_across_eligible_markets() -> None:
 
     plan = service.build_entry_plan(
         condition_id=primary.condition_id,
-        token_id=primary.no_token_id,
+        token_id=_no_token_id(primary),
         trace_id="trace",
         portfolio_budget_usdc=Decimal("100"),
         available_usdc=Decimal("100"),
@@ -236,7 +241,7 @@ def test_strategy_worker_turns_orderbook_update_into_risk_result() -> None:
         await market_ws_worker.handle_message(
             {
                 "type": "best_bid_ask",
-                "token_id": market.no_token_id,
+                "token_id": _no_token_id(market),
                 "best_bid": "0.55",
                 "best_ask": "0.60",
                 "best_bid_size": "100",
@@ -267,7 +272,7 @@ def test_strategy_worker_partial_fill_only_sells_filled_shares() -> None:
         strategy_service = StrategyService(
             strategy_module=strategy,
             registry=registry,
-            orderbook_reader={market.no_token_id: _snapshot(market=market)}.get,
+            orderbook_reader={_no_token_id(market): _snapshot(market=market)}.get,
         )
         requested_amount_usdc = Decimal("20")
         requested_size_shares = requested_amount_usdc / Decimal("0.60")
@@ -313,7 +318,7 @@ def test_strategy_worker_partial_fill_only_sells_filled_shares() -> None:
         assert executor.intents[0].side == OrderSide.BUY
         assert executor.intents[1].side == OrderSide.SELL
         assert executor.intents[1].size_shares == Decimal("4")
-        position = account_state_store.snapshot().get_position(market.condition_id, market.no_token_id)
+        position = account_state_store.snapshot().get_position(market.condition_id, _no_token_id(market))
         assert position is not None
         assert position.shares == Decimal("4")
         assert position.open_sell_shares == Decimal("0")
@@ -332,7 +337,7 @@ def test_strategy_worker_tracks_live_follow_up_sell_in_hot_state() -> None:
         strategy_service = StrategyService(
             strategy_module=strategy,
             registry=registry,
-            orderbook_reader={market.no_token_id: _snapshot(market=market)}.get,
+            orderbook_reader={_no_token_id(market): _snapshot(market=market)}.get,
         )
         requested_amount_usdc = Decimal("6")
         filled_shares = Decimal("10")
@@ -380,11 +385,11 @@ def test_strategy_worker_tracks_live_follow_up_sell_in_hot_state() -> None:
         assert result.follow_up_reviews[0].order_result is not None
         assert result.follow_up_reviews[0].order_result.status == OrderResultStatus.LIVE
         snapshot = account_state_store.snapshot()
-        position = snapshot.get_position(market.condition_id, market.no_token_id)
+        position = snapshot.get_position(market.condition_id, _no_token_id(market))
         assert position is not None
         assert position.shares == filled_shares
         assert position.open_sell_shares == filled_shares
-        open_sell_orders = snapshot.open_sell_orders_for_market(market.condition_id, market.no_token_id)
+        open_sell_orders = snapshot.open_sell_orders_for_market(market.condition_id, _no_token_id(market))
         assert len(open_sell_orders) == 1
         assert open_sell_orders[0].status == OrderStatus.LIVE
         assert open_sell_orders[0].remaining_shares == filled_shares
@@ -405,8 +410,8 @@ def test_strategy_worker_no_fill_releases_budget_for_next_market() -> None:
             strategy_module=strategy,
             registry=registry,
             orderbook_reader={
-                first.no_token_id: _snapshot(market=first),
-                second.no_token_id: _snapshot(market=second),
+                _no_token_id(first): _snapshot(market=first),
+                _no_token_id(second): _snapshot(market=second),
             }.get,
         )
         requested_amount_usdc = Decimal("50")

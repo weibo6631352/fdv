@@ -7,7 +7,7 @@ from json import loads
 from typing import Any, Mapping
 
 from polymarket_trader.domain.events import DomainEvent, DomainEventType
-from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.market import Market, MarketOutcome, TradingStatus
 
 _FEE_RATE_DENOMINATOR = Decimal("1000")
 
@@ -32,8 +32,7 @@ class MatchSignal:
 class ClassificationResult:
     status: ClassificationStatus
     condition_id: str | None
-    yes_token_id: str | None
-    no_token_id: str | None
+    outcomes: tuple[MarketOutcome, ...]
     tick_size: Decimal | None
     min_order_size: Decimal | None
     neg_risk: bool
@@ -79,8 +78,13 @@ class ClassificationResult:
             "accepted": self.accepted,
             "status": self.status.value,
             "condition_id": self.condition_id,
-            "yes_token_id": self.yes_token_id,
-            "no_token_id": self.no_token_id,
+            "outcomes": tuple(
+                {
+                    "token_id": outcome.token_id,
+                    "outcome": outcome.outcome,
+                }
+                for outcome in self.outcomes
+            ),
             "tick_size": self.tick_size,
             "min_order_size": self.min_order_size,
             "neg_risk": self.neg_risk,
@@ -125,7 +129,7 @@ class ClassificationResult:
         if (
             self.condition_id is None
             or self.market_slug is None
-            or self.no_token_id is None
+            or not self.outcomes
             or self.tick_size is None
             or self.min_order_size is None
         ):
@@ -133,8 +137,7 @@ class ClassificationResult:
         return Market(
             condition_id=self.condition_id,
             market_slug=self.market_slug,
-            no_token_id=self.no_token_id,
-            yes_token_id=self.yes_token_id,
+            outcomes=self.outcomes,
             market_name=self.market_name,
             market_question=self.market_question,
             event_id=self.event_id,
@@ -212,14 +215,13 @@ class MarketClassifier:
         if (
             parsed["condition_id"] is None
             or parsed["market_slug"] is None
-            or parsed["yes_token_id"] is None
-            or parsed["no_token_id"] is None
+            or not parsed["outcomes"]
         ):
             return self._reject(
                 ClassificationRejectReason.MISSING_TRADING_CONDITIONS,
                 parsed,
                 match_signals,
-                "missing condition_id / market_slug / yes_token_id / no_token_id",
+                "missing condition_id / market_slug / outcomes",
             )
 
         if parsed["tick_size"] is None or parsed["min_order_size"] is None:
@@ -233,8 +235,7 @@ class MarketClassifier:
         return ClassificationResult(
             status=ClassificationStatus.ACCEPTED,
             condition_id=parsed["condition_id"],
-            yes_token_id=parsed["yes_token_id"],
-            no_token_id=parsed["no_token_id"],
+            outcomes=parsed["outcomes"],
             tick_size=parsed["tick_size"],
             min_order_size=parsed["min_order_size"],
             neg_risk=parsed["neg_risk"],
@@ -270,8 +271,7 @@ class MarketClassifier:
         return ClassificationResult(
             status=ClassificationStatus.REJECTED,
             condition_id=parsed["condition_id"],
-            yes_token_id=parsed["yes_token_id"],
-            no_token_id=parsed["no_token_id"],
+            outcomes=parsed["outcomes"],
             tick_size=parsed["tick_size"],
             min_order_size=parsed["min_order_size"],
             neg_risk=parsed["neg_risk"],
@@ -298,9 +298,9 @@ class MarketClassifier:
         try:
             event = self._first_event(raw_market)
             token_ids = self._parse_token_ids(self._first_value(raw_market, "clobTokenIds"))
+            outcome_names = self._parse_outcome_names(self._first_value(raw_market, "outcomes"))
             condition_id = self._parse_text(self._first_value(raw_market, "conditionId"))
-            yes_token_id = token_ids[0] if len(token_ids) >= 1 else None
-            no_token_id = token_ids[1] if len(token_ids) >= 2 else None
+            outcomes = self._build_outcomes(token_ids, outcome_names)
             tick_size = self._parse_decimal(
                 self._first_value(raw_market, "orderPriceMinTickSize", "tickSize", "tick")
             )
@@ -385,8 +385,7 @@ class MarketClassifier:
         except (TypeError, ValueError) as exc:
             return {
                 "condition_id": None,
-                "yes_token_id": None,
-                "no_token_id": None,
+                "outcomes": tuple(),
                 "tick_size": None,
                 "min_order_size": None,
                 "neg_risk": False,
@@ -408,8 +407,7 @@ class MarketClassifier:
 
         return {
             "condition_id": condition_id,
-            "yes_token_id": yes_token_id,
-            "no_token_id": no_token_id,
+            "outcomes": outcomes,
             "tick_size": tick_size,
             "min_order_size": min_order_size,
             "neg_risk": neg_risk,
@@ -581,6 +579,47 @@ class MarketClassifier:
             return tuple(token_ids)
         text = MarketClassifier._parse_text(value)
         return tuple() if text is None else (text,)
+
+    @staticmethod
+    def _parse_outcome_names(value: Any | None) -> tuple[str, ...]:
+        if value is None:
+            return tuple()
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return tuple()
+            try:
+                parsed = loads(text)
+            except ValueError:
+                return (text,)
+            return MarketClassifier._parse_outcome_names(parsed)
+        if isinstance(value, (list, tuple, set)):
+            outcome_names: list[str] = []
+            for item in value:
+                text = MarketClassifier._parse_text(item)
+                if text is not None:
+                    outcome_names.append(text)
+            return tuple(outcome_names)
+        text = MarketClassifier._parse_text(value)
+        return tuple() if text is None else (text,)
+
+    @staticmethod
+    def _build_outcomes(
+        token_ids: tuple[str, ...],
+        outcome_names: tuple[str, ...],
+    ) -> tuple[MarketOutcome, ...]:
+        if not token_ids:
+            return tuple()
+        resolved_names = list(outcome_names)
+        if len(resolved_names) < len(token_ids):
+            if not resolved_names and len(token_ids) == 2:
+                resolved_names = ["YES", "NO"]
+            while len(resolved_names) < len(token_ids):
+                resolved_names.append(f"OUTCOME_{len(resolved_names)}")
+        return tuple(
+            MarketOutcome(token_id=token_id, outcome=resolved_names[index])
+            for index, token_id in enumerate(token_ids)
+        )
 
     @staticmethod
     def _matched_signals(

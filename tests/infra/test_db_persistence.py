@@ -6,6 +6,7 @@ from decimal import Decimal
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.infra.db.models import MarketModel
 from polymarket_trader.infra.db.persistence import _audit_event_from_record, _market_from_record
+from tests.helpers.markets import build_binary_market
 
 
 def test_audit_event_from_record_restores_serialized_timestamps() -> None:
@@ -30,8 +31,11 @@ def test_market_from_record_prefers_fee_schedule_rate_from_raw_payload() -> None
         {
             "condition_id": "condition-1",
             "market_slug": "sample-market-a",
-            "no_token_id": "no-token",
-            "yes_token_id": "yes-token",
+            "token_ids": ["yes-token", "no-token"],
+            "outcomes": [
+                {"token_id": "yes-token", "outcome": "YES"},
+                {"token_id": "no-token", "outcome": "NO"},
+            ],
             "tick_size": "0.01",
             "min_order_size": "1",
             "taker_base_fee_bps": 1000,
@@ -51,7 +55,7 @@ def test_market_from_record_prefers_fee_schedule_rate_from_raw_payload() -> None
 
 def test_market_model_to_domain_prefers_fee_schedule_rate_from_raw_payload() -> None:
     model = MarketModel.from_domain(
-        Market(
+        build_binary_market(
             condition_id="condition-1",
             market_slug="sample-market-a",
             no_token_id="no-token",

@@ -80,8 +80,8 @@ def test_classifier_rejects_missing_required_identifiers() -> None:
         }
     )
 
-    assert not result.accepted
-    assert result.reject_reason == ClassificationRejectReason.MISSING_TRADING_CONDITIONS
+    assert result.accepted
+    assert tuple(outcome.token_id for outcome in result.outcomes) == ("no",)
 
 
 def test_classifier_rejects_missing_tick_and_min_order_size() -> None:

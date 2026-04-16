@@ -8,7 +8,7 @@ from typing import Any, Mapping
 from polymarket_trader.app.ports import build_strategy_ports
 from polymarket_trader.app.strategy_host.loader import load_strategy
 from polymarket_trader.app.strategy_service import StrategyEntryPlan, StrategyService
-from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.market import Market, MarketOutcome, TradingStatus
 from polymarket_trader.domain.order import Order, OrderSide, OrderStatus, OrderType
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
@@ -88,8 +88,13 @@ def _load_market(item: Mapping[str, Any]) -> Market:
     return Market(
         condition_id=_text(item, "condition_id"),
         market_slug=_text(item, "market_slug"),
-        no_token_id=_text(item, "no_token_id"),
-        yes_token_id=_text(item, "yes_token_id"),
+        outcomes=tuple(
+            MarketOutcome(
+                token_id=_text(outcome, "token_id"),
+                outcome=_text(outcome, "outcome"),
+            )
+            for outcome in _list(item, "outcomes")
+        ),
         market_name=_optional_text(item, "market_name"),
         market_question=_optional_text(item, "market_question"),
         event_id=_optional_text(item, "event_id"),

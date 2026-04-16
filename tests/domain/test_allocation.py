@@ -7,10 +7,11 @@ from datetime import datetime, timezone
 from polymarket_trader.domain.allocation import AllocationMarketSnapshot, AllocationPlan, equal_weight_budget
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from tests.helpers.markets import build_binary_market
 
 
 def _market(condition_id: str, market_slug: str, no_token_id: str) -> Market:
-    return Market(
+    return build_binary_market(
         condition_id=condition_id,
         market_slug=market_slug,
         no_token_id=no_token_id,
@@ -25,7 +26,7 @@ def _market(condition_id: str, market_slug: str, no_token_id: str) -> Market:
 
 def _snapshot(market: Market) -> AllocationMarketSnapshot:
     orderbook = OrderbookSnapshot(
-        token_id=market.no_token_id,
+        token_id=market.require_token_id("NO"),
         best_bid=Decimal("0.55"),
         best_ask=Decimal("0.43"),
         bids=(PriceLevel(price=Decimal("0.55"), size=Decimal("100")),),
@@ -39,7 +40,7 @@ def _snapshot(market: Market) -> AllocationMarketSnapshot:
     )
     return AllocationMarketSnapshot(
         market=market,
-        token_id=market.no_token_id,
+        token_id=market.require_token_id("NO"),
         orderbook=orderbook,
         tradable=True,
         market_active=True,

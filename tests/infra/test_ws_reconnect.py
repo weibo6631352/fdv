@@ -8,10 +8,11 @@ from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
+from tests.helpers.markets import build_binary_market
 
 
 def _market() -> Market:
-    return Market(
+    return build_binary_market(
         condition_id="condition",
         market_slug="sample-market-a",
         no_token_id="no-token",
@@ -22,6 +23,14 @@ def _market() -> Market:
         matched_keywords=("sample", "market", "threshold"),
         trading_status=TradingStatus.ELIGIBLE,
     )
+
+
+def _no_token_id(market: Market) -> str:
+    return market.require_token_id("NO")
+
+
+def _yes_token_id(market: Market) -> str:
+    return market.require_token_id("YES")
 
 
 def test_market_ws_worker_emits_orderbook_updates_to_trading_lane() -> None:
@@ -35,7 +44,7 @@ def test_market_ws_worker_emits_orderbook_updates_to_trading_lane() -> None:
         first_events = await worker.handle_message(
             {
                 "type": "best_bid_ask",
-                "token_id": market.no_token_id,
+                "token_id": _no_token_id(market),
                 "best_bid": "0.55",
                 "best_ask": "0.43",
                 "best_bid_size": "100",
@@ -45,7 +54,7 @@ def test_market_ws_worker_emits_orderbook_updates_to_trading_lane() -> None:
         second_events = await worker.handle_message(
             {
                 "type": "best_bid_ask",
-                "token_id": market.no_token_id,
+                "token_id": _no_token_id(market),
                 "best_bid": "0.56",
                 "best_ask": "0.59",
                 "best_bid_size": "100",
@@ -60,8 +69,8 @@ def test_market_ws_worker_emits_orderbook_updates_to_trading_lane() -> None:
             DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
         ]
         assert worker.status_snapshot().tracked_token_ids == (
-            market.no_token_id,
-            market.yes_token_id,
+            _no_token_id(market),
+            market.require_token_id("YES"),
         )
 
         snapshot_event = await event_bus.next_trading_event()
@@ -91,7 +100,7 @@ def test_market_ws_worker_updates_yes_side_snapshot() -> None:
         events = await worker.handle_message(
             {
                 "type": "best_bid_ask",
-                "token_id": market.yes_token_id,
+                "token_id": market.require_token_id("YES"),
                 "best_bid": "0.95",
                 "best_ask": "0.99",
                 "best_bid_size": "80",
@@ -99,7 +108,7 @@ def test_market_ws_worker_updates_yes_side_snapshot() -> None:
             }
         )
 
-        snapshot = worker.snapshot(market.yes_token_id)
+        snapshot = worker.snapshot(market.require_token_id("YES"))
         assert snapshot is not None
         assert snapshot.best_bid == Decimal("0.95")
         assert snapshot.best_ask == Decimal("0.99")
@@ -120,7 +129,7 @@ def test_market_ws_worker_updates_tick_size_in_registry() -> None:
         await worker.handle_message(
             {
                 "type": "tick_size_change",
-                "token_id": market.no_token_id,
+                "token_id": _no_token_id(market),
                 "tick_size": "0.02",
             }
         )
@@ -144,7 +153,7 @@ def test_market_ws_worker_handles_official_price_change_batch_payload() -> None:
                 "market": market.condition_id,
                 "price_changes": [
                     {
-                        "asset_id": market.no_token_id,
+                        "asset_id": _no_token_id(market),
                         "price": "0.59",
                         "size": "200",
                         "side": "SELL",
@@ -156,7 +165,7 @@ def test_market_ws_worker_handles_official_price_change_batch_payload() -> None:
             }
         )
 
-        snapshot = worker.snapshot(market.no_token_id)
+        snapshot = worker.snapshot(_no_token_id(market))
         assert snapshot is not None
         assert snapshot.best_bid == Decimal("0.55")
         assert snapshot.best_ask == Decimal("0.59")
@@ -178,7 +187,7 @@ def test_market_ws_worker_handles_official_market_resolved_payload_with_assets_i
             {
                 "event_type": "market_resolved",
                 "market": market.condition_id,
-                "assets_ids": [market.yes_token_id, market.no_token_id],
+                "assets_ids": [market.require_token_id("YES"), _no_token_id(market)],
             }
         )
 
@@ -186,8 +195,8 @@ def test_market_ws_worker_handles_official_market_resolved_payload_with_assets_i
             DomainEventType.MARKET_RESOLVED_OR_DISABLED.value,
         ]
         assert worker.status_snapshot().resolved_token_ids == (
-            market.no_token_id,
-            market.yes_token_id,
+            _no_token_id(market),
+            market.require_token_id("YES"),
         )
         updated = registry.get_by_condition_id(market.condition_id)
         assert updated is not None
@@ -208,7 +217,7 @@ def test_market_ws_worker_writes_market_fee_schedule_from_new_market_message() -
             {
                 "event_type": "new_market",
                 "market": market.condition_id,
-                "asset_id": market.no_token_id,
+                "asset_id": _no_token_id(market),
                 "fees_enabled": True,
                 "fee_schedule": {
                     "rate": "0.02",
@@ -244,7 +253,7 @@ def test_market_ws_worker_does_not_overwrite_fee_schedule_with_last_trade_fee_ra
             {
                 "event_type": "last_trade_price",
                 "market": market.condition_id,
-                "asset_id": market.no_token_id,
+                "asset_id": _no_token_id(market),
                 "last_trade_price": "0.58",
                 "fee_rate_bps": "1000",
                 "timestamp": "1757908892351",
@@ -252,7 +261,7 @@ def test_market_ws_worker_does_not_overwrite_fee_schedule_with_last_trade_fee_ra
         )
 
         updated = registry.get_by_condition_id(market.condition_id)
-        snapshot = worker.snapshot(market.no_token_id)
+        snapshot = worker.snapshot(_no_token_id(market))
         assert updated is not None
         assert updated.taker_base_fee_bps == 72
         assert updated.fee_rate_bps == 72
@@ -278,7 +287,7 @@ def test_market_ws_worker_writes_fee_rate_from_last_trade_price_message() -> Non
             {
                 "event_type": "last_trade_price",
                 "market": market.condition_id,
-                "asset_id": market.no_token_id,
+                "asset_id": _no_token_id(market),
                 "last_trade_price": "0.58",
                 "fee_rate_bps": "125",
                 "timestamp": "1757908892351",
@@ -286,7 +295,7 @@ def test_market_ws_worker_writes_fee_rate_from_last_trade_price_message() -> Non
         )
 
         updated = registry.get_by_condition_id(market.condition_id)
-        snapshot = worker.snapshot(market.no_token_id)
+        snapshot = worker.snapshot(_no_token_id(market))
         assert updated is not None
         assert updated.fee_rate_bps == 125
         assert updated.fee_rate_updated_at is not None
@@ -315,7 +324,7 @@ def test_market_ws_worker_overwrites_latest_snapshot() -> None:
         below_threshold_events = await worker.handle_message(
             {
                 "type": "best_bid_ask",
-                "token_id": market.no_token_id,
+                "token_id": _no_token_id(market),
                 "best_bid": "0.57",
                 "best_ask": "0.61",
                 "best_bid_size": "100",
@@ -325,7 +334,7 @@ def test_market_ws_worker_overwrites_latest_snapshot() -> None:
         trigger_events = await worker.handle_message(
             {
                 "type": "best_bid_ask",
-                "token_id": market.no_token_id,
+                "token_id": _no_token_id(market),
                 "best_bid": "0.56",
                 "best_ask": "0.43",
                 "best_bid_size": "110",
@@ -335,7 +344,7 @@ def test_market_ws_worker_overwrites_latest_snapshot() -> None:
         followup_events = await worker.handle_message(
             {
                 "type": "best_bid_ask",
-                "token_id": market.no_token_id,
+                "token_id": _no_token_id(market),
                 "best_bid": "0.55",
                 "best_ask": "0.59",
                 "best_bid_size": "120",
@@ -353,13 +362,13 @@ def test_market_ws_worker_overwrites_latest_snapshot() -> None:
             DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
         ]
 
-        snapshot = worker.snapshot(market.no_token_id)
+        snapshot = worker.snapshot(_no_token_id(market))
         assert snapshot is not None
         assert snapshot.best_bid == Decimal("0.55")
         assert snapshot.best_ask == Decimal("0.59")
         assert worker.status_snapshot().tracked_token_ids == (
-            market.no_token_id,
-            market.yes_token_id,
+            _no_token_id(market),
+            market.require_token_id("YES"),
         )
 
     asyncio.run(run())
@@ -376,7 +385,7 @@ def test_market_ws_worker_routes_orderbook_updates_to_trading_queue() -> None:
         events = await worker.handle_message(
             {
                 "type": "best_bid_ask",
-                "token_id": market.no_token_id,
+                "token_id": _no_token_id(market),
                 "best_bid": "0.57",
                 "best_ask": "0.61",
                 "best_bid_size": "100",
@@ -388,8 +397,8 @@ def test_market_ws_worker_routes_orderbook_updates_to_trading_queue() -> None:
             DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
         ]
         assert worker.status_snapshot().tracked_token_ids == (
-            market.no_token_id,
-            market.yes_token_id,
+            _no_token_id(market),
+            market.require_token_id("YES"),
         )
         assert event_bus.trading_queue_depth() == 1
         assert event_bus.maintenance_queue_depth() == 0

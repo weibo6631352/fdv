@@ -35,6 +35,11 @@ from strategy_sdk.models import (
 from strategies.current.strategy import build_strategy
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 from polymarket_trader.workers.reconcile_worker import ReconcileWorker
+from tests.helpers.markets import build_binary_market
+
+
+def _no_token_id(market: Market) -> str:
+    return market.require_token_id("NO")
 
 
 class _StubExecutor:
@@ -119,7 +124,7 @@ class _ReplaceRecoveryStrategy:
             actions=(
                 StrategyDecision.replace(
                     reason="repriced",
-                    token_id=context.token_id,
+                    token_id=None if context.market is None else _no_token_id(context.market),
                     order_id="sell-1",
                     price=Decimal("0.81"),
                     size_shares=Decimal("5"),
@@ -135,7 +140,6 @@ class _ReplaceRecoveryStrategy:
 class _StubGammaMarket:
     def __init__(self, market: Market) -> None:
         self.condition_id = market.condition_id
-        self.no_token_id = market.no_token_id
         self.market_slug = market.market_slug
         self.clob_enabled = True
         self._market = market
@@ -202,7 +206,7 @@ class _StubAccountClobClient:
 def test_reconcile_worker_cancels_open_buy_and_backfills_missing_sell() -> None:
     async def run() -> None:
         registry = MarketRegistry()
-        market = Market(
+        market = build_binary_market(
             condition_id="condition",
             market_slug="token-threshold-market",
             no_token_id="token",
@@ -266,7 +270,7 @@ def test_reconcile_worker_cancels_open_buy_and_backfills_missing_sell() -> None:
 def test_reconcile_worker_refreshes_market_fee_fields() -> None:
     async def run() -> None:
         registry = MarketRegistry()
-        current_market = Market(
+        current_market = build_binary_market(
             condition_id="condition",
             market_slug="token-threshold-market",
             no_token_id="token",
@@ -280,7 +284,7 @@ def test_reconcile_worker_refreshes_market_fee_fields() -> None:
         )
         registry.upsert(current_market)
 
-        refreshed_market = Market(
+        refreshed_market = build_binary_market(
             condition_id="condition",
             market_slug="token-threshold-market",
             no_token_id="token",
@@ -339,7 +343,7 @@ def test_reconcile_worker_refreshes_market_fee_fields() -> None:
 def test_reconcile_worker_keeps_gamma_fee_schedule_without_fetching_fee_rate() -> None:
     async def run() -> None:
         registry = MarketRegistry()
-        current_market = Market(
+        current_market = build_binary_market(
             condition_id="condition",
             market_slug="token-threshold-market",
             no_token_id="token",
@@ -354,7 +358,7 @@ def test_reconcile_worker_keeps_gamma_fee_schedule_without_fetching_fee_rate() -
         )
         registry.upsert(current_market)
 
-        refreshed_market = Market(
+        refreshed_market = build_binary_market(
             condition_id="condition",
             market_slug="token-threshold-market",
             no_token_id="token",
@@ -412,7 +416,7 @@ def test_reconcile_worker_keeps_gamma_fee_schedule_without_fetching_fee_rate() -
 def test_reconcile_worker_executes_replace_requests_and_keeps_sell_coverage() -> None:
     async def run() -> None:
         registry = MarketRegistry()
-        market = Market(
+        market = build_binary_market(
             condition_id="condition",
             market_slug="token-threshold-market",
             no_token_id="token",
@@ -477,10 +481,10 @@ def test_reconcile_worker_executes_replace_requests_and_keeps_sell_coverage() ->
         assert replace_intent.size_shares == Decimal("5")
 
         snapshot = account_state_store.snapshot()
-        position = snapshot.get_position(market.condition_id, market.no_token_id)
+        position = snapshot.get_position(market.condition_id, _no_token_id(market))
         assert position is not None
         assert position.open_sell_shares == Decimal("5")
-        open_sell_orders = snapshot.open_sell_orders_for_market(market.condition_id, market.no_token_id)
+        open_sell_orders = snapshot.open_sell_orders_for_market(market.condition_id, _no_token_id(market))
         assert len(open_sell_orders) == 1
         assert open_sell_orders[0].order_id == "sell-2"
         assert open_sell_orders[0].price == Decimal("0.81")
@@ -520,7 +524,7 @@ def test_reconcile_worker_refreshes_account_balance_from_clob_balance_allowance(
 def test_reconcile_worker_prunes_strategy_filtered_market_after_flattening() -> None:
     async def run() -> None:
         registry = MarketRegistry()
-        market = Market(
+        market = build_binary_market(
             condition_id="condition",
             market_slug="token-threshold-market",
             no_token_id="token",
@@ -557,7 +561,7 @@ def test_reconcile_worker_prunes_strategy_filtered_market_after_flattening() -> 
 def test_reconcile_worker_emits_observe_events_without_requeueing_maintenance() -> None:
     async def run() -> None:
         registry = MarketRegistry()
-        market = Market(
+        market = build_binary_market(
             condition_id="condition",
             market_slug="token-threshold-market",
             no_token_id="token",

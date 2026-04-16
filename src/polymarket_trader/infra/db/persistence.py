@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from polymarket_trader.domain.allocation import Allocation
 from polymarket_trader.domain.events import AuditEvent, Fill, OutboxEvent
-from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.market import Market, MarketOutcome, TradingStatus
 from polymarket_trader.domain.order import Order, OrderSide, OrderStatus, OrderType
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
@@ -261,21 +261,23 @@ def _audit_event_from_record(record: Mapping[str, Any]) -> AuditEvent | None:
 def _market_from_record(record: Mapping[str, Any]) -> Market | None:
     condition_id = _text(record.get("condition_id"))
     market_slug = _text(record.get("market_slug"))
-    no_token_id = _text(record.get("no_token_id")) or _text(record.get("token_id"))
-    if condition_id is None or market_slug is None or no_token_id is None:
-        _log_skip("market", record, "missing condition_id/market_slug/no_token_id")
-        return None
     raw_market = record.get("raw_payload")
     if not isinstance(raw_market, Mapping):
         raw_market = record.get("market_data")
     if not isinstance(raw_market, Mapping):
         raw_market = {}
+    outcomes = _market_outcomes(
+        record.get("outcomes") or raw_market.get("outcomes"),
+        record.get("token_ids") or raw_market.get("token_ids"),
+    )
+    if condition_id is None or market_slug is None or not outcomes:
+        _log_skip("market", record, "missing condition_id/market_slug/outcomes")
+        return None
     schedule_fee_rate_bps = _fee_rate_units_from_market_payload(raw_market)
     return Market(
         condition_id=condition_id,
         market_slug=market_slug,
-        no_token_id=no_token_id,
-        yes_token_id=_text(record.get("yes_token_id")),
+        outcomes=outcomes,
         event_id=_text(record.get("event_id")) or _text(record.get("source_event_id")),
         event_title=_text(record.get("event_title")),
         event_slug=_text(record.get("event_slug")),
@@ -310,6 +312,34 @@ def _market_from_record(record: Mapping[str, Any]) -> Market | None:
         matched_keywords=_string_tuple(record.get("matched_keywords")),
         trading_status=_trading_status(record.get("trading_status")),
         reject_reason=_text(record.get("reject_reason")) or _text(record.get("classification_reason")),
+    )
+
+
+def _market_outcomes(
+    outcome_records: Any | None,
+    token_ids_value: Any | None,
+) -> tuple[MarketOutcome, ...]:
+    outcomes: list[MarketOutcome] = []
+    if isinstance(outcome_records, Sequence) and not isinstance(outcome_records, (str, bytes, bytearray)):
+        for item in outcome_records:
+            if not isinstance(item, Mapping):
+                continue
+            token_id = _text(item.get("token_id"))
+            outcome = _text(item.get("outcome"))
+            if token_id is None or outcome is None:
+                continue
+            outcomes.append(MarketOutcome(token_id=token_id, outcome=outcome))
+    if outcomes:
+        return tuple(outcomes)
+    token_ids = _string_tuple(token_ids_value)
+    if not token_ids:
+        return tuple()
+    outcome_names = ("YES", "NO") if len(token_ids) == 2 else tuple(
+        f"OUTCOME_{index}" for index in range(len(token_ids))
+    )
+    return tuple(
+        MarketOutcome(token_id=token_id, outcome=outcome_names[index])
+        for index, token_id in enumerate(token_ids)
     )
 
 

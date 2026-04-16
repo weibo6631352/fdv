@@ -43,6 +43,7 @@ from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
 from polymarket_trader.runtime.status import ReadinessSnapshot, RuntimePhase, RuntimeSnapshot
 from polymarket_trader.main import FullMarketDiscoveryState
+from tests.helpers.markets import binary_market_outcomes, build_binary_market
 
 EXPECTED_ADMIN_ROUTES = {
     ("GET", "/openapi.json"),
@@ -294,7 +295,7 @@ class FakeTradingService:
 
 
 def _market() -> Market:
-    return Market(
+    return build_binary_market(
         condition_id="condition-500m",
         market_slug="sample-market-a",
         no_token_id="no-token-500m",
@@ -317,9 +318,17 @@ def _market() -> Market:
     )
 
 
+def _no_token_id(market: Market) -> str:
+    return market.require_token_id("NO")
+
+
+def _yes_token_id(market: Market) -> str:
+    return market.require_token_id("YES")
+
+
 def _orderbook(market: Market) -> OrderbookSnapshot:
     return OrderbookSnapshot(
-        token_id=market.no_token_id,
+        token_id=_no_token_id(market),
         best_bid=Decimal("0.55"),
         best_ask=Decimal("0.59"),
         bids=(PriceLevel(price=Decimal("0.55"), size=Decimal("100")),),
@@ -333,12 +342,37 @@ def _orderbook(market: Market) -> OrderbookSnapshot:
     )
 
 
+def _yes_orderbook(market: Market) -> OrderbookSnapshot:
+    return OrderbookSnapshot(
+        token_id=_yes_token_id(market),
+        best_bid=Decimal("0.95"),
+        best_ask=Decimal("0.99"),
+        bids=(PriceLevel(price=Decimal("0.95"), size=Decimal("80")),),
+        asks=(PriceLevel(price=Decimal("0.99"), size=Decimal("120")),),
+        received_at=datetime(2026, 1, 1, 12, 0, 1, tzinfo=timezone.utc),
+        market_slug=market.market_slug,
+        condition_id=market.condition_id,
+        best_bid_size=Decimal("80"),
+        best_ask_size=Decimal("120"),
+        tick_size=market.tick_size,
+    )
+
+
+def _token_view(payload: dict[str, object], outcome: str) -> dict[str, object]:
+    token_views = payload["token_views"]
+    assert isinstance(token_views, list)
+    for item in token_views:
+        if isinstance(item, dict) and item.get("outcome") == outcome:
+            return item
+    raise AssertionError(f"missing token view for {outcome}")
+
+
 def _reconcile_result(market: Market) -> object:
     action = ReconcileAction(
         action_type=ReconcileActionType.CANCEL_ORDER,
         trace_id="trace-reconcile",
         condition_id=market.condition_id,
-        token_id=market.no_token_id,
+        token_id=_no_token_id(market),
         market_slug=market.market_slug,
         reason="open_buy_detected",
         source_order_id="buy-1",
@@ -386,7 +420,7 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
     account_state_store.upsert_position(
         Position(
             condition_id=market.condition_id,
-            token_id=market.no_token_id,
+            token_id=_no_token_id(market),
             market_slug=market.market_slug,
             shares=Decimal("5"),
             cost_usdc=Decimal("3"),
@@ -396,7 +430,7 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
         OrderRecord(
             trace_id="trace-buy",
             condition_id=market.condition_id,
-            token_id=market.no_token_id,
+            token_id=_no_token_id(market),
             market_slug=market.market_slug,
             side=OrderSide.BUY,
             order_type=OrderType.FAK,
@@ -413,7 +447,7 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
         OrderRecord(
             trace_id="trace-sell",
             condition_id=market.condition_id,
-            token_id=market.no_token_id,
+            token_id=_no_token_id(market),
             market_slug=market.market_slug,
             side=OrderSide.SELL,
             order_type=OrderType.GTC,
@@ -432,7 +466,7 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
             event_type="trade_confirmed",
             market_slug=market.market_slug,
             condition_id=market.condition_id,
-            token_id=market.no_token_id,
+            token_id=_no_token_id(market),
             order_id="sell-1",
             trade_id="trade-1",
             side="SELL",
@@ -448,7 +482,12 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
 
     event_bus = EventBus()
     orderbook = _orderbook(market)
-    fake_market_ws_worker = FakeMarketWsWorker({market.no_token_id: orderbook})
+    fake_market_ws_worker = FakeMarketWsWorker(
+        {
+            _no_token_id(market): orderbook,
+            _yes_token_id(market): _yes_orderbook(market),
+        }
+    )
     readiness = FakeConfigReadiness(ready_to_trade=True)
     runtime_readiness = ReadinessSnapshot(
         phase=RuntimePhase.TRADING_ENABLED if ready else RuntimePhase.RECOVERING_SNAPSHOT,
@@ -581,50 +620,54 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert runtime_payload["market_discovery"]["pages_scanned_in_round"] == 2
         assert runtime_payload["market_discovery"]["cursor_active"] is False
         assert runtime_payload["readiness"]["ready"] is True
-        assert runtime_payload["markets"][0]["orderbook"]["best_ask"] == "0.59"
+        runtime_market = runtime_payload["markets"][0]
+        runtime_no_view = _token_view(runtime_market, "NO")
         assert runtime_payload["markets"][0]["market"]["market_slug"] == "sample-market-a"
         assert runtime_payload["markets"][0]["market"]["icon_url"] == "https://example.com/icon.png"
         assert runtime_payload["markets"][0]["market"]["end_date"] == "2026-02-01T00:00:00+00:00"
         assert runtime_payload["markets"][0]["market"]["fees"]["taker_base_fee_bps"] == 100
         assert runtime_payload["markets"][0]["market"]["fees"]["fee_rate_bps"] == 125
-        assert runtime_payload["markets"][0]["fee_preview"]["fee_rate_bps"] == 125
-        assert runtime_payload["markets"][0]["fee_preview"]["buy"]["fee_usdc"] == "3.02375"
-        assert runtime_payload["markets"][0]["fee_preview"]["buy"]["price_source"] == "best_ask"
-        assert runtime_payload["markets"][0]["fee_preview"]["sell"]["fee_usdc"] == "3.09375"
-        assert runtime_payload["markets"][0]["fee_preview"]["sell"]["price_source"] == "best_bid"
+        assert runtime_no_view["orderbook"]["best_ask"] == "0.59"
+        assert runtime_no_view["fee_preview"]["fee_rate_bps"] == 125
+        assert runtime_no_view["fee_preview"]["buy"]["fee_usdc"] == "3.02375"
+        assert runtime_no_view["fee_preview"]["buy"]["price_source"] == "best_ask"
+        assert runtime_no_view["fee_preview"]["sell"]["fee_usdc"] == "3.09375"
+        assert runtime_no_view["fee_preview"]["sell"]["price_source"] == "best_bid"
         assert workers["phase"] == "trading_enabled"
         assert isinstance(workers["workers"], list)
         assert metrics["metrics"]["gauges"]["entry_signal_to_submit_ms"] == 42
 
         assert markets["total"] == 1
-        assert markets["items"][0]["market"]["condition_id"] == "condition-500m"
-        assert markets["items"][0]["market"]["icon_url"] == "https://example.com/icon.png"
-        assert markets["items"][0]["market"]["end_date"] == "2026-02-01T00:00:00+00:00"
-        assert markets["items"][0]["market"]["fees"]["enabled"] is True
-        assert markets["items"][0]["market"]["fees"]["maker_base_fee_bps"] == 0
-        assert markets["items"][0]["market"]["fees"]["fee_rate_updated_at"] == "2026-01-01T12:02:00+00:00"
-        assert markets["items"][0]["fee_preview"]["basis_size_shares"] == "100"
-        assert markets["items"][0]["fee_preview"]["buy"]["fee_usdc"] == "3.02375"
-        assert markets["items"][0]["fee_preview"]["sell"]["fee_usdc"] == "3.09375"
-        assert markets["items"][0]["yes_orderbook"]["token_id"] == "yes-token-500m"
-        assert markets["items"][0]["token_views"][0]["token_id"] == "no-token-500m"
-        assert markets["items"][0]["token_views"][0]["outcome"] == "NO"
-        assert markets["items"][0]["token_views"][1]["token_id"] == "yes-token-500m"
-        assert markets["items"][0]["token_views"][1]["outcome"] == "YES"
-        assert markets["items"][0]["yes_best_ask"] == "0.99"
-        assert markets["items"][0]["yes_best_bid"] == "0.95"
-        assert markets["items"][0]["yes_fee_preview"]["basis_size_shares"] == "100"
-        assert markets["items"][0]["yes_fee_preview"]["buy"]["fee_usdc"] == "0.12375"
-        assert markets["items"][0]["yes_fee_preview"]["sell"]["fee_usdc"] == "0.59375"
+        market_item = markets["items"][0]
+        no_view = _token_view(market_item, "NO")
+        yes_view = _token_view(market_item, "YES")
+        assert market_item["market"]["condition_id"] == "condition-500m"
+        assert market_item["market"]["icon_url"] == "https://example.com/icon.png"
+        assert market_item["market"]["end_date"] == "2026-02-01T00:00:00+00:00"
+        assert market_item["market"]["fees"]["enabled"] is True
+        assert market_item["market"]["fees"]["maker_base_fee_bps"] == 0
+        assert market_item["market"]["fees"]["fee_rate_updated_at"] == "2026-01-01T12:02:00+00:00"
+        assert no_view["token_id"] == "no-token-500m"
+        assert no_view["outcome"] == "NO"
+        assert no_view["fee_preview"]["basis_size_shares"] == "100"
+        assert no_view["fee_preview"]["buy"]["fee_usdc"] == "3.02375"
+        assert no_view["fee_preview"]["sell"]["fee_usdc"] == "3.09375"
+        assert yes_view["token_id"] == "yes-token-500m"
+        assert yes_view["outcome"] == "YES"
+        assert yes_view["orderbook"]["token_id"] == "yes-token-500m"
+        assert yes_view["best_ask"] == "0.99"
+        assert yes_view["best_bid"] == "0.95"
+        assert yes_view["fee_preview"]["basis_size_shares"] == "100"
+        assert yes_view["fee_preview"]["buy"]["fee_usdc"] == "0.12375"
+        assert yes_view["fee_preview"]["sell"]["fee_usdc"] == "0.59375"
         assert market_detail["market"]["condition_id"] == "condition-500m"
         assert market_detail["market"]["market_slug"] == "sample-market-a"
         assert market_detail["market"]["icon_url"] == "https://example.com/icon.png"
         assert market_detail["market"]["end_date"] == "2026-02-01T00:00:00+00:00"
-        assert market_detail["fee_preview"]["buy"]["fee_shares"] == "5.12500"
-        assert market_detail["token_views"][0]["token_id"] == "no-token-500m"
-        assert market_detail["token_views"][1]["token_id"] == "yes-token-500m"
-        assert market_detail["yes_orderbook"]["token_id"] == "yes-token-500m"
-        assert market_detail["yes_fee_preview"]["buy"]["fee_shares"] == "0.12500"
+        assert _token_view(market_detail, "NO")["fee_preview"]["buy"]["fee_shares"] == "5.12500"
+        assert _token_view(market_detail, "NO")["token_id"] == "no-token-500m"
+        assert _token_view(market_detail, "YES")["token_id"] == "yes-token-500m"
+        assert _token_view(market_detail, "YES")["fee_preview"]["buy"]["fee_shares"] == "0.12500"
         assert market_orderbook["token_id"] == "no-token-500m"
         assert market_orderbook["source"] == "hot"
         assert market_orderbook["orderbook"]["best_bid"] == "0.55"
@@ -638,10 +681,7 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert market_prices_history["fidelity"] == 60
         assert market_prices_history["history"][0]["timestamp"] == "2024-01-01T09:20:00+00:00"
         assert market_prices_history["history"][1]["price"] == "0.54"
-        assert [call["token_id"] for call in runtime.clob_client.orderbook_calls] == [
-            "yes-token-500m",
-            "yes-token-500m",
-        ]
+        assert runtime.clob_client.orderbook_calls == []
         assert runtime.clob_client.history_calls[0]["token_id"] == "no-token-500m"
         assert runtime.clob_client.history_calls[0]["start_ts"] == 1704100800.0
         assert runtime.clob_client.history_calls[0]["end_ts"] == 1704104400.0
@@ -754,15 +794,18 @@ def test_admin_api_supports_fee_filters_and_sorting() -> None:
         _market(),
         condition_id="condition-1b",
         market_slug="sample-market-b",
-        no_token_id="no-token-1b",
-        yes_token_id="yes-token-1b",
+        outcomes=binary_market_outcomes(
+            no_token_id="no-token-1b",
+            yes_token_id="yes-token-1b",
+        ),
         fee_rate_bps=200,
         taker_base_fee_bps=150,
         maker_base_fee_bps=5,
         fee_rate_updated_at=datetime(2026, 1, 1, 12, 3, 0, tzinfo=timezone.utc),
     )
     runtime.registry.upsert(second_market)
-    runtime.market_ws_worker._snapshots[second_market.no_token_id] = _orderbook(second_market)
+    runtime.market_ws_worker._snapshots[_no_token_id(second_market)] = _orderbook(second_market)
+    runtime.market_ws_worker._snapshots[_yes_token_id(second_market)] = _yes_orderbook(second_market)
 
     app = create_app(runtime=runtime, admin_service=AdminService())
 
@@ -990,7 +1033,7 @@ def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypa
             market=SimpleNamespace(
                 get_by_condition_id=lambda condition_id: None,
                 get_by_market_slug=lambda market_slug: None,
-                get_by_no_token_id=lambda token_id: None,
+                get_by_token_id=lambda token_id: None,
             ),
             order=None,
             fill=None,

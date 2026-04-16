@@ -19,7 +19,7 @@ from polymarket_trader.domain.order import (
 from polymarket_trader.domain.position import Position
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistrySnapshot
-from strategy_sdk import StrategyContext, StrategyModule
+from strategy_sdk import MarketTokenView, StrategyContext, StrategyModule
 
 
 class ReconcileActionType(StrEnum):
@@ -54,7 +54,7 @@ class ReconcileAction:
     action_type: ReconcileActionType
     trace_id: str
     condition_id: str
-    token_id: str
+    token_id: str | None
     market_slug: str | None
     reason: str
     source_order_id: str | None = None
@@ -74,7 +74,7 @@ class ReconcileAction:
             (
                 self.action_type.value,
                 self.condition_id,
-                self.token_id,
+                self.token_id or "",
                 self.source_order_id or "",
                 self.reason,
             )
@@ -163,17 +163,29 @@ class ReconcileService:
         trace_id: str | None = None,
     ) -> ReconcileMarketPlan:
         trace_id = trace_id or uuid4().hex
-        token_id = market.no_token_id
-        position = account_snapshot.get_position(market.condition_id, token_id)
-        open_orders = account_snapshot.open_orders_for_market(
-            market.condition_id,
-            token_id,
+        position = None
+        open_orders = tuple(
+            order
+            for token_id in market.token_ids
+            for order in account_snapshot.open_orders_for_market(market.condition_id, token_id)
+        )
+        market_token_views = tuple(
+            MarketTokenView(
+                token_id=outcome.token_id,
+                outcome=outcome.outcome,
+                position=account_snapshot.get_position(market.condition_id, outcome.token_id),
+                open_orders=account_snapshot.open_orders_for_market(
+                    market.condition_id,
+                    outcome.token_id,
+                ),
+            )
+            for outcome in market.outcomes
         )
         recovery = self._strategy_module.decide_recovery(
             StrategyContext(
                 trace_id=trace_id,
                 market=market,
-                token_id=token_id,
+                market_token_views=market_token_views,
                 account_snapshot=account_snapshot,
                 position=position,
                 open_orders=open_orders,
@@ -197,7 +209,7 @@ class ReconcileService:
                 trace_id=trace_id,
                 condition_id=market.condition_id,
                 market_slug=market.market_slug,
-                default_token_id=token_id,
+                default_token_id=None,
                 decision=decision,
             )
             if intent is None:
@@ -217,7 +229,7 @@ class ReconcileService:
                     action_type=ReconcileActionType.PAUSE_TRADING,
                     trace_id=trace_id,
                     condition_id=market.condition_id,
-                    token_id=token_id,
+                    token_id=None,
                     market_slug=market.market_slug,
                     reason="market_not_tradable",
                     pause_reason=pause_reason,

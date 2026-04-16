@@ -93,7 +93,7 @@ class MarketService:
                     self._market_tracker.track_market(market)
                     if hasattr(self._market_tracker, "build_subscription_request"):
                         subscription_request = self._market_tracker.build_subscription_request(
-                            market.no_token_id
+                            market.token_ids
                         )
             elif existing_market is not None:
                 if self._should_retain_filtered_market(existing_market, account_snapshot):
@@ -259,7 +259,7 @@ class MarketService:
         if self._registry is not None:
             self._registry.remove_market(market.condition_id)
         if self._market_tracker is not None and hasattr(self._market_tracker, "untrack_market"):
-            self._market_tracker.untrack_market(market.no_token_id)
+            self._market_tracker.untrack_market(market.token_ids)
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,8 +293,14 @@ def _serialize_market(market: Market | None) -> dict[str, Any] | None:
     return {
         "condition_id": market.condition_id,
         "market_slug": market.market_slug,
-        "no_token_id": market.no_token_id,
-        "yes_token_id": market.yes_token_id,
+        "token_ids": list(market.token_ids),
+        "outcomes": [
+            {
+                "token_id": outcome.token_id,
+                "outcome": outcome.outcome,
+            }
+            for outcome in market.outcomes
+        ],
         "event_id": market.event_id,
         "event_title": market.event_title,
         "event_slug": market.event_slug,

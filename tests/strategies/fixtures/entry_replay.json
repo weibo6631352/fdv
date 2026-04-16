@@ -15,8 +15,10 @@
     {
       "condition_id": "condition-1",
       "market_slug": "token-1",
-      "no_token_id": "no-1",
-      "yes_token_id": "yes-1",
+      "outcomes": [
+        {"token_id": "yes-1", "outcome": "YES"},
+        {"token_id": "no-1", "outcome": "NO"}
+      ],
       "market_name": "Will this project reach a threshold?",
       "market_question": "Will this project hit $500M FDV?",
       "event_id": "event-1",
@@ -31,8 +33,10 @@
     {
       "condition_id": "condition-2",
       "market_slug": "token-2",
-      "no_token_id": "no-2",
-      "yes_token_id": "yes-2",
+      "outcomes": [
+        {"token_id": "yes-2", "outcome": "YES"},
+        {"token_id": "no-2", "outcome": "NO"}
+      ],
       "market_name": "Will another project reach a threshold?",
       "market_question": "Will this project hit $500M FDV?",
       "event_id": "event-2",

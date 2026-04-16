@@ -61,7 +61,7 @@ class ReconcileWorkerResult:
 class AuthoritativeMarketRefresh:
     requested_market: Market
     refreshed_market: Market | None
-    orderbook_snapshot: OrderbookSnapshot | None
+    orderbook_snapshots: tuple[OrderbookSnapshot, ...] = ()
     fee_rate_refreshed: bool = False
     failures: tuple[str, ...] = ()
 
@@ -297,7 +297,7 @@ class ReconcileWorker:
                         event_id=uuid4().hex,
                         market_slug=market_plan.market.market_slug,
                         condition_id=market_plan.market.condition_id,
-                        token_id=market_plan.market.no_token_id,
+                        token_id=None,
                         reason=market_plan.pause_reason or "market_not_tradable",
                         created_at=_utc_now(),
                         payload={
@@ -332,7 +332,7 @@ class ReconcileWorker:
                         event_id=uuid4().hex,
                         market_slug=market_plan.market.market_slug,
                         condition_id=market_plan.market.condition_id,
-                        token_id=market_plan.market.no_token_id,
+                        token_id=None,
                         reason="reconcile_applied",
                         created_at=_utc_now(),
                         payload={
@@ -667,7 +667,7 @@ class ReconcileWorker:
                 continue
             self._registry.remove_market(market.condition_id)
             if self._market_ws_worker is not None and hasattr(self._market_ws_worker, "untrack_market"):
-                self._market_ws_worker.untrack_market(market.no_token_id)
+                self._market_ws_worker.untrack_market(market.token_ids)
 
     def _resolve_snapshots(self) -> tuple[MarketRegistrySnapshot, AccountSnapshot]:
         if self._registry is not None:
@@ -724,11 +724,11 @@ class ReconcileWorker:
             if item.refreshed_market is not None:
                 refreshed_markets += 1
                 self._apply_refreshed_market(item.refreshed_market)
-            if item.orderbook_snapshot is not None:
-                refreshed_orderbooks += 1
-                await self._apply_refreshed_orderbook(
+            if item.orderbook_snapshots:
+                refreshed_orderbooks += len(item.orderbook_snapshots)
+                await self._apply_refreshed_orderbooks(
                     item.refreshed_market or item.requested_market,
-                    item.orderbook_snapshot,
+                    item.orderbook_snapshots,
                 )
             if item.fee_rate_refreshed:
                 refreshed_fee_rates += 1
@@ -782,14 +782,14 @@ class ReconcileWorker:
                 fee_rate_updated_at=_utc_now(),
             )
             refreshed_market = market_for_orderbook
-        orderbook_snapshot = await self._fetch_orderbook_snapshot(
+        orderbook_snapshots = await self._fetch_orderbook_snapshots(
             market_for_orderbook,
             failures,
         )
         return AuthoritativeMarketRefresh(
             requested_market=market,
             refreshed_market=refreshed_market,
-            orderbook_snapshot=orderbook_snapshot,
+            orderbook_snapshots=orderbook_snapshots,
             fee_rate_refreshed=fee_rate_refreshed,
             failures=tuple(failures),
         )
@@ -825,32 +825,40 @@ class ReconcileWorker:
                 failures.append(f"gamma:{market.condition_id}:{slug}:{exc}")
         return None
 
-    async def _fetch_orderbook_snapshot(
+    async def _fetch_orderbook_snapshots(
         self,
         market: Market,
         failures: list[str],
-    ) -> OrderbookSnapshot | None:
+    ) -> tuple[OrderbookSnapshot, ...]:
         if self._clob_client is None:
-            return None
-        try:
-            orderbook = await self._clob_client.get_orderbook(
-                market.no_token_id,
-                market_slug=market.market_slug,
-                condition_id=market.condition_id,
-            )
-            return orderbook.to_snapshot()
-        except Exception as exc:  # pragma: no cover - external SDK failure path
-            failures.append(f"clob:{market.condition_id}:{market.no_token_id}:{exc}")
-            return None
+            return ()
+        snapshots: list[OrderbookSnapshot] = []
+        for token_id in market.token_ids:
+            try:
+                orderbook = await self._clob_client.get_orderbook(
+                    token_id,
+                    market_slug=market.market_slug,
+                    condition_id=market.condition_id,
+                )
+            except Exception as exc:  # pragma: no cover - external SDK failure path
+                failures.append(f"clob:{market.condition_id}:{token_id}:{exc}")
+                continue
+            snapshots.append(orderbook.to_snapshot())
+        return tuple(snapshots)
 
-    async def _apply_refreshed_orderbook(self, market: Market, snapshot: OrderbookSnapshot) -> None:
+    async def _apply_refreshed_orderbooks(
+        self,
+        market: Market,
+        snapshots: tuple[OrderbookSnapshot, ...],
+    ) -> None:
         if self._market_ws_worker is None:
             return
-        await self._market_ws_worker.apply_rest_snapshot(
-            market.no_token_id,
-            snapshot,
-            source="reconcile_rest",
-        )
+        for snapshot in snapshots:
+            await self._market_ws_worker.apply_rest_snapshot(
+                snapshot.token_id,
+                snapshot,
+                source="reconcile_rest",
+            )
 
     def _apply_refreshed_market(self, market: Market) -> None:
         if self._market_ws_worker is not None:
@@ -874,8 +882,7 @@ class ReconcileWorker:
             category=refreshed.category,
             tags=refreshed.tags,
             matched_keywords=current.matched_keywords,
-            yes_token_id=refreshed.yes_token_id,
-            no_token_id=refreshed.no_token_id,
+            outcomes=refreshed.outcomes,
             neg_risk=refreshed.neg_risk,
         )
         merged = merged.with_tick_size(refreshed.tick_size)
@@ -915,10 +922,13 @@ class ReconcileWorker:
     ) -> int | None:
         if self._clob_client is None:
             return None
+        token_id = next(iter(market.token_ids), None)
+        if token_id is None:
+            return None
         try:
-            return await self._clob_client.get_fee_rate(market.no_token_id)
+            return await self._clob_client.get_fee_rate(token_id)
         except Exception as exc:  # pragma: no cover - external SDK failure path
-            failures.append(f"clob:fee_rate:{market.condition_id}:{market.no_token_id}:{exc}")
+            failures.append(f"clob:fee_rate:{market.condition_id}:{token_id}:{exc}")
             return None
 
     async def _refresh_account_authority(
@@ -1071,15 +1081,18 @@ def _submission_succeeded(result: object | None) -> bool:
 
 
 def _market_has_exposure(account_snapshot: AccountSnapshot, market: Market) -> bool:
-    position = account_snapshot.get_position(market.condition_id, market.no_token_id)
-    if position is not None and (
-        position.shares > 0
-        or position.open_buy_shares > 0
-        or position.open_sell_shares > 0
-        or position.pending_buy_shares > 0
-    ):
-        return True
-    return bool(account_snapshot.open_orders_for_market(market.condition_id, market.no_token_id))
+    for token_id in market.token_ids:
+        position = account_snapshot.get_position(market.condition_id, token_id)
+        if position is not None and (
+            position.shares > 0
+            or position.open_buy_shares > 0
+            or position.open_sell_shares > 0
+            or position.pending_buy_shares > 0
+        ):
+            return True
+        if account_snapshot.open_orders_for_market(market.condition_id, token_id):
+            return True
+    return False
 
 
 def _order_open_size(order: Order) -> Decimal:
@@ -1136,7 +1149,13 @@ def _pick_gamma_market(
         if getattr(candidate, "condition_id", None) == market.condition_id:
             return candidate
     for candidate in candidates:
-        if getattr(candidate, "no_token_id", None) == market.no_token_id:
+        candidate_outcomes = getattr(candidate, "outcomes", ())
+        candidate_token_ids = tuple(
+            getattr(outcome, "token_id", None)
+            for outcome in candidate_outcomes
+            if getattr(outcome, "token_id", None)
+        )
+        if set(candidate_token_ids).intersection(market.token_ids):
             return candidate
     for candidate in candidates:
         if getattr(candidate, "market_slug", None) == market.market_slug:

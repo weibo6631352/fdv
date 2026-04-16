@@ -23,6 +23,7 @@ from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistry
 from strategy_sdk import (
     EntryCandidate,
+    MarketTokenView,
     StrategyAction,
     StrategyContext,
     StrategyDecision,
@@ -150,6 +151,11 @@ class StrategyService:
                 market=resolved_market,
                 token_id=resolved_token_id,
                 orderbook=resolved_orderbook,
+                market_token_views=_market_token_views(
+                    resolved_market,
+                    orderbook_reader=self._orderbook_reader,
+                    account_snapshot=account_snapshot,
+                ),
                 account_snapshot=account_snapshot,
                 position=position_index.get((resolved_market.condition_id, resolved_token_id or "")),
                 open_orders=tuple(
@@ -203,6 +209,11 @@ class StrategyService:
                         market=resolved_market,
                         token_id=allocation.token_id or resolved_token_id,
                         orderbook=resolved_orderbook,
+                        market_token_views=_market_token_views(
+                            resolved_market,
+                            orderbook_reader=self._orderbook_reader,
+                            account_snapshot=account_snapshot,
+                        ),
                         account_snapshot=account_snapshot,
                         position=focus_position,
                         open_orders=focus_open_orders,
@@ -391,11 +402,37 @@ def _pick_allocation(
 
 
 def _candidate_token_ids(market: Market) -> tuple[str, ...]:
-    token_ids: list[str] = []
-    for token_id in (market.no_token_id, market.yes_token_id):
-        if token_id is not None and token_id not in token_ids:
-            token_ids.append(token_id)
-    return tuple(token_ids)
+    return market.token_ids
+
+
+def _market_token_views(
+    market: Market,
+    *,
+    orderbook_reader: OrderbookReader | None,
+    account_snapshot: AccountSnapshot | None,
+) -> tuple[MarketTokenView, ...]:
+    return tuple(
+        MarketTokenView(
+            token_id=outcome.token_id,
+            outcome=outcome.outcome,
+            orderbook=(
+                None
+                if orderbook_reader is None
+                else orderbook_reader(outcome.token_id)
+            ),
+            position=(
+                None
+                if account_snapshot is None
+                else account_snapshot.get_position(market.condition_id, outcome.token_id)
+            ),
+            open_orders=(
+                ()
+                if account_snapshot is None
+                else account_snapshot.open_orders_for_market(market.condition_id, outcome.token_id)
+            ),
+        )
+        for outcome in market.outcomes
+    )
 
 
 def _decision_to_trade_intent(
