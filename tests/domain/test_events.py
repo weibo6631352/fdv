@@ -34,6 +34,17 @@ def test_audit_event_normalizes_utc_and_redacts_sensitive_fields() -> None:
     assert "[REDACTED]" in event.raw_response
 
 
+def test_audit_event_does_not_promote_payload_raw_response() -> None:
+    event = AuditEvent(
+        event_title="order_submitted",
+        trace_id="trace",
+        payload={"raw_response": {"api_key": "secret-value"}},
+    )
+
+    assert event.raw_response is None
+    assert event.payload["raw_response"] == {"api_key": "[REDACTED]"}
+
+
 def test_audit_event_accepts_iso_timestamp_strings() -> None:
     event = AuditEvent(
         event_title="order_submitted",

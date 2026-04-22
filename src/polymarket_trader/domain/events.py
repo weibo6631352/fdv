@@ -282,6 +282,7 @@ class AuditEvent:
         payload: Mapping[str, Any] | None = None,
         **fields: Any,
     ) -> None:
+        raw_response = fields.pop("raw_response", None)
         merged: dict[str, Any] = {}
         if payload:
             merged.update(dict(payload))
@@ -300,10 +301,6 @@ class AuditEvent:
         updated_at = _normalize_datetime(updated_at)
         if updated_at < created_at:
             updated_at = created_at
-
-        raw_response = merged.pop("raw_response", None)
-        if raw_response is None and payload is not None:
-            raw_response = dict(payload).get("raw_response")
 
         payload_data = dict(payload) if payload else {}
         payload_data.update(merged)

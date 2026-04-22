@@ -105,9 +105,6 @@ class PersistenceRecordBuilder:
             created_at=event.created_at,
             raw_response=event.raw_response_summary,
             payload={
-                "source_event_id": event.event_id,
-                "source_event_type": str(event.event_type),
-                "source_payload": jsonable(payload),
                 "idempotency_key": event.idempotency_key,
                 "priority": event.priority,
                 "retry_count": event.retry_count,
@@ -115,9 +112,6 @@ class PersistenceRecordBuilder:
         )
         record = audit.to_payload()
         record["idempotency_key"] = _kind_idempotency_key("audit", event)
-        record["source_event_id"] = event.event_id
-        record["source_event_type"] = str(event.event_type)
-        record["source_payload"] = jsonable(payload)
         return jsonable(record)
 
     def _build_market_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -143,7 +137,6 @@ class PersistenceRecordBuilder:
                 "taker_base_fee_bps": _first(fees, "taker_base_fee_bps"),
                 "fee_rate_bps": _first(fees, "fee_rate_bps"),
                 "fee_rate_updated_at": _first(fees, "fee_rate_updated_at"),
-                "market_data": jsonable(market),
             }
         )
         record.update(jsonable(market))
@@ -164,7 +157,6 @@ class PersistenceRecordBuilder:
         record.update(
             {
                 "idempotency_key": _kind_idempotency_key("account", event),
-                "account_data": jsonable(account),
             }
         )
         record.update(jsonable(account))
@@ -184,7 +176,6 @@ class PersistenceRecordBuilder:
                 "needs_rest_snapshot": _first(payload, "needs_rest_snapshot"),
                 "spread": _first(payload, "spread"),
                 "buyable_no_depth": _first(payload, "buyable_no_depth"),
-                "orderbook_data": jsonable(snapshot),
             }
         )
         record.update(jsonable(snapshot))
@@ -201,7 +192,6 @@ class PersistenceRecordBuilder:
         record.update(
             {
                 "idempotency_key": _kind_idempotency_key("order", event),
-                "order_data": jsonable(order),
             }
         )
         record.update(jsonable(order))
@@ -211,13 +201,13 @@ class PersistenceRecordBuilder:
         fills = _mapping_list(payload, "fill", "fills")
         if not fills:
             return []
-        return [_indexed_record(event, "fill", index, "fill_data", fill) for index, fill in enumerate(fills)]
+        return [_indexed_record(event, "fill", index, fill) for index, fill in enumerate(fills)]
 
     def _build_position_records(self, event: OutboxEvent, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
         positions = _mapping_list(payload, "position", "positions")
         if not positions:
             return []
-        return [_indexed_record(event, "position", index, "position_data", item) for index, item in enumerate(positions)]
+        return [_indexed_record(event, "position", index, item) for index, item in enumerate(positions)]
 
     def _build_allocation_records(self, event: OutboxEvent, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
         allocation = _mapping(payload, "allocation")
@@ -229,20 +219,17 @@ class PersistenceRecordBuilder:
         elif allocation is not None:
             records_source = [allocation]
         elif plan is not None and isinstance(plan.get("allocations"), list):
-            records_source = [item for item in plan["allocations"] if isinstance(item, Mapping)]
+            records_source = [dict(item) for item in plan["allocations"] if isinstance(item, Mapping)]
         else:
             return []
 
         records: list[dict[str, Any]] = []
-        plan_meta = jsonable(plan) if plan is not None else None
         for index, allocation_item in enumerate(records_source):
             record = _base_meta(event)
             record.update(
                 {
                     "idempotency_key": _kind_idempotency_key("allocation", event),
                     "allocation_index": index,
-                    "allocation_plan": plan_meta,
-                    "allocation_data": jsonable(allocation_item),
                 }
             )
             record.update(jsonable(allocation_item))
@@ -254,7 +241,7 @@ class PersistenceRecordBuilder:
         record.update(
             {
                 "idempotency_key": event.idempotency_key,
-                "outbox_payload": jsonable(payload),
+                "payload": jsonable(payload),
             }
         )
         return record
@@ -273,13 +260,10 @@ def route_key(event: OutboxEvent) -> str:
 
 
 def _base_meta(event: OutboxEvent) -> dict[str, Any]:
-    payload = dict(event.payload)
     return {
         "event_id": event.event_id,
         "trace_id": event.trace_id,
         "event_type": str(event.event_type),
-        "source_event_type": str(event.event_type),
-        "source_event_id": event.event_id,
         "market_slug": event.market_slug,
         "event_slug": event.event_slug,
         "condition_id": event.condition_id,
@@ -290,7 +274,6 @@ def _base_meta(event: OutboxEvent) -> dict[str, Any]:
         "retry_count": event.retry_count,
         "last_error": event.last_error,
         "idempotency_key": event.idempotency_key,
-        "raw_payload": jsonable(payload),
     }
 
 
@@ -298,7 +281,6 @@ def _indexed_record(
     event: OutboxEvent,
     kind: str,
     index: int,
-    data_key: str,
     item: Mapping[str, Any],
 ) -> dict[str, Any]:
     record = _base_meta(event)
@@ -306,7 +288,6 @@ def _indexed_record(
         {
             "idempotency_key": _kind_idempotency_key(kind, event),
             f"{kind}_index": index,
-            data_key: jsonable(item),
         }
     )
     record.update(jsonable(item))

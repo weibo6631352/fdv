@@ -6,7 +6,12 @@ from decimal import Decimal
 from polymarket_trader.domain.events import DomainEventType, OutboxEvent
 from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.infra.db.models import MarketModel
-from polymarket_trader.infra.db.record_mappers import audit_event_from_record, market_from_record
+from polymarket_trader.infra.db.record_mappers import (
+    audit_event_from_record,
+    fill_from_record,
+    market_from_record,
+    outbox_event_from_record,
+)
 from polymarket_trader.workers.persistence_records import PersistenceRecordBuilder
 from tests.helpers.markets import build_binary_market
 
@@ -126,8 +131,10 @@ def test_market_persistence_worker_skips_market_wide_record_without_structured_m
     records = dict(builder.route_event(event))
 
     assert set(records) == {"audit", "outbox"}
-    assert records["audit"]["source_event_type"] == "market_filtered_out"
-    assert records["outbox"]["outbox_payload"]["parse_reason"] == "missing_trading_conditions"
+    assert "source_event_type" not in records["audit"]
+    assert "source_payload" not in records["audit"]
+    assert "outbox_payload" not in records["outbox"]
+    assert records["outbox"]["payload"]["parse_reason"] == "missing_trading_conditions"
 
 
 def test_market_persistence_worker_materializes_explicit_market_snapshot() -> None:
@@ -160,7 +167,8 @@ def test_market_persistence_worker_materializes_explicit_market_snapshot() -> No
     record = records["market"]
 
     assert record["parse_status"] == "accepted"
-    assert record["market_data"]["condition_id"] == "condition-1"
+    assert "market_data" not in record
+    assert record["condition_id"] == "condition-1"
 
 
 def test_market_persistence_worker_materializes_event_slug_for_audit_and_outbox() -> None:
@@ -198,7 +206,7 @@ def test_market_persistence_worker_materializes_event_slug_for_audit_and_outbox(
     assert records["market"]["event_slug"] == "sample-event-a"
 
 
-def test_market_from_record_restores_parse_reason_reject_reason() -> None:
+def test_market_from_record_uses_explicit_reject_reason_only() -> None:
     market = market_from_record(
         {
             "condition_id": "condition-1",
@@ -210,7 +218,7 @@ def test_market_from_record_restores_parse_reason_reject_reason() -> None:
             ],
             "tick_size": "0.01",
             "min_order_size": "1",
-            "reject_reason": None,
+            "reject_reason": "missing_trading_conditions",
             "parse_reason": "missing_trading_conditions",
             "raw_payload": {
                 "conditionId": "condition-1",
@@ -224,3 +232,94 @@ def test_market_from_record_restores_parse_reason_reject_reason() -> None:
 
     assert market is not None
     assert market.reject_reason == "missing_trading_conditions"
+
+
+def test_market_from_record_does_not_promote_parse_reason_to_reject_reason() -> None:
+    market = market_from_record(
+        {
+            "condition_id": "condition-1",
+            "market_slug": "sample-market-a",
+            "token_ids": ["yes-token", "no-token"],
+            "outcomes": [
+                {"token_id": "yes-token", "outcome": "YES"},
+                {"token_id": "no-token", "outcome": "NO"},
+            ],
+            "tick_size": "0.01",
+            "min_order_size": "1",
+            "parse_reason": "missing_trading_conditions",
+        }
+    )
+
+    assert market is not None
+    assert market.reject_reason is None
+
+
+def test_market_from_record_does_not_rehydrate_legacy_market_data() -> None:
+    market = market_from_record(
+        {
+            "condition_id": "condition-1",
+            "market_slug": "sample-market-a",
+            "market_data": {
+                "token_ids": ["yes-token", "no-token"],
+                "outcomes": [
+                    {"token_id": "yes-token", "outcome": "YES"},
+                    {"token_id": "no-token", "outcome": "NO"},
+                ],
+                "tick_size": "0.01",
+                "min_order_size": "1",
+            },
+        }
+    )
+
+    assert market is None
+
+
+def test_market_from_record_does_not_promote_source_event_id() -> None:
+    market = market_from_record(
+        {
+            "condition_id": "condition-1",
+            "market_slug": "sample-market-a",
+            "token_ids": ["yes-token", "no-token"],
+            "outcomes": [
+                {"token_id": "yes-token", "outcome": "YES"},
+                {"token_id": "no-token", "outcome": "NO"},
+            ],
+            "tick_size": "0.01",
+            "min_order_size": "1",
+            "source_event_id": "legacy-event",
+        }
+    )
+
+    assert market is not None
+    assert market.event_id is None
+
+
+def test_outbox_event_from_record_uses_explicit_payload_only() -> None:
+    event = outbox_event_from_record(
+        {
+            "trace_id": "trace-1",
+            "event_type": "market_discovered",
+            "idempotency_key": "idem-1",
+            "outbox_payload": {"legacy": True},
+            "raw_payload": {"fallback": True},
+        }
+    )
+
+    assert event is not None
+    assert event.payload == {}
+
+
+def test_fill_from_record_requires_event_type_and_explicit_size() -> None:
+    assert fill_from_record({"trace_id": "trace-1", "event_id": "event-1"}) is None
+
+    fill = fill_from_record(
+        {
+            "trace_id": "trace-1",
+            "event_id": "event-1",
+            "event_type": "trade_confirmed",
+            "filled_shares": "2",
+        }
+    )
+
+    assert fill is not None
+    assert fill.size is None

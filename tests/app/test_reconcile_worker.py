@@ -207,7 +207,7 @@ class _ReconcileHooks:
                 continue
             actions.append(
                 ExtensionDecision.sell(
-                    reason="backfill_sell",
+                    reason="recover_missing_sell",
                     token_id=view.token_id,
                     price=Decimal("0.80"),
                     size_shares=view.position.shares,
@@ -303,7 +303,7 @@ class _StubAccountClobClient:
         )
 
 
-def test_reconcile_worker_cancels_open_buy_and_backfills_missing_sell() -> None:
+def test_reconcile_worker_cancels_open_buy_and_recovers_missing_sell() -> None:
     async def run() -> None:
         registry = MarketRegistry()
         market = build_binary_market(

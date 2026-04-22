@@ -240,6 +240,7 @@ def audit_event_from_record(record: Mapping[str, Any]) -> AuditEvent | None:
         event_title=event_title,
         trace_id=trace_id,
         created_at=created_at,
+        raw_response=record.get("raw_response"),
         event_slug=_text(record.get("event_slug")),
         payload=payload,
     )
@@ -249,8 +250,6 @@ def market_from_record(record: Mapping[str, Any]) -> Market | None:
     condition_id = _text(record.get("condition_id"))
     market_slug = _text(record.get("market_slug"))
     raw_market = record.get("raw_payload")
-    if not isinstance(raw_market, Mapping):
-        raw_market = record.get("market_data")
     if not isinstance(raw_market, Mapping):
         raw_market = {}
     outcomes = _market_outcomes(
@@ -265,7 +264,7 @@ def market_from_record(record: Mapping[str, Any]) -> Market | None:
         condition_id=condition_id,
         market_slug=market_slug,
         outcomes=outcomes,
-        event_id=_text(record.get("event_id")) or _text(record.get("source_event_id")),
+        event_id=_text(record.get("event_id")),
         event_title=_text(record.get("event_title")),
         event_slug=_text(record.get("event_slug")),
         icon_url=_text(record.get("icon_url")) or _text(raw_market.get("icon_url")) or _text(raw_market.get("icon")),
@@ -298,11 +297,7 @@ def market_from_record(record: Mapping[str, Any]) -> Market | None:
         tags=_string_tuple(record.get("tags")),
         matched_keywords=_string_tuple(record.get("matched_keywords")),
         trading_status=_trading_status(record.get("trading_status")),
-        reject_reason=(
-            _text(record.get("reject_reason"))
-            or _text(record.get("parse_reason"))
-            or _text(record.get("classification_reason"))
-        ),
+        reject_reason=_text(record.get("reject_reason")),
     )
 
 
@@ -394,12 +389,13 @@ def order_from_record(record: Mapping[str, Any]) -> Order | None:
 
 def fill_from_record(record: Mapping[str, Any]) -> Fill | None:
     trace_id = _text(record.get("trace_id"))
-    if trace_id is None:
-        _log_skip("fill", record, "missing trace_id")
+    event_type = _text(record.get("event_type"))
+    if trace_id is None or event_type is None:
+        _log_skip("fill", record, "missing trace_id or event_type")
         return None
     return Fill(
         trace_id=trace_id,
-        event_type=_text(record.get("event_type")) or "fill_recorded",
+        event_type=event_type,
         event_id=_text(record.get("event_id")) or "",
         market_slug=_text(record.get("market_slug")),
         condition_id=_text(record.get("condition_id")),
@@ -409,7 +405,7 @@ def fill_from_record(record: Mapping[str, Any]) -> Fill | None:
         trade_id=_text(record.get("trade_id")),
         side=_text(record.get("side")),
         price=_decimal(record.get("price")),
-        size=_decimal(record.get("size")) or _decimal(record.get("filled_shares")),
+        size=_decimal(record.get("size")),
         notional_usdc=_decimal(record.get("notional_usdc")),
         status=_text(record.get("status")) or "confirmed",
         confirmed_at=_datetime(record.get("confirmed_at") or record.get("created_at")),
@@ -482,7 +478,7 @@ def outbox_event_from_record(record: Mapping[str, Any]) -> OutboxEvent | None:
     if trace_id is None or event_type is None or idempotency_key is None:
         _log_skip("outbox", record, "missing trace_id/event_type/idempotency_key")
         return None
-    payload = _mapping(record.get("outbox_payload")) or _mapping(record.get("raw_payload")) or dict(record)
+    payload = _mapping(record.get("payload")) or {}
     return OutboxEvent(
         trace_id=trace_id,
         event_type=event_type,
