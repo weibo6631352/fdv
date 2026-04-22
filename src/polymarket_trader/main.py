@@ -297,7 +297,6 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         account_snapshot_provider=account_state_store.snapshot,
         account_state_store=account_state_store,
         trading_service=trading_service,
-        executor=order_executor,
         registry=registry,
         market_ws_worker=market_ws_worker,
         gamma_client=gamma_client,

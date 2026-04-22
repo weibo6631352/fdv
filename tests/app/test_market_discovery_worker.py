@@ -5,7 +5,7 @@ import asyncio
 from polymarket_trader.app.market_service import MarketService
 from polymarket_trader.domain.events import DomainEventType
 from polymarket_trader.infra.outbox import LocalOutbox, build_domain_event_outbox_sink
-from polymarket_trader.extension_api import ExtensionSpec as StrategySpec, UniverseDecision
+from polymarket_trader.extension_api import ExtensionSpec, UniverseDecision
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
 from polymarket_trader.workers.market_discovery_worker import MarketDiscoveryWorker
@@ -14,7 +14,7 @@ from polymarket_trader.workers.market_discovery_worker import MarketDiscoveryWor
 class _RejectingStrategy:
     @property
     def spec(self):
-        return StrategySpec(name="rejecting")
+        return ExtensionSpec(name="rejecting")
 
     def build_discovery_queries(self):
         return ()
@@ -44,7 +44,7 @@ class _RejectingStrategy:
 class _AcceptingStrategy:
     @property
     def spec(self):
-        return StrategySpec(name="accepting")
+        return ExtensionSpec(name="accepting")
 
     def build_discovery_queries(self):
         return ()
@@ -78,7 +78,7 @@ class _SwitchingStrategy:
 
     @property
     def spec(self):
-        return StrategySpec(name="switching")
+        return ExtensionSpec(name="switching")
 
     def build_discovery_queries(self):
         return ()

@@ -137,7 +137,6 @@ class ReconcileWorker:
         account_snapshot_provider: AccountSnapshotProvider | None = None,
         account_state_store: AccountStateStore | None = None,
         trading_service: TradingService | None = None,
-        executor: object | None = None,
         registry: MarketRegistry | None = None,
         market_ws_worker: MarketWsWorker | None = None,
         gamma_client: GammaClient | None = None,
@@ -153,7 +152,6 @@ class ReconcileWorker:
         self._account_snapshot_provider = account_snapshot_provider
         self._account_state_store = account_state_store
         self._trading_service = trading_service
-        self._executor = executor
         self._registry = registry
         self._market_ws_worker = market_ws_worker
         self._gamma_client = gamma_client

@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
+
 from polymarket_trader.app.reconcile_service import ReconcileActionType, ReconcileService
 from polymarket_trader.app.trading_service import TradingReviewResult, TradingService
 from polymarket_trader.domain.market import Market, TradingStatus
@@ -357,7 +359,6 @@ def test_reconcile_worker_cancels_open_buy_and_backfills_missing_sell() -> None:
             registry_snapshot_provider=registry.snapshot,
             account_state_store=account_state_store,
             trading_service=TradingService(executor=executor),
-            executor=executor,
         )
 
         result = await worker.reconcile_once(trace_id="trace-reconcile")
@@ -398,13 +399,11 @@ def test_reconcile_worker_does_not_submit_after_trading_service_rejects() -> Non
             )
         )
 
-        executor = _StubExecutor()
         worker = ReconcileWorker(
             reconcile_service=_reconcile_service(),
             registry_snapshot_provider=registry.snapshot,
             account_state_store=account_state_store,
             trading_service=_RejectingTradingService(),
-            executor=executor,
         )
 
         result = await worker.reconcile_once(trace_id="trace-reconcile-rejected")
@@ -412,7 +411,6 @@ def test_reconcile_worker_does_not_submit_after_trading_service_rejects() -> Non
         assert result.plan.has_changes
         action_types = {action.action_type for action in result.plan.market_plans[0].actions}
         assert action_types == {ReconcileActionType.SUBMIT_ORDER}
-        assert executor.submitted_intents == []
 
         snapshot = account_state_store.snapshot()
         assert snapshot.open_sell_orders_for_market(market.condition_id, _no_token_id(market)) == ()
@@ -421,6 +419,14 @@ def test_reconcile_worker_does_not_submit_after_trading_service_rejects() -> Non
         assert position.open_sell_shares == Decimal("0")
 
     asyncio.run(run())
+
+
+def test_reconcile_worker_does_not_accept_executor_bypass() -> None:
+    with pytest.raises(TypeError):
+        ReconcileWorker(
+            reconcile_service=_reconcile_service(),
+            executor=_StubExecutor(),
+        )
 
 
 def test_reconcile_worker_refreshes_market_fee_fields() -> None:
@@ -622,7 +628,6 @@ def test_reconcile_worker_executes_replace_requests_and_keeps_sell_coverage() ->
             registry_snapshot_provider=registry.snapshot,
             account_state_store=account_state_store,
             trading_service=TradingService(executor=executor),
-            executor=executor,
         )
 
         result = await worker.reconcile_once(trace_id="trace-reconcile-replace")

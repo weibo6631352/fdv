@@ -6,7 +6,7 @@ from polymarket_trader.app.market_service import MarketService
 from polymarket_trader.domain.events import DomainEventType
 from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.domain.position import Position
-from polymarket_trader.extension_api import ExtensionSpec as StrategySpec, UniverseDecision
+from polymarket_trader.extension_api import ExtensionSpec, UniverseDecision
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.registry import MarketRegistry
 
@@ -47,7 +47,7 @@ def _raw_market(*, condition_id: str = "condition", market_slug: str = "sample-m
 class _AcceptingStrategy:
     @property
     def spec(self):
-        return StrategySpec(name="accepting")
+        return ExtensionSpec(name="accepting")
 
     def build_discovery_queries(self):
         return ()
@@ -83,7 +83,7 @@ class _SwitchingStrategy:
 
     @property
     def spec(self):
-        return StrategySpec(name="switching")
+        return ExtensionSpec(name="switching")
 
     def build_discovery_queries(self):
         return ()
@@ -167,7 +167,7 @@ def test_market_service_respects_strategy_universe_filter() -> None:
     class _RejectingStrategy:
         @property
         def spec(self):
-            return StrategySpec(name="rejecting")
+            return ExtensionSpec(name="rejecting")
 
         def build_discovery_queries(self):
             return ()

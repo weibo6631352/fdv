@@ -9,7 +9,7 @@ from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.extension_api import (
     EntrySizing,
-    ExtensionSpec as StrategySpec,
+    ExtensionSpec,
     RecoveryDecision,
     StrategyContext,
     StrategyDecision,
@@ -21,8 +21,8 @@ from tests.helpers.markets import build_binary_market
 
 class _CustomSizingStrategy:
     @property
-    def spec(self) -> StrategySpec:
-        return StrategySpec(
+    def spec(self) -> ExtensionSpec:
+        return ExtensionSpec(
             name="custom",
             capabilities=("universe", "sizing", "entry", "exit", "recovery"),
         )
