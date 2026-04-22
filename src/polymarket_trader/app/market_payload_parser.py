@@ -12,12 +12,12 @@ from polymarket_trader.domain.market import Market, MarketOutcome, TradingStatus
 _FEE_RATE_DENOMINATOR = Decimal("1000")
 
 
-class ClassificationStatus(StrEnum):
+class MarketParseStatus(StrEnum):
     ACCEPTED = "accepted"
     REJECTED = "rejected"
 
 
-class ClassificationRejectReason(StrEnum):
+class MarketParseRejectReason(StrEnum):
     MISSING_TRADING_CONDITIONS = "missing_trading_conditions"
     FIELD_PARSE_FAILED = "field_parse_failed"
 
@@ -29,8 +29,8 @@ class MatchSignal:
 
 
 @dataclass(frozen=True, slots=True)
-class ClassificationResult:
-    status: ClassificationStatus
+class MarketParseResult:
+    status: MarketParseStatus
     condition_id: str | None
     outcomes: tuple[MarketOutcome, ...]
     tick_size: Decimal | None
@@ -51,12 +51,12 @@ class ClassificationResult:
     end_date: datetime | None
     matched_fields: tuple[str, ...] = field(default_factory=tuple)
     matched_keywords: tuple[str, ...] = field(default_factory=tuple)
-    reject_reason: ClassificationRejectReason | None = None
+    reject_reason: MarketParseRejectReason | None = None
     reject_detail: str | None = None
 
     @property
     def accepted(self) -> bool:
-        return self.status is ClassificationStatus.ACCEPTED
+        return self.status is MarketParseStatus.ACCEPTED
 
     @property
     def event_type(self) -> DomainEventType:
@@ -161,7 +161,7 @@ class ClassificationResult:
 
 @dataclass(frozen=True, slots=True)
 class TargetMarketAccepted:
-    classification: ClassificationResult
+    classification: MarketParseResult
     trace_id: str
     event_id: str
     created_at: datetime = field(default_factory=datetime.utcnow)
@@ -180,7 +180,7 @@ class TargetMarketAccepted:
 
 @dataclass(frozen=True, slots=True)
 class TargetMarketRejected:
-    classification: ClassificationResult
+    classification: MarketParseResult
     trace_id: str
     event_id: str
     created_at: datetime = field(default_factory=datetime.utcnow)
@@ -197,16 +197,16 @@ class TargetMarketRejected:
         )
 
 
-class MarketClassifier:
+class MarketPayloadParser:
     """Parse raw market payloads into generic market candidates."""
 
-    def classify(self, raw_market: Mapping[str, Any]) -> ClassificationResult:
+    def parse(self, raw_market: Mapping[str, Any]) -> MarketParseResult:
         parsed = self._parse_market_fields(raw_market)
         match_signals: list[MatchSignal] = []
 
         if parsed["parse_error"] is not None:
             return self._reject(
-                ClassificationRejectReason.FIELD_PARSE_FAILED,
+                MarketParseRejectReason.FIELD_PARSE_FAILED,
                 parsed,
                 match_signals,
                 parsed["parse_error"],
@@ -218,7 +218,7 @@ class MarketClassifier:
             or not parsed["outcomes"]
         ):
             return self._reject(
-                ClassificationRejectReason.MISSING_TRADING_CONDITIONS,
+                MarketParseRejectReason.MISSING_TRADING_CONDITIONS,
                 parsed,
                 match_signals,
                 "missing condition_id / market_slug / outcomes",
@@ -226,14 +226,14 @@ class MarketClassifier:
 
         if parsed["tick_size"] is None or parsed["min_order_size"] is None:
             return self._reject(
-                ClassificationRejectReason.MISSING_TRADING_CONDITIONS,
+                MarketParseRejectReason.MISSING_TRADING_CONDITIONS,
                 parsed,
                 match_signals,
                 "missing tick_size / min_order_size",
             )
 
-        return ClassificationResult(
-            status=ClassificationStatus.ACCEPTED,
+        return MarketParseResult(
+            status=MarketParseStatus.ACCEPTED,
             condition_id=parsed["condition_id"],
             outcomes=parsed["outcomes"],
             tick_size=parsed["tick_size"],
@@ -258,18 +258,18 @@ class MarketClassifier:
 
     def _reject(
         self,
-        reason: ClassificationRejectReason,
+        reason: MarketParseRejectReason,
         parsed: Mapping[str, Any],
         match_signals: list[MatchSignal],
         reject_detail: str,
         *,
         matched_fields: tuple[str, ...] | None = None,
         matched_keywords: tuple[str, ...] | None = None,
-    ) -> ClassificationResult:
+    ) -> MarketParseResult:
         fields = matched_fields or tuple(signal.field_name for signal in match_signals)
         keywords = matched_keywords or tuple(signal.keyword for signal in match_signals)
-        return ClassificationResult(
-            status=ClassificationStatus.REJECTED,
+        return MarketParseResult(
+            status=MarketParseStatus.REJECTED,
             condition_id=parsed["condition_id"],
             outcomes=parsed["outcomes"],
             tick_size=parsed["tick_size"],
@@ -506,7 +506,7 @@ class MarketClassifier:
     def _parse_fee_rate_units(value: Any | None) -> int | None:
         if isinstance(value, bool):
             return None
-        numeric = MarketClassifier._parse_decimal(value)
+        numeric = MarketPayloadParser._parse_decimal(value)
         if numeric is None or numeric < Decimal("0"):
             return None
         if numeric < Decimal("1"):
@@ -546,14 +546,14 @@ class MarketClassifier:
         if isinstance(value, Mapping):
             tags: list[str] = []
             for key in ("label", "slug", "name"):
-                text = MarketClassifier._parse_text(value.get(key))
+                text = MarketPayloadParser._parse_text(value.get(key))
                 if text is not None:
                     tags.append(text)
             return tuple(tags)
         if isinstance(value, (list, tuple, set)):
             tags: list[str] = []
             for tag in value:
-                tags.extend(MarketClassifier._parse_tags(tag))
+                tags.extend(MarketPayloadParser._parse_tags(tag))
             return tuple(tags)
         return (str(value).strip(),)
 
@@ -569,15 +569,15 @@ class MarketClassifier:
                 parsed = loads(text)
             except ValueError:
                 return (text,)
-            return MarketClassifier._parse_token_ids(parsed)
+            return MarketPayloadParser._parse_token_ids(parsed)
         if isinstance(value, (list, tuple, set)):
             token_ids: list[str] = []
             for item in value:
-                text = MarketClassifier._parse_text(item)
+                text = MarketPayloadParser._parse_text(item)
                 if text is not None:
                     token_ids.append(text)
             return tuple(token_ids)
-        text = MarketClassifier._parse_text(value)
+        text = MarketPayloadParser._parse_text(value)
         return tuple() if text is None else (text,)
 
     @staticmethod
@@ -592,15 +592,15 @@ class MarketClassifier:
                 parsed = loads(text)
             except ValueError:
                 return (text,)
-            return MarketClassifier._parse_outcome_names(parsed)
+            return MarketPayloadParser._parse_outcome_names(parsed)
         if isinstance(value, (list, tuple, set)):
             outcome_names: list[str] = []
             for item in value:
-                text = MarketClassifier._parse_text(item)
+                text = MarketPayloadParser._parse_text(item)
                 if text is not None:
                     outcome_names.append(text)
             return tuple(outcome_names)
-        text = MarketClassifier._parse_text(value)
+        text = MarketPayloadParser._parse_text(value)
         return tuple() if text is None else (text,)
 
     @staticmethod

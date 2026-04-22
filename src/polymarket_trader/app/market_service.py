@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 from uuid import uuid4
 
-from polymarket_trader.domain.classifier import ClassificationResult, MarketClassifier
+from polymarket_trader.app.market_payload_parser import MarketParseResult, MarketPayloadParser
 from polymarket_trader.domain.events import DomainEvent, DomainEventType
 from polymarket_trader.domain.market import Market
 from polymarket_trader.observability.trace import ensure_trace_id
@@ -23,12 +23,12 @@ class MarketService:
         self,
         *,
         strategy_module: StrategyModule,
-        classifier: MarketClassifier | None = None,
+        parser: MarketPayloadParser | None = None,
         registry: MarketRegistry | None = None,
         market_tracker: Any | None = None,
         account_snapshot_provider: AccountSnapshotProvider | None = None,
     ) -> None:
-        self._classifier = classifier or MarketClassifier()
+        self._parser = parser or MarketPayloadParser()
         self._strategy_module = strategy_module
         self._registry = registry
         self._market_tracker = market_tracker
@@ -44,8 +44,8 @@ class MarketService:
     ) -> "MarketDiscoveryOutcome":
         trace_id = trace_id or ensure_trace_id()
         discovered_at = discovered_at or datetime.now(timezone.utc)
-        classification = self._classifier.classify(raw_market)
-        existing_market = self._lookup_existing_market(classification)
+        parse_result = self._parser.parse(raw_market)
+        existing_market = self._lookup_existing_market(parse_result)
         account_snapshot = self._current_account_snapshot()
 
         market: Market | None = None
@@ -53,8 +53,8 @@ class MarketService:
         tracking_retained = False
         subscription_request: dict[str, Any] | None = None
         universe_decision: UniverseDecision | None = None
-        if classification.accepted:
-            candidate_market = classification.to_market()
+        if parse_result.accepted:
+            candidate_market = parse_result.to_market()
             if existing_market is not None:
                 candidate_market = candidate_market.with_fee_schedule(
                     fees_enabled=(
@@ -120,7 +120,7 @@ class MarketService:
             )
         )
         event = self._build_event(
-            classification,
+            parse_result,
             trace_id=trace_id,
             source=source,
             discovered_at=discovered_at,
@@ -134,7 +134,7 @@ class MarketService:
         return MarketDiscoveryOutcome(
             trace_id=trace_id,
             source=source,
-            classification=classification,
+            classification=parse_result,
             event=event,
             market=market,
             discovery_kind=discovery_kind,
@@ -144,7 +144,7 @@ class MarketService:
             tracked_market=tracked_market,
             tracking_retained=tracking_retained,
             tracking_removed=(
-                classification.accepted
+                parse_result.accepted
                 and market is None
                 and existing_market is not None
                 and not tracking_retained
@@ -154,21 +154,21 @@ class MarketService:
 
     def _lookup_existing_market(
         self,
-        classification: ClassificationResult,
+        parse_result: MarketParseResult,
     ) -> Market | None:
-        if self._registry is None or not classification.accepted:
+        if self._registry is None or not parse_result.accepted:
             return None
-        if classification.condition_id is not None:
-            market = self._registry.get_by_condition_id(classification.condition_id)
+        if parse_result.condition_id is not None:
+            market = self._registry.get_by_condition_id(parse_result.condition_id)
             if market is not None:
                 return market
-        if classification.market_slug is not None:
-            return self._registry.get_by_slug(classification.market_slug)
+        if parse_result.market_slug is not None:
+            return self._registry.get_by_slug(parse_result.market_slug)
         return None
 
     def _build_event(
         self,
-        classification: ClassificationResult,
+        parse_result: MarketParseResult,
         *,
         trace_id: str,
         source: str,
@@ -192,13 +192,12 @@ class MarketService:
         payload = {
             "source": source,
             "discovery_kind": discovery_kind,
-            "classification_status": classification.status.value,
-            "classification_reason": classification.reject_reason.value
-            if classification.reject_reason
+            "parse_status": parse_result.status.value,
+            "parse_reason": parse_result.reject_reason.value if parse_result.reject_reason
             else None,
-            "classification_detail": classification.reject_detail,
-            "matched_fields": classification.matched_fields,
-            "matched_keywords": classification.matched_keywords,
+            "parse_detail": parse_result.reject_detail,
+            "matched_fields": parse_result.matched_fields,
+            "matched_keywords": parse_result.matched_keywords,
             "accepted": market is not None,
             "strategy_selected": universe_decision.selected if universe_decision is not None else None,
             "strategy_reason": universe_decision.reason if universe_decision is not None else None,
@@ -212,22 +211,22 @@ class MarketService:
             trace_id=trace_id,
             event_type=event_type,
             event_id=uuid4().hex,
-            market_slug=classification.market_slug,
-            condition_id=classification.condition_id,
-            reason=self._event_reason(classification, universe_decision),
+            market_slug=parse_result.market_slug,
+            condition_id=parse_result.condition_id,
+            reason=self._event_reason(parse_result, universe_decision),
             created_at=discovered_at,
             payload=payload,
         )
 
     @staticmethod
     def _event_reason(
-        classification: ClassificationResult,
+        parse_result: MarketParseResult,
         universe_decision: UniverseDecision | None,
     ) -> str:
         if universe_decision is not None and not universe_decision.selected:
             return universe_decision.reason
-        if classification.reject_reason is not None:
-            return classification.reject_reason.value
+        if parse_result.reject_reason is not None:
+            return parse_result.reject_reason.value
         return ""
 
     def _current_account_snapshot(self) -> AccountSnapshot | None:
@@ -266,7 +265,7 @@ class MarketService:
 class MarketDiscoveryOutcome:
     trace_id: str
     source: str
-    classification: ClassificationResult
+    classification: MarketParseResult
     event: DomainEvent
     market: Market | None
     discovery_kind: str

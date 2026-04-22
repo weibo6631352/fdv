@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from polymarket_trader.domain.classifier import ClassificationRejectReason, MarketClassifier
+from polymarket_trader.app.market_payload_parser import MarketParseRejectReason, MarketPayloadParser
 
 
-def test_classifier_accepts_market_with_required_trading_fields() -> None:
-    result = MarketClassifier().classify(
+def test_market_payload_parser_accepts_market_with_required_trading_fields() -> None:
+    result = MarketPayloadParser().parse(
         {
             "category": "Sports",
             "eventTitle": "Any event title is acceptable at parser level",
@@ -20,8 +20,8 @@ def test_classifier_accepts_market_with_required_trading_fields() -> None:
     assert result.accepted
 
 
-def test_classifier_preserves_generic_text_fields() -> None:
-    result = MarketClassifier().classify(
+def test_market_payload_parser_preserves_generic_text_fields() -> None:
+    result = MarketPayloadParser().parse(
         {
             "category": "Crypto",
             "eventTitle": "Will this market reach a threshold?",
@@ -42,8 +42,8 @@ def test_classifier_preserves_generic_text_fields() -> None:
     assert market.market_name == "Threshold market"
 
 
-def test_classifier_prefers_fee_schedule_rate_over_legacy_taker_base_fee() -> None:
-    result = MarketClassifier().classify(
+def test_market_payload_parser_prefers_fee_schedule_rate_over_legacy_taker_base_fee() -> None:
+    result = MarketPayloadParser().parse(
         {
             "slug": "sample-market-fees",
             "conditionId": "condition",
@@ -66,8 +66,8 @@ def test_classifier_prefers_fee_schedule_rate_over_legacy_taker_base_fee() -> No
     assert market.fee_rate_bps == 72
 
 
-def test_classifier_rejects_missing_required_identifiers() -> None:
-    result = MarketClassifier().classify(
+def test_market_payload_parser_rejects_missing_required_identifiers() -> None:
+    result = MarketPayloadParser().parse(
         {
             "category": "Sports",
             "eventTitle": "Title",
@@ -84,8 +84,8 @@ def test_classifier_rejects_missing_required_identifiers() -> None:
     assert tuple(outcome.token_id for outcome in result.outcomes) == ("no",)
 
 
-def test_classifier_rejects_missing_tick_and_min_order_size() -> None:
-    result = MarketClassifier().classify(
+def test_market_payload_parser_rejects_missing_tick_and_min_order_size() -> None:
+    result = MarketPayloadParser().parse(
         {
             "category": "Crypto",
             "eventTitle": "Title",
@@ -97,4 +97,4 @@ def test_classifier_rejects_missing_tick_and_min_order_size() -> None:
     )
 
     assert not result.accepted
-    assert result.reject_reason == ClassificationRejectReason.MISSING_TRADING_CONDITIONS
+    assert result.reject_reason == MarketParseRejectReason.MISSING_TRADING_CONDITIONS
