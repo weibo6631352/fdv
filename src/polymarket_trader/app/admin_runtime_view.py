@@ -272,7 +272,12 @@ class AdminRuntimeView:
             }
         return {
             "round_id": int(getattr(state, "round_id", 0)),
-            "cursor_active": getattr(state, "after_cursor", None) is not None,
+            "cursor_active": getattr(state, "after_cursor", None) is not None
+            or bool(getattr(state, "query_cursors", {})),
+            "query_cursors": jsonable(getattr(state, "query_cursors", {})),
+            "completed_query_names": sorted(str(name) for name in getattr(state, "completed_query_names", ())),
+            "active_cursor_count": len(getattr(state, "query_cursors", {})),
+            "completed_query_count": len(getattr(state, "completed_query_names", ())),
             "round_started_at": jsonable(getattr(state, "round_started_at", None)),
             "last_round_completed_at": jsonable(getattr(state, "last_round_completed_at", None)),
             "pages_scanned_in_round": int(getattr(state, "pages_scanned_in_round", 0)),

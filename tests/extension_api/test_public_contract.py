@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from polymarket_trader.extension_api import (
     AccountSnapshotView,
+    DiscoveryQuery,
     EntrySizing,
     ExtensionCommand,
     ExtensionHooks,
@@ -33,5 +34,6 @@ def test_extension_api_exports_core_contracts() -> None:
     assert ExtensionContext is not None
     assert ExtensionPorts is not None
     assert AccountSnapshotView is not None
+    assert DiscoveryQuery(name="fdv", params={"title_search": "fdv"}).params["title_search"] == "fdv"
     assert EntrySizing is not None
     assert UniverseDecision.include(reason="ok").selected

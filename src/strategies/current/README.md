@@ -5,7 +5,7 @@
 - `manifest.py`：策略 manifest
 - `strategy.py`：策略装配入口
 - `config.py`：策略配置 dataclass
-- `universe.py`：市场筛选
+- `universe.py`：返回后本地 universe 精筛
 - `trading.py`：分配、入场、退出
 - `recovery.py`：恢复语义
 - `tracking.py`：过滤后继续跟踪的规则
@@ -40,5 +40,6 @@
 
 - 这个目录只放策略自身语义，不放框架通用能力。
 - 策略通过 `polymarket_trader.extension_api` 提供的契约与框架交互。
+- 远端 discovery 粗筛通过 `CurrentStrategy.discovery_queries()` 暴露；当前实现从 `config.py` 的 `discovery_title_searches` 生成 `DiscoveryQuery`。
 - 策略不直接操作交易客户端、事件总线、数据库或 worker。
 - 真正下单、撤单、改价仍然由框架统一执行。

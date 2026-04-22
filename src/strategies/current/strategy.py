@@ -9,6 +9,7 @@ from __future__ import annotations
 from polymarket_trader.extension_api import (
     AccountSnapshotView,
     BusinessExtension,
+    DiscoveryQuery,
     EntrySizing,
     ExtensionSpec,
     RecoveryDecision,
@@ -104,6 +105,15 @@ class CurrentStrategy:
         """判断 market 是否属于当前策略 universe。"""
 
         return select_market(self._config, market)
+
+    def discovery_queries(self) -> tuple[DiscoveryQuery, ...]:
+        """返回当前策略希望远端 discovery 使用的粗筛查询。"""
+
+        return tuple(
+            DiscoveryQuery.title_search(title_search)
+            for title_search in self._config.discovery_title_searches
+            if title_search.strip()
+        )
 
     def size_entry(self, context: ExtensionContext) -> EntrySizing:
         """为当前 market 生成入场预算分配结果。"""

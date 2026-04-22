@@ -3,6 +3,7 @@ from __future__ import annotations
 from polymarket_trader.extension_api.commands import ExtensionCommand, FrameworkCommandAction
 from polymarket_trader.extension_api.config_loader import load_extension_config, load_mapping_file
 from polymarket_trader.extension_api.context import AccountSnapshotView, ExtensionContext
+from polymarket_trader.extension_api.discovery import DiscoveryQuery
 from polymarket_trader.extension_api.decisions import (
     EntryCandidate,
     EntrySizing,
@@ -41,6 +42,7 @@ __all__ = (
     "ClockPort",
     "ConfigReadPort",
     "DomainEventType",
+    "DiscoveryQuery",
     "EntryCandidate",
     "EntrySizing",
     "ExtensionCommand",

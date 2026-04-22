@@ -13,7 +13,7 @@
 ## 文件职责
 
 - `admin_service.py`：只读查询和受控人工操作编排。
-- `market_service.py`：market discovery、classifier、registry 和订阅编排。
+- `market_service.py`：market discovery 结果解析、扩展 universe 精筛、registry 和订阅编排。
 - `reconcile_service.py`：权威快照校准和修复动作编排。
 - `strategy_service.py`：交易事件到策略意图的编排。
 - `trading_service.py`：风控通过后的订单意图执行编排。

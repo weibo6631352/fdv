@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 from uuid import uuid4
+
+from polymarket_trader.extension_api import DiscoveryQuery
 
 _MARKET_DISCOVERY_EVENT_PAGE_LIMIT = 50
 _MARKET_DISCOVERY_MARKET_BUDGET_PER_TICK = 1000
@@ -30,6 +32,9 @@ def _sync(sync_runtime_metrics: RuntimeMetricsSync | None, runtime: Any) -> None
 @dataclass(slots=True)
 class FullMarketDiscoveryState:
     after_cursor: str | None = None
+    query_cursors: dict[str, str] = field(default_factory=dict)
+    completed_query_names: set[str] = field(default_factory=set)
+    next_query_index: int = 0
     round_id: int = 1
     round_started_at: datetime | None = None
     last_round_completed_at: datetime | None = None
@@ -53,18 +58,54 @@ class FullMarketDiscoveryState:
         if self.round_started_at is None:
             self.round_started_at = self.last_tick_started_at
 
-    def record_page(self, *, page_size: int, next_cursor: str | None) -> None:
+    def next_query(self, queries: tuple[DiscoveryQuery, ...]) -> DiscoveryQuery | None:
+        query_names = {query.name for query in queries}
+        self.query_cursors = {
+            name: cursor for name, cursor in self.query_cursors.items() if name in query_names
+        }
+        self.completed_query_names = {
+            name for name in self.completed_query_names if name in query_names
+        }
+        if not queries or len(self.completed_query_names) >= len(query_names):
+            return None
+        for offset in range(len(queries)):
+            index = (self.next_query_index + offset) % len(queries)
+            query = queries[index]
+            if query.name in self.completed_query_names:
+                continue
+            self.next_query_index = (index + 1) % len(queries)
+            self.after_cursor = self.query_cursors.get(query.name)
+            return query
+        return None
+
+    def record_page(
+        self,
+        *,
+        query_name: str = "default",
+        total_queries: int = 1,
+        page_size: int,
+        next_cursor: str | None,
+    ) -> bool:
         self.last_page_size = max(0, int(page_size))
         self.pages_scanned_in_round += 1
         self.markets_seen_in_round += max(0, int(page_size))
         self.last_tick_requests += 1
         self.last_tick_markets += max(0, int(page_size))
-        self.after_cursor = next_cursor
+        if next_cursor is None:
+            self.query_cursors.pop(query_name, None)
+            self.completed_query_names.add(query_name)
+        else:
+            self.query_cursors[query_name] = next_cursor
+        self.after_cursor = next_cursor or next(iter(self.query_cursors.values()), None)
         self.last_error = None
         self.consecutive_failures = 0
+        return len(self.completed_query_names) >= max(1, int(total_queries))
 
     def finish_round(self) -> None:
         self.after_cursor = None
+        self.query_cursors.clear()
+        self.completed_query_names.clear()
+        self.next_query_index = 0
         self.last_completed_round_pages = self.pages_scanned_in_round
         self.last_completed_round_markets = self.markets_seen_in_round
         self.last_round_completed_at = _utc_now()
@@ -110,6 +151,7 @@ async def run_market_discovery_scan(
     )
     started_at = asyncio.get_running_loop().time()
     try:
+        queries = _discovery_queries(runtime)
         round_completed = False
         completed_round_id: int | None = None
         completed_round_pages = 0
@@ -121,10 +163,24 @@ async def run_market_discovery_scan(
             elapsed_ms = (asyncio.get_running_loop().time() - started_at) * 1000.0
             if elapsed_ms >= _MARKET_DISCOVERY_MAX_RUNTIME_MS:
                 break
-            page_markets, next_cursor = await fetch_full_market_discovery_page(runtime)
+            query = state.next_query(queries)
+            if query is None:
+                round_completed = True
+                completed_round_id = state.round_id
+                completed_round_pages = state.pages_scanned_in_round
+                completed_round_markets = state.markets_seen_in_round
+                state.finish_round()
+                runtime.metrics.inc_counter("market_discovery_rounds_completed_total", 1.0)
+                break
+            page_markets, next_cursor = await fetch_full_market_discovery_page(runtime, query=query)
             runtime.market_discovery_worker.mark_scan_success()
             market_payloads = tuple(raw_event.payload for raw_event in page_markets)
-            state.record_page(page_size=len(market_payloads), next_cursor=next_cursor)
+            query_completed_round = state.record_page(
+                query_name=query.name,
+                total_queries=len(queries),
+                page_size=len(market_payloads),
+                next_cursor=next_cursor,
+            )
             runtime.metrics.inc_counter("market_discovery_requests_total", 1.0)
             runtime.metrics.inc_counter("market_discovery_pages_scanned_total", 1.0)
             if market_payloads:
@@ -138,7 +194,7 @@ async def run_market_discovery_scan(
                 source="gamma.events_keyset",
                 trace_id=f"market-discovery-round-{state.round_id}-{uuid4().hex}",
             )
-            if next_cursor is None:
+            if query_completed_round:
                 round_completed = True
                 completed_round_id = state.round_id
                 completed_round_pages = state.pages_scanned_in_round
@@ -183,16 +239,45 @@ async def run_market_discovery_scan(
         _sync(sync_runtime_metrics, runtime)
 
 
-async def fetch_full_market_discovery_page(runtime: Any) -> tuple[tuple[Any, ...], str | None]:
+async def fetch_full_market_discovery_page(
+    runtime: Any,
+    *,
+    query: DiscoveryQuery | None = None,
+) -> tuple[tuple[Any, ...], str | None]:
+    state = runtime.market_discovery_scan
+    query = query or DEFAULT_DISCOVERY_QUERY
     params: dict[str, Any] = {
         "active": True,
         "closed": False,
-        "limit": _MARKET_DISCOVERY_EVENT_PAGE_LIMIT,
     }
-    if runtime.market_discovery_scan.after_cursor is not None:
-        params["after_cursor"] = runtime.market_discovery_scan.after_cursor
+    params.update(_safe_query_params(query.params))
+    params["limit"] = _MARKET_DISCOVERY_EVENT_PAGE_LIMIT
+    after_cursor = state.query_cursors.get(query.name) or state.after_cursor
+    if after_cursor is not None:
+        params["after_cursor"] = after_cursor
     events, next_cursor = await runtime.gamma_client.list_events_keyset_by_params(params)
     raw_events: list[Any] = []
     for event in events:
         raw_events.extend(event.to_raw_market_events(source="gamma.events_keyset"))
     return tuple(raw_events), next_cursor
+
+
+DEFAULT_DISCOVERY_QUERY = DiscoveryQuery()
+_FRAMEWORK_DISCOVERY_PARAM_KEYS = {"limit", "after_cursor"}
+
+
+def _discovery_queries(runtime: Any) -> tuple[DiscoveryQuery, ...]:
+    hooks = getattr(getattr(runtime, "extension", None), "hooks", None)
+    method = getattr(hooks, "discovery_queries", None)
+    if not callable(method):
+        return (DEFAULT_DISCOVERY_QUERY,)
+    queries = tuple(query for query in method() if isinstance(query, DiscoveryQuery) and query.name.strip())
+    return queries or (DEFAULT_DISCOVERY_QUERY,)
+
+
+def _safe_query_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        str(key): value
+        for key, value in params.items()
+        if str(key) not in _FRAMEWORK_DISCOVERY_PARAM_KEYS
+    }

@@ -12,6 +12,7 @@ from polymarket_trader.extension_api.decisions import (
     ExtensionDecision,
     UniverseDecision,
 )
+from polymarket_trader.extension_api.discovery import DiscoveryQuery
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +23,8 @@ class HookResult:
 
 @runtime_checkable
 class ExtensionHooks(Protocol):
+    def discovery_queries(self) -> tuple[DiscoveryQuery, ...]: ...
+
     def select_market(self, market: Market) -> UniverseDecision: ...
 
     def size_entry(self, context: ExtensionContext) -> EntrySizing: ...

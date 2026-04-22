@@ -27,7 +27,8 @@ class CurrentStrategyConfig:
         max_spread:
             允许的最大买一卖一价差；为 ``None`` 表示不限制。
         discovery_title_searches:
-            远端 discovery 的标题搜索词。框架会按这些词去 Gamma 做粗筛。
+            远端 discovery 的标题搜索词。策略会把这些词暴露为
+            ``DiscoveryQuery``，框架负责分页、限流和 cursor。
         required_category_tokens:
             本地 universe 精筛时必须命中的分类 token。
         required_event_tokens:

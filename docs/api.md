@@ -160,6 +160,7 @@
 - `settings`
 - `runtime`
 - `bootstrap_summary`
+- `market_discovery`
 - `registry`
 - `account`
 - `event_bus`
@@ -170,6 +171,7 @@
 说明：
 
 - `settings` 已脱敏，测试里已覆盖 `wallet_private_key -> "***"`。
+- `market_discovery.query_cursors` / `completed_query_names` 用于观察远端 discovery 多 query 分页状态。
 - `markets[].market.fees` 当前会输出：
   - `enabled`
   - `maker_base_fee_bps`

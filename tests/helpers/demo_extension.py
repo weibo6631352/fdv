@@ -8,6 +8,7 @@ from polymarket_trader.domain.order import OrderType
 from polymarket_trader.extension_api import (
     AccountSnapshotView,
     BusinessExtension,
+    DiscoveryQuery,
     EntrySizing,
     ExtensionManifest,
     ExtensionSpec,
@@ -42,6 +43,9 @@ class DemoExtension:
 
     def select_market(self, market: Market) -> UniverseDecision:
         return UniverseDecision.include(reason="demo_selected")
+
+    def discovery_queries(self) -> tuple[DiscoveryQuery, ...]:
+        return ()
 
     def size_entry(self, context: ExtensionContext) -> EntrySizing:
         candidate = context.entry_candidates[0] if context.entry_candidates else None

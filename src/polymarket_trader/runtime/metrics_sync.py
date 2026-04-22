@@ -71,7 +71,15 @@ def sync_runtime_metrics(runtime: Any) -> None:
     )
     runtime.metrics.set_gauge(
         "market_discovery_after_cursor_present",
-        1.0 if discovery.after_cursor is not None else 0.0,
+        1.0 if discovery.after_cursor is not None or discovery.query_cursors else 0.0,
+    )
+    runtime.metrics.set_gauge(
+        "market_discovery_active_cursor_count",
+        float(len(discovery.query_cursors)),
+    )
+    runtime.metrics.set_gauge(
+        "market_discovery_completed_query_count",
+        float(len(discovery.completed_query_names)),
     )
     runtime.metrics.set_gauge(
         "market_discovery_last_tick_requests",

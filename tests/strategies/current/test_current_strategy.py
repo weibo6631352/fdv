@@ -20,6 +20,18 @@ def _no_token_id(market: Market) -> str:
     return market.require_token_id("NO")
 
 
+def test_current_strategy_exposes_remote_discovery_title_search_queries() -> None:
+    strategy = build_strategy()
+
+    queries = strategy.discovery_queries()
+
+    assert [query.name for query in queries] == ["title_search:fdv", "title_search:fully diluted valuation"]
+    assert [query.params for query in queries] == [
+        {"title_search": "fdv"},
+        {"title_search": "fully diluted valuation"},
+    ]
+
+
 def test_current_strategy_can_decide_entry() -> None:
     strategy = build_strategy()
     market = build_binary_market(

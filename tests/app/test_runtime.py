@@ -380,6 +380,173 @@ def test_run_market_discovery_scan_advances_full_market_round_scan() -> None:
     asyncio.run(run())
 
 
+def test_run_market_discovery_scan_uses_extension_discovery_queries_with_framework_cursor() -> None:
+    from polymarket_trader.extension_api import DiscoveryQuery
+
+    class _StubEventPage:
+        def __init__(self, payloads):
+            self._payloads = tuple(payloads)
+
+        def to_raw_market_events(self, *, source):
+            return tuple(SimpleNamespace(payload=payload) for payload in self._payloads)
+
+    class _StubGammaClient:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def list_events_keyset_by_params(self, params, *, timeout_s=None):
+            self.calls.append(dict(params))
+            if params["title_search"] == "alpha":
+                if params.get("after_cursor") == "alpha-cursor-2":
+                    return ((_StubEventPage(({"slug": "alpha-market-page-2"},)),), None)
+                return ((_StubEventPage(({"slug": "alpha-market"},)),), "alpha-cursor-2")
+            return ((_StubEventPage(({"slug": "beta-market"},)),), None)
+
+    class _StubHooks:
+        def discovery_queries(self):
+            return (
+                DiscoveryQuery(name="alpha", params={"title_search": "alpha", "limit": 999}),
+                DiscoveryQuery(
+                    name="beta",
+                    params={"title_search": "beta", "after_cursor": "extension-owned"},
+                ),
+            )
+
+    class _StubDiscoveryWorker:
+        last_failure = None
+
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def ingest_source_page(self, payload, *, source, trace_id):
+            self.calls.append((payload, source, trace_id))
+
+        def record_failure(self, *, source, reason):
+            self.calls.append(("failure", source, reason))
+
+        def should_retry(self):
+            return False
+
+        def mark_scan_success(self):
+            return None
+
+    class _StubSupervisor:
+        def heartbeat_worker(self, *args, **kwargs):
+            return None
+
+        def mark_worker_error(self, *args, **kwargs):
+            return None
+
+    class _StubMetrics:
+        def set_queue_depth(self, *args, **kwargs):
+            return None
+
+        def set_ws_state(self, *args, **kwargs):
+            return None
+
+        def set_gauge(self, *args, **kwargs):
+            return None
+
+        def inc_counter(self, *args, **kwargs):
+            return None
+
+        def mark_timestamp(self, *args, **kwargs):
+            return None
+
+    class _StubEventBus:
+        def snapshot(self):
+            return SimpleNamespace(
+                trading_queue_depth=0,
+                trading_queue_capacity=1,
+                trading_retained_depth=0,
+                maintenance_queue_depth=0,
+                maintenance_queue_capacity=1,
+                maintenance_retained_depth=0,
+                persistence_queue_depth=0,
+                persistence_queue_capacity=1,
+                persistence_retained_depth=0,
+                low_priority_paused=False,
+            )
+
+    class _StubWorkerWithStatus:
+        def status_snapshot(self):
+            return SimpleNamespace(
+                connected=False,
+                last_result=None,
+                subscription_count=0,
+                last_message_at=None,
+                last_error=None,
+            )
+
+    class _StubReconcileWorker:
+        def status_snapshot(self):
+            return SimpleNamespace(last_completed_at=None)
+
+    class _StubPersistenceWorker:
+        def snapshot(self):
+            return SimpleNamespace(
+                outbox_depth=0,
+                outbox_retained_depth=0,
+                outbox_dead_letter_depth=0,
+                retried_events=0,
+            )
+
+    async def run() -> None:
+        gamma = _StubGammaClient()
+        discovery_worker = _StubDiscoveryWorker()
+        runtime = SimpleNamespace(
+            extension=SimpleNamespace(hooks=_StubHooks()),
+            supervisor=_StubSupervisor(),
+            gamma_client=gamma,
+            market_discovery_worker=discovery_worker,
+            market_discovery_scan=FullMarketDiscoveryState(),
+            event_bus=_StubEventBus(),
+            metrics=_StubMetrics(),
+            market_ws_worker=_StubWorkerWithStatus(),
+            user_ws_worker=_StubWorkerWithStatus(),
+            reconcile_worker=_StubReconcileWorker(),
+            persistence_worker=_StubPersistenceWorker(),
+        )
+
+        await _run_market_discovery_scan(runtime)
+
+        assert gamma.calls == [
+            {
+                "active": True,
+                "closed": False,
+                "title_search": "alpha",
+                "limit": 50,
+            },
+            {
+                "active": True,
+                "closed": False,
+                "title_search": "beta",
+                "limit": 50,
+            },
+        ]
+        assert runtime.market_discovery_scan.query_cursors == {"alpha": "alpha-cursor-2"}
+        assert runtime.market_discovery_scan.completed_query_names == {"beta"}
+        assert [call[0]["markets"][0]["slug"] for call in discovery_worker.calls] == [
+            "alpha-market",
+            "beta-market",
+        ]
+
+        await _run_market_discovery_scan(runtime)
+
+        assert gamma.calls[2] == {
+            "active": True,
+            "closed": False,
+            "title_search": "alpha",
+            "limit": 50,
+            "after_cursor": "alpha-cursor-2",
+        }
+        assert runtime.market_discovery_scan.query_cursors == {}
+        assert runtime.market_discovery_scan.completed_query_names == set()
+        assert runtime.market_discovery_scan.round_id == 2
+
+    asyncio.run(run())
+
+
 def test_handle_market_ws_message_routes_new_market_through_discovery_before_ws_processing() -> None:
     class _StubDiscoveryWorker:
         def __init__(self) -> None:
