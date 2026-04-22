@@ -25,6 +25,7 @@ from tests.helpers.markets import build_binary_market
 def test_build_runtime_wires_m2_components() -> None:
     runtime = build_runtime(
         Settings(
+            _env_file=None,
             extension_module="tests.helpers.demo_extension",
             portfolio_budget_usdc=Decimal("100"),
             max_order_usdc=Decimal("25"),
@@ -56,6 +57,7 @@ def test_build_runtime_binds_market_event_outbox_sink() -> None:
     async def run() -> None:
         runtime = build_runtime(
             Settings(
+                _env_file=None,
                 extension_module="tests.helpers.demo_extension",
                 portfolio_budget_usdc=Decimal("100"),
                 max_order_usdc=Decimal("25"),
@@ -89,6 +91,7 @@ def test_build_runtime_binds_user_event_outbox_sink_with_trimmed_payload() -> No
     async def run() -> None:
         runtime = build_runtime(
             Settings(
+                _env_file=None,
                 extension_module="tests.helpers.demo_extension",
                 portfolio_budget_usdc=Decimal("100"),
                 max_order_usdc=Decimal("25"),
@@ -132,6 +135,7 @@ def test_build_runtime_binds_balance_event_outbox_sink() -> None:
     async def run() -> None:
         runtime = build_runtime(
             Settings(
+                _env_file=None,
                 extension_module="tests.helpers.demo_extension",
                 portfolio_budget_usdc=Decimal("100"),
                 max_order_usdc=Decimal("25"),
@@ -168,6 +172,7 @@ def test_build_runtime_binds_strategy_orderbook_port() -> None:
     async def run() -> None:
         runtime = build_runtime(
             Settings(
+                _env_file=None,
                 extension_module="tests.helpers.demo_extension",
                 portfolio_budget_usdc=Decimal("100"),
                 max_order_usdc=Decimal("25"),

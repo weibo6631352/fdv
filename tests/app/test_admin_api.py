@@ -405,6 +405,7 @@ def _reconcile_result(market: Market) -> object:
 def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
     market = _market()
     settings = Settings(
+        _env_file=None,
         portfolio_budget_usdc=Decimal("100"),
         max_order_usdc=Decimal("25"),
         max_market_usdc=Decimal("50"),
