@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Mapping, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from polymarket_trader.domain.market import Market
-from polymarket_trader.extension_api.commands import ExtensionCommand
 from polymarket_trader.extension_api.context import AccountSnapshotView, ExtensionContext
 from polymarket_trader.extension_api.decisions import (
     EntrySizing,
@@ -13,12 +11,6 @@ from polymarket_trader.extension_api.decisions import (
     UniverseDecision,
 )
 from polymarket_trader.extension_api.discovery import DiscoveryQuery
-
-
-@dataclass(frozen=True, slots=True)
-class HookResult:
-    commands: tuple[ExtensionCommand, ...] = ()
-    metadata: Mapping[str, object] = field(default_factory=dict)
 
 
 @runtime_checkable

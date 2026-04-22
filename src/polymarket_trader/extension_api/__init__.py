@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from polymarket_trader.extension_api.commands import ExtensionCommand, FrameworkCommandAction
 from polymarket_trader.extension_api.config_loader import load_extension_config, load_mapping_file
 from polymarket_trader.extension_api.context import AccountSnapshotView, ExtensionContext
 from polymarket_trader.extension_api.discovery import DiscoveryQuery
@@ -14,7 +13,7 @@ from polymarket_trader.extension_api.decisions import (
     UniverseDecision,
 )
 from polymarket_trader.extension_api.errors import ExtensionLoadError
-from polymarket_trader.extension_api.hooks import ExtensionHooks, HookResult
+from polymarket_trader.extension_api.hooks import ExtensionHooks
 from polymarket_trader.extension_api.manifest import (
     BusinessExtension,
     ExtensionFactory,
@@ -45,16 +44,13 @@ __all__ = (
     "DiscoveryQuery",
     "EntryCandidate",
     "EntrySizing",
-    "ExtensionCommand",
     "ExtensionFactory",
     "ExtensionHooks",
     "ExtensionLoadError",
     "ExtensionManifest",
     "ExtensionSpec",
     "Fill",
-    "FrameworkCommandAction",
     "HistoryReadPort",
-    "HookResult",
     "load_extension_config",
     "load_mapping_file",
     "MarketReadPort",
