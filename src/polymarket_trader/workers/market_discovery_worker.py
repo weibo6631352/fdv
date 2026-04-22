@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from itertools import count
-from json import dumps, loads
 from typing import Any, Iterable, Mapping
 from uuid import uuid4
 
 from polymarket_trader.app.market_service import MarketDiscoveryOutcome, MarketService
-from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from polymarket_trader.domain.discovery import RawMarketEvent
+from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
+from polymarket_trader.infra.polymarket import market_discovery_adapter
 from polymarket_trader.runtime.event_bus import EventBus
 
 
@@ -17,136 +17,9 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _normalize_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:
-    return payload
-
-
-def _maybe_mapping(value: Any) -> Mapping[str, Any] | None:
-    if isinstance(value, Mapping):
-        return value
-    return None
-
-
-def _first_value(payload: Mapping[str, Any], *keys: str) -> Any | None:
-    for key in keys:
-        value = payload.get(key)
-        if value is not None:
-            return value
-    return None
-
-
-def _first_text(payload: Mapping[str, Any], *keys: str) -> str | None:
-    value = _first_value(payload, *keys)
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _normalize_tags(value: Any) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    if isinstance(value, str):
-        text = value.strip()
-        return (text,) if text else ()
-    if isinstance(value, Mapping):
-        tags: list[str] = []
-        for key in ("label", "slug", "name"):
-            text = _first_text(value, key)
-            if text:
-                tags.append(text)
-        return tuple(tags)
-    if isinstance(value, (list, tuple, set, frozenset)):
-        tags: list[str] = []
-        for item in value:
-            tags.extend(_normalize_tags(item))
-        return tuple(tags)
-    text = str(value).strip()
-    return (text,) if text else ()
-
-
-def _normalize_token_ids(value: Any) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return ()
-        if text.startswith("[") and text.endswith("]"):
-            try:
-                parsed = loads(text)
-            except Exception:
-                return (text,)
-            return _normalize_token_ids(parsed)
-        return (text,)
-    if isinstance(value, (list, tuple, set, frozenset)):
-        token_ids: list[str] = []
-        for item in value:
-            text = str(item).strip()
-            if text:
-                token_ids.append(text)
-        return tuple(token_ids)
-    text = str(value).strip()
-    return (text,) if text else ()
-
-
-def _normalize_fee_schedule(value: Any) -> Mapping[str, Any] | None:
-    schedule = _maybe_mapping(value)
-    if schedule is None:
-        return None
-    return {
-        "enabled": _first_value(schedule, "enabled", "feesEnabled"),
-        "rate": _first_value(schedule, "rate", "base_fee", "baseFee"),
-        "exponent": _first_value(schedule, "exponent"),
-        "taker_only": _first_value(schedule, "takerOnly", "taker_only"),
-        "rebate_rate": _first_value(schedule, "rebateRate", "rebate_rate"),
-    }
-
-
-def _payload_signature(payload: Mapping[str, Any]) -> str:
-    stable = {
-        "condition_id": _first_text(payload, "condition_id", "conditionId", "condition"),
-        "market_slug": _first_text(payload, "market_slug", "marketSlug", "slug"),
-        "market_name": _first_text(payload, "title", "name", "market_name"),
-        "question": _first_text(payload, "question", "prompt", "market_question"),
-        "event_id": _first_text(payload, "event_id", "eventId", "id"),
-        "event_slug": _first_text(payload, "event_slug", "eventSlug"),
-        "event_title": _first_text(payload, "event_title", "eventTitle", "title", "name"),
-        "category": _first_text(payload, "category", "cat"),
-        "tags": _normalize_tags(_first_value(payload, "tags")),
-        "token_ids": _normalize_token_ids(_first_value(payload, "clobTokenIds", "clob_token_ids")),
-        "tick_size": _first_text(payload, "orderPriceMinTickSize", "tick_size", "tickSize"),
-        "min_order_size": _first_text(payload, "orderMinSize", "min_order_size", "minOrderSize"),
-        "active": _first_value(payload, "active", "is_active"),
-        "closed": _first_value(payload, "closed", "is_closed"),
-        "archived": _first_value(payload, "archived", "is_archived"),
-        "clob_enabled": _first_value(
-            payload,
-            "clob_enabled",
-            "enableOrderBook",
-            "clobEnabled",
-            "acceptingOrders",
-        ),
-        "fees_enabled": _first_value(payload, "fees_enabled", "feesEnabled"),
-        "maker_base_fee_bps": _first_value(
-            payload,
-            "maker_base_fee_bps",
-            "makerBaseFee",
-            "maker_base_fee",
-        ),
-        "taker_base_fee_bps": _first_value(
-            payload,
-            "taker_base_fee_bps",
-            "takerBaseFee",
-            "taker_base_fee",
-        ),
-        "fee_schedule": _normalize_fee_schedule(
-            _first_value(payload, "feeSchedule", "fee_schedule")
-        ),
-        "end_date": _first_text(payload, "endDate", "end_date", "endDateIso"),
-        "icon_url": _first_text(payload, "icon"),
-    }
-    return dumps(stable, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+_extract_market_payloads = market_discovery_adapter.extract_market_payloads
+_normalize_payload = market_discovery_adapter.normalize_payload
+_payload_signature = market_discovery_adapter.payload_signature
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,7 +125,7 @@ class MarketDiscoveryWorker:
     ) -> list[DomainEvent]:
         discovered_trace_id = trace_id or self._next_trace_id(source)
         events: list[DomainEvent] = []
-        for market_payload in self._extract_market_payloads(payload):
+        for market_payload in _extract_market_payloads(payload):
             raw_event = RawMarketEvent(
                 source=source,
                 payload=_normalize_payload(market_payload),
@@ -362,17 +235,6 @@ class MarketDiscoveryWorker:
             self._markets_by_slug[raw_event.market_slug] = raw_event
         self._last_failure = None
 
-    def _lookup_existing(self, raw_event: RawMarketEvent) -> RawMarketEvent | None:
-        if raw_event.condition_id:
-            existing = self._markets_by_condition_id.get(raw_event.condition_id)
-            if existing is not None:
-                return existing
-        if raw_event.market_slug:
-            existing = self._markets_by_slug.get(raw_event.market_slug)
-            if existing is not None:
-                return existing
-        return None
-
     def _lookup_seen(self, raw_event: RawMarketEvent) -> RawMarketEvent | None:
         if raw_event.condition_id:
             existing = self._seen_by_condition_id.get(raw_event.condition_id)
@@ -389,39 +251,6 @@ class MarketDiscoveryWorker:
             self._seen_by_condition_id[raw_event.condition_id] = raw_event
         if raw_event.market_slug:
             self._seen_by_slug[raw_event.market_slug] = raw_event
-
-    def _extract_market_payloads(self, payload: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
-        markets = payload.get("markets")
-        if isinstance(markets, list):
-            for item in markets:
-                maybe = _maybe_mapping(item)
-                if maybe is not None:
-                    yield maybe
-            return
-
-        events = payload.get("events")
-        if isinstance(events, list):
-            for item in events:
-                maybe = _maybe_mapping(item)
-                if maybe is None:
-                    continue
-                nested_markets = maybe.get("markets")
-                if isinstance(nested_markets, list):
-                    for market in nested_markets:
-                        nested = _maybe_mapping(market)
-                        if nested is not None:
-                            yield nested
-                    continue
-                nested_market = maybe.get("market")
-                if isinstance(nested_market, Mapping):
-                    yield nested_market
-                    continue
-                if maybe.get("condition_id") or maybe.get("market_slug") or maybe.get("slug"):
-                    yield maybe
-            return
-
-        if payload.get("condition_id") or payload.get("market_slug") or payload.get("slug"):
-            yield payload
 
     def _next_trace_id(self, source: str) -> str:
         return f"{source}-{next(self._trace_sequence):08d}-{uuid4().hex}"
