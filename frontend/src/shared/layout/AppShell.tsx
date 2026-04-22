@@ -58,13 +58,13 @@ export const AppShell = ({ children }: AppShellProps) => {
     refetchInterval: 20_000,
   })
 
-  const strategyModule = useMemo(
-    () => getString(runtimeQuery.data?.settings?.strategy_module) ?? '未配置',
+  const extensionModule = useMemo(
+    () => getString(runtimeQuery.data?.settings?.extension_module) ?? '未配置',
     [runtimeQuery.data],
   )
   const strategyDisplayName = useMemo(
-    () => resolveStrategyExtension(strategyModule).displayName,
-    [strategyModule],
+    () => resolveStrategyExtension(extensionModule).displayName,
+    [extensionModule],
   )
 
   const ready = readyQuery.data?.ready_to_trade ?? false

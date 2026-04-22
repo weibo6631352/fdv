@@ -171,7 +171,7 @@ export const MarketsPage = () => {
   })
 
   const strategyExtension = useMemo(
-    () => resolveStrategyExtension(getString(runtimeQuery.data?.settings?.strategy_module)),
+    () => resolveStrategyExtension(getString(runtimeQuery.data?.settings?.extension_module)),
     [runtimeQuery.data],
   )
 

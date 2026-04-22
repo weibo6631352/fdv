@@ -94,8 +94,8 @@ export const DashboardPage = () => {
     refetchInterval: 20_000,
   })
 
-  const strategyModule = getString(runtimeQuery.data?.settings?.strategy_module)
-  const strategyExtension = useMemo(() => resolveStrategyExtension(strategyModule), [strategyModule])
+  const extensionModule = getString(runtimeQuery.data?.settings?.extension_module)
+  const strategyExtension = useMemo(() => resolveStrategyExtension(extensionModule), [extensionModule])
 
   const blockingIssues = readyQuery.data?.blocking_issues ?? []
   const warnings = readyQuery.data?.warnings ?? []
