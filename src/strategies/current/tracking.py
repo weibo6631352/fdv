@@ -60,7 +60,7 @@ def build_filtered_tracking_market(
         candidate_market:
             这次 discovery 最新扫回来的 market 数据。
         existing_market:
-            registry 中已存在的旧 market。
+            registry 中已存在的 market。
         reason:
             本次被策略排除的原因。
 

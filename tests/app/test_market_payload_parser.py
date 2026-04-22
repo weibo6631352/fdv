@@ -47,7 +47,7 @@ def test_market_payload_parser_preserves_generic_text_fields() -> None:
     assert market.market_name == "Threshold market"
 
 
-def test_market_payload_parser_prefers_fee_schedule_rate_over_legacy_taker_base_fee() -> None:
+def test_market_payload_parser_prefers_fee_schedule_rate_over_taker_base_fee() -> None:
     result = MarketPayloadParser().parse(
         {
             "slug": "sample-market-fees",

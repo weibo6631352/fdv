@@ -270,7 +270,7 @@ reclaim_managed_port() {
   fi
 
   if process_belongs_to_app "$pid"; then
-    log "停止占用 $port 的旧${service_name}: pid=$pid"
+    log "停止占用 $port 的已有${service_name}: pid=$pid"
     stop_process "$pid"
     return 0
   fi

@@ -54,10 +54,10 @@
 
 ## 文档入口
 
-- [Codex Rules](./AGENTS.md)：仓库级开发规则、分层边界、重构迁移准则和测试要求。
+- [Codex Rules](./AGENTS.md)：仓库级开发规则、分层边界、结构改造准则和测试要求。
 - [当前策略需求文档](./docs/需求文档.md)：业务规则和风控边界。
 - [当前策略设计文档](./docs/设计文档.md)：运行时装配和关键流程。
-- [市场发现链路说明](./docs/全量市场发现改造计划.md)：扩展 discovery hook、分页扫描、WS 热发现和运行时状态。
+- [市场发现链路说明](./docs/市场发现链路.md)：扩展 discovery hook、分页扫描、WS 热发现和运行时状态。
 - [配置文档](./docs/config.md)：`.env`、策略模块加载和策略侧配置文件。
 - [API 文档](./docs/api.md)：Admin API。
 - [SDK 手续费说明](./docs/sdk-fees.md)：手续费公式、SDK 调用方式和 `fee_preview` 结构。

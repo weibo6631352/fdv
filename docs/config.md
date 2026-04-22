@@ -46,7 +46,7 @@
 ## 数据库
 
 - 开发环境先准备 PostgreSQL，再调用 `polymarket_trader.infra.db.initialize_database` 按当前 metadata 建表。
-- schema 改动不兼容时，直接重建开发库再初始化。
+- schema 结构变更时，直接重建开发库再初始化。
 
 连接顺序：
 - `DATABASE_URL` 优先级最高；一旦填写，`DATABASE_DRIVER`、`DATABASE_HOST`、`DATABASE_PORT`、`DATABASE_NAME`、`DATABASE_USER`、`DATABASE_PASSWORD` 会被忽略。

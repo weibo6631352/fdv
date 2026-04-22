@@ -28,7 +28,7 @@ async def initialize_database(
 ) -> None:
     """Create the current development schema in PostgreSQL.
 
-    当前阶段不维护历史 schema 兼容层，所以开发库直接按最新 SQLAlchemy metadata 建表。
+    当前开发库不维护多版本 schema 适配层，直接按最新 SQLAlchemy metadata 建表。
     """
 
     from polymarket_trader.infra.db.models import Base

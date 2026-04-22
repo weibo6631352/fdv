@@ -398,7 +398,7 @@ class MarketWsWorker:
     ) -> list[DomainEvent]:
         tick_size = _decimal(_first(message, "tick_size", "tickSize", "new_tick_size"))
         if tick_size is not None and market is not None and self._registry is not None:
-            # tick size 变化要回写 Market Registry，热态路由依旧走内存对象，不碰数据库。
+            # tick size 变化要回写 Market Registry，热态路由走内存对象，不碰数据库。
             try:
                 self._registry.change_tick_size(market.condition_id, tick_size)
             except AttributeError:

@@ -2,7 +2,7 @@
 
 这里只写已经存在的 HTTP API。
 
-- 核对日期：2026-04-16
+- 核对日期：2026-04-22
 - 适用仓库：`polymarket-trader`
 - 服务入口：`src/polymarket_trader/api/app.py`
 - 默认无应用层鉴权，只放在本机或受控内网。
@@ -238,7 +238,7 @@
 返回结构：
 
 - 与 `/markets.items[]` 单项结构一致。
-- `token_views[]` 是唯一正式的逐 token 视图；不再提供默认 `NO` 视图或 `yes_*` 兼容字段。
+- `token_views[]` 是唯一正式的逐 token 视图；响应不包含默认 `NO` 视图或 `yes_*` 字段。
 
 ### 3.6 `GET /markets/orderbook`
 
@@ -627,7 +627,7 @@
 说明：
 
 - 运行时存在本地 outbox 时，返回真实待处理队列快照。
-- 运行时 outbox 不可用时返回空分页结果，不使用历史表冒充 pending 队列。
+- 运行时 outbox 不可用时返回空分页结果，不使用已持久化记录冒充 pending 队列。
 
 ## 4. 受控操作接口
 

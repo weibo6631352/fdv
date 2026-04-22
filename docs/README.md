@@ -7,7 +7,7 @@
 
 - 看仓库级开发规则和重构准则：看 [../AGENTS.md](../AGENTS.md)
 - 改策略规则：看 [需求文档](./需求文档.md) 和 [设计文档](./设计文档.md)
-- 看市场 discovery 当前链路：看 [市场发现链路说明](./全量市场发现改造计划.md)
+- 看市场 discovery 当前链路：看 [市场发现链路说明](./市场发现链路.md)
 - 看运行配置：看 [config.md](./config.md)
 - 看接口：看 [api.md](./api.md)
 - 看 SDK 手续费能力：看 [sdk-fees.md](./sdk-fees.md)
@@ -16,12 +16,12 @@
 
 ## 文档索引
 
-- [../AGENTS.md](../AGENTS.md)：Codex rules、分层边界和重构迁移准则
+- [../AGENTS.md](../AGENTS.md)：Codex rules、分层边界和结构改造准则
 - [api.md](./api.md)：Admin API
 - [config.md](./config.md)：配置说明
 - [frontend-开发清单.md](./frontend-开发清单.md)：前端边界、开发清单和模块拆分
 - [sdk-fees.md](./sdk-fees.md)：SDK 手续费能力与 `fee_preview` 说明
-- [全量市场发现改造计划.md](./全量市场发现改造计划.md)：扩展 discovery hook、分页扫描、WS 热发现和运行时状态
+- [市场发现链路.md](./市场发现链路.md)：扩展 discovery hook、分页扫描、WS 热发现和运行时状态
 - [需求文档.md](./需求文档.md)：框架需求边界
 - [设计文档.md](./设计文档.md)：运行时结构与调用链
 - [runbook.md](./runbook.md)：故障处理
