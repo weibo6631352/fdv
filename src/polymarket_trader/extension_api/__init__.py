@@ -34,6 +34,7 @@ from polymarket_trader.extension_api.ports import (
     TelemetryPort,
 )
 from polymarket_trader.domain.events import AuditEvent, DomainEventType, Fill
+from polymarket_trader.domain.fees import build_taker_fee_preview, calculate_trade_fee
 
 __all__ = (
     "AccountReadPort",
@@ -42,6 +43,7 @@ __all__ = (
     "BusinessExtension",
     "ClockPort",
     "ConfigReadPort",
+    "build_taker_fee_preview",
     "DiscoveryEndpoint",
     "DiscoveryQuery",
     "DomainEventType",
@@ -57,6 +59,7 @@ __all__ = (
     "FrameworkCommandAction",
     "HistoryReadPort",
     "HookResult",
+    "calculate_trade_fee",
     "load_extension_config",
     "load_mapping_file",
     "MarketReadPort",
