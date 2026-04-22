@@ -4,7 +4,7 @@
 
 **Goal:** Convert the project from a current-strategy bot into a secondary-development framework with a broad Extension API, controlled side effects, and current FDV logic isolated under `src/strategies/current/`.
 
-**Architecture:** Introduce `polymarket_trader.extension_api` as the public contract for business extensions, then migrate framework code away from `strategy_sdk` and current-strategy assumptions. Keep framework writes and side effects behind existing app/runtime/infra gates while giving extensions broad read ports, lifecycle hooks, and command request models.
+**Architecture:** Introduce `polymarket_trader.extension_api` as the public contract for business extensions, then migrate framework code away from the legacy strategy SDK package and current-strategy assumptions. Keep framework writes and side effects behind existing app/runtime/infra gates while giving extensions broad read ports, lifecycle hooks, and command request models.
 
 **Tech Stack:** Python 3.12, dataclasses, Protocol types, Pydantic settings, pytest, ruff, existing Polymarket runtime/app/infra layers.
 
@@ -31,7 +31,7 @@ an extension.
 - Modify `src/polymarket_trader/config.py` and docs: replace `strategy_module` naming with `extension_module` and make runtime wiring explicit.
 - Rename generic market payload parsing from `domain/classifier.py` into app/infra naming so domain no longer owns external payload parsing.
 - Split allocation policy: generic allocation DTOs remain framework-owned, equal-weight allocation moves into the current extension.
-- Delete `src/strategy_sdk/` after imports and tests migrate.
+- Delete the legacy strategy SDK package after imports and tests migrate.
 
 ---
 
@@ -116,7 +116,7 @@ class ExtensionLoadError(RuntimeError):
     """Raised when a business extension cannot be loaded or validated."""
 ```
 
-Create `src/polymarket_trader/extension_api/config_loader.py` by moving the current `strategy_sdk.config_loader`
+Create `src/polymarket_trader/extension_api/config_loader.py` by moving the current legacy SDK config loader
 implementation and replacing `StrategyLoadError` with `ExtensionLoadError`:
 
 ```python
@@ -163,7 +163,7 @@ def load_extension_config(config_type: type[T], config_path: str | None) -> T | 
 
 - [ ] **Step 4: Create decision and context models**
 
-Move the dataclasses and enums from `src/strategy_sdk/models.py` into:
+Move the dataclasses and enums from the legacy SDK models module into:
 
 - `src/polymarket_trader/extension_api/decisions.py`: `StrategyAction`, `DiscoveryEndpoint`,
   `DiscoveryQuery`, `UniverseDecision`, `StrategyDecision`, `EntrySizing`, `RecoveryDecision`,
@@ -398,17 +398,17 @@ git commit -m "feat: add extension API contracts"
 
 ---
 
-### Task 2: Migrate Public Imports From `strategy_sdk` to `extension_api`
+### Task 2: Migrate Public Imports From The Legacy SDK To `extension_api`
 
 **Files:**
-- Modify: all Python files currently importing `strategy_sdk`
-- Modify: `tests/strategy_sdk/test_config_loader.py` -> move to `tests/extension_api/test_config_loader.py`
-- Delete: `src/strategy_sdk/`
-- Delete: `tests/strategy_sdk/`
+- Modify: all Python files currently importing the legacy SDK
+- Modify the legacy SDK config loader test and move it to `tests/extension_api/test_config_loader.py`
+- Delete the legacy SDK package
+- Delete the legacy SDK tests
 
 - [ ] **Step 1: Write import-boundary test**
 
-Create `tests/extension_api/test_no_strategy_sdk_imports.py`:
+Create `tests/extension_api/test_no_legacy_sdk_imports.py`:
 
 ```python
 from __future__ import annotations
@@ -416,34 +416,34 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def test_runtime_no_longer_imports_strategy_sdk() -> None:
+def test_runtime_no_longer_imports_legacy_sdk() -> None:
     roots = [Path("src/polymarket_trader"), Path("src/strategies"), Path("tests")]
     offenders: list[str] = []
     for root in roots:
         for path in root.rglob("*.py"):
             text = path.read_text(encoding="utf-8")
-            if "strategy_sdk" in text:
+            if "legacy_sdk_package_marker" in text:
                 offenders.append(str(path))
     assert offenders == []
 ```
 
 - [ ] **Step 2: Run boundary test to verify it fails**
 
-Run: `pytest tests/extension_api/test_no_strategy_sdk_imports.py -q`
+Run: `pytest tests/extension_api/test_no_legacy_sdk_imports.py -q`
 
 Expected: FAIL with offenders including `src/strategies/current/strategy.py` and framework services.
 
 - [ ] **Step 3: Replace imports mechanically**
 
-Run: `rg -l "strategy_sdk" src tests | xargs sed -i 's/from strategy_sdk/from polymarket_trader.extension_api/g; s/import strategy_sdk/import polymarket_trader.extension_api/g'`
+Run a mechanical import rewrite from the legacy SDK package to `polymarket_trader.extension_api`.
 
-Then inspect with: `rg -n "strategy_sdk" src tests`
+Then inspect for legacy SDK imports under `src` and `tests`.
 
-Expected: only deleted files under `src/strategy_sdk` and `tests/strategy_sdk` still match.
+Expected: only deleted legacy SDK files still match before removal.
 
 - [ ] **Step 4: Move config loader tests**
 
-Move `tests/strategy_sdk/test_config_loader.py` to `tests/extension_api/test_config_loader.py`.
+Move the legacy SDK config loader test to `tests/extension_api/test_config_loader.py`.
 Update imports to:
 
 ```python
@@ -461,7 +461,7 @@ Update assertions so they reference `load_extension_config`.
 Run:
 
 ```bash
-git rm -r src/strategy_sdk tests/strategy_sdk
+git rm -r <legacy-sdk-package> <legacy-sdk-tests>
 ```
 
 - [ ] **Step 6: Run focused tests**
@@ -1254,7 +1254,7 @@ git commit -m "chore: remove current business residue from framework"
 Run:
 
 ```bash
-rg -n "strategy_sdk|from strategy_sdk|import strategy_sdk" src tests docs
+rg -n "<legacy-sdk-import-marker>" src tests docs
 rg -n "strategies\\.current|CurrentStrategy|FDV|fully diluted valuation|entry_no_price|exit_no_price" src/polymarket_trader tests/app tests/domain
 ```
 

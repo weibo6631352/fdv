@@ -37,7 +37,7 @@ framework-owned side effects
 
 ## Recommended Shape
 
-Rename and broaden the public secondary-development contract from `strategy_sdk` to:
+Rename and broaden the public secondary-development contract from the legacy strategy SDK package to:
 
 ```text
 src/polymarket_trader/extension_api/
@@ -222,7 +222,7 @@ Framework modules keep these responsibilities:
 
 Move or rename the current business leftovers:
 
-- `src/strategy_sdk/` -> `src/polymarket_trader/extension_api/`, with compatibility avoided unless there
+- Replace the legacy strategy SDK package with `src/polymarket_trader/extension_api/`, with compatibility avoided unless there
   is an explicit external contract.
 - `Settings.strategy_module = "strategies.current"` -> explicit extension module configuration with no
   business default embedded in framework policy. Example deployments may still configure `strategies.current`.
@@ -300,7 +300,7 @@ Tests should prove both framework neutrality and extension power:
 
 ## Implementation Order
 
-1. Create `extension_api` and migrate public contract types from `strategy_sdk`.
+1. Create `extension_api` and migrate public contract types from the legacy strategy SDK package.
 2. Convert current `StrategyModule` protocol into broader `ExtensionHooks` plus manifest/factory.
 3. Move current business allocation and any remaining business policy into `strategies/current`.
 4. Rename generic market parsing so it no longer reads as strategy classification.
