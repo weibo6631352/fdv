@@ -9,7 +9,7 @@ from polymarket_trader.app.market_payload_parser import MarketParseResult, Marke
 from polymarket_trader.domain.events import DomainEvent, DomainEventType
 from polymarket_trader.domain.market import Market
 from polymarket_trader.observability.trace import ensure_trace_id
-from polymarket_trader.runtime.account_state import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistry
 from polymarket_trader.extension_api import ExtensionHooks, UniverseDecision
 

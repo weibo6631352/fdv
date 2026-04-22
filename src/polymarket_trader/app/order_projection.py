@@ -18,7 +18,8 @@ from polymarket_trader.domain.order import (
     TradableOrderIntent,
 )
 from polymarket_trader.domain.position import Position
-from polymarket_trader.runtime.account_state import AccountSnapshot, AccountStateStore
+from polymarket_trader.domain.account import AccountSnapshot
+from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.serialization import utc_now
 
 

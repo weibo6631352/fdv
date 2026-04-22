@@ -6,13 +6,13 @@ from decimal import Decimal
 from polymarket_trader.domain.events import DomainEventType, OutboxEvent
 from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.infra.db.models import MarketModel
-from polymarket_trader.infra.db.persistence import _audit_event_from_record, _market_from_record
+from polymarket_trader.infra.db.record_mappers import audit_event_from_record, market_from_record
 from polymarket_trader.workers.persistence_records import PersistenceRecordBuilder
 from tests.helpers.markets import build_binary_market
 
 
 def test_audit_event_from_record_restores_serialized_timestamps() -> None:
-    event = _audit_event_from_record(
+    event = audit_event_from_record(
         {
             "trace_id": "trace-1",
             "event_title": "market_filtered_out",
@@ -29,7 +29,7 @@ def test_audit_event_from_record_restores_serialized_timestamps() -> None:
 
 
 def test_market_from_record_prefers_fee_schedule_rate_from_raw_payload() -> None:
-    market = _market_from_record(
+    market = market_from_record(
         {
             "condition_id": "condition-1",
             "market_slug": "sample-market-a",
@@ -117,7 +117,7 @@ def test_market_persistence_worker_falls_back_to_parse_reason_in_market_data() -
 
 
 def test_market_from_record_restores_parse_reason_reject_reason() -> None:
-    market = _market_from_record(
+    market = market_from_record(
         {
             "condition_id": "condition-1",
             "market_slug": "sample-market-a",

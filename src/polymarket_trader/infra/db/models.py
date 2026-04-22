@@ -15,7 +15,7 @@ from polymarket_trader.domain.market import Market, MarketOutcome, TradingStatus
 from polymarket_trader.domain.order import Order, OrderResult, OrderSide, OrderStatus, OrderType
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
-from polymarket_trader.runtime.account_state import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot
 
 JsonValue = Any
 JsonMapping = Mapping[str, Any]

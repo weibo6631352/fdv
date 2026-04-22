@@ -27,7 +27,8 @@ from polymarket_trader.domain.order import (
 )
 from polymarket_trader.domain.position import Position
 from polymarket_trader.domain.state_machine import MarketLifecycle
-from polymarket_trader.runtime.account_state import AccountSnapshot, AccountStateStore
+from polymarket_trader.domain.account import AccountSnapshot
+from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.extension_api import MarketTokenView, ExtensionContext
 

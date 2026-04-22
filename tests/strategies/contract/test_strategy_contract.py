@@ -7,7 +7,7 @@ from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
 from polymarket_trader.extension_api import EntryCandidate, EntrySizing, ExtensionAction, ExtensionContext
-from polymarket_trader.runtime.account_state import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot
 from strategies.current.strategy import build_strategy as build_current_strategy
 from tests.helpers.markets import build_binary_market
 

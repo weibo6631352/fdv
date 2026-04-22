@@ -9,10 +9,12 @@ from uuid import uuid4
 
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from polymarket_trader.domain.market import Market
-from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.infra.polymarket import market_ws_adapter
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
+from polymarket_trader.workers.market_book_projector import BookState as _BookState
+from polymarket_trader.workers.market_book_projector import MarketBookProjector
 
 
 def _utc_now() -> datetime:
@@ -28,24 +30,8 @@ _fee_rate_units = market_ws_adapter.fee_rate_units
 _to_datetime = market_ws_adapter.datetime_value
 _extract_token_id = market_ws_adapter.extract_token_id
 _extract_sequence = market_ws_adapter.extract_sequence
-_parse_levels = market_ws_adapter.parse_levels
 _message_type = market_ws_adapter.message_type
 _extract_token_candidates = market_ws_adapter.extract_token_candidates
-_best_price = market_ws_adapter.best_price
-_worst_ask = market_ws_adapter.worst_ask
-
-
-@dataclass(slots=True)
-class _BookState:
-    snapshot: OrderbookSnapshot
-    last_sequence: int | None = None
-    needs_rest_snapshot: bool = False
-    resolved: bool = False
-    subscribed_at: datetime | None = None
-    last_message_at: datetime | None = None
-    last_rest_snapshot_at: datetime | None = None
-    last_error: str | None = None
-    last_result: "MarketWsResultSummary" | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +103,7 @@ class MarketWsWorker:
         self._event_bus = event_bus
         self._registry = registry
         self._rest_snapshot_loader = rest_snapshot_loader
+        self._book_projector = MarketBookProjector()
         self._states: dict[str, _BookState] = {}
         self._tracked_markets: dict[str, Market] = {}
         self._recent_results: deque[MarketWsResultSummary] = deque(maxlen=8)
@@ -133,19 +120,7 @@ class MarketWsWorker:
         for token_id in tracked_token_ids:
             if token_id in self._states:
                 continue
-            self._states[token_id] = _BookState(
-                snapshot=OrderbookSnapshot(
-                    token_id=token_id,
-                    best_bid=None,
-                    best_ask=None,
-                    bids=(),
-                    asks=(),
-                    received_at=_utc_now(),
-                    market_slug=market.market_slug,
-                    condition_id=market.condition_id,
-                    tick_size=market.tick_size,
-                ),
-            )
+            self._states[token_id] = self._book_projector.initial_state(token_id, market=market)
 
     def untrack_market(self, token_ids: str | tuple[str, ...] | list[str]) -> None:
         normalized_token_ids = (
@@ -221,7 +196,7 @@ class MarketWsWorker:
             return []
 
         sequence = _extract_sequence(message)
-        if self._sequence_gap_detected(state, sequence):
+        if self._book_projector.sequence_gap_detected(state, sequence):
             state.needs_rest_snapshot = True
             if self._rest_snapshot_loader is not None:
                 snapshot = await self._rest_snapshot_loader(token_id)
@@ -288,25 +263,11 @@ class MarketWsWorker:
         self._last_rest_snapshot_at = _utc_now()
         market = self._tracked_markets.get(token_id) or self._resolve_market({}, token_id)
         current = self._states.get(token_id)
-        snapshot_model = (
-            snapshot
-            if isinstance(snapshot, OrderbookSnapshot)
-            else self._snapshot_from_mapping(
-                token_id,
-                snapshot,
-                market=market,
-                previous=current.snapshot if current is not None else None,
-            )
-        )
-        self._states[token_id] = _BookState(
-            snapshot=snapshot_model,
-            last_sequence=_extract_sequence(snapshot) if isinstance(snapshot, Mapping) else None,
-            needs_rest_snapshot=False,
-            resolved=current.resolved if current is not None else False,
-            subscribed_at=current.subscribed_at if current is not None else None,
-            last_message_at=_utc_now(),
-            last_rest_snapshot_at=_utc_now(),
-            last_error=current.last_error if current is not None else None,
+        self._states[token_id] = self._book_projector.rest_state(
+            token_id,
+            snapshot,
+            market=market,
+            current=current,
         )
         return await self._emit_snapshot_update(
             token_id,
@@ -405,9 +366,7 @@ class MarketWsWorker:
         *,
         source: str,
     ) -> list[DomainEvent]:
-        snapshot = self._snapshot_from_message(token_id, message, previous=state.snapshot)
-        state.snapshot = snapshot
-        state.needs_rest_snapshot = False
+        self._book_projector.apply_book_message(token_id, state, message)
         return await self._emit_snapshot_update(token_id, state, source=source, reason="book")
 
     async def _apply_price_message(
@@ -418,38 +377,7 @@ class MarketWsWorker:
         *,
         source: str,
     ) -> list[DomainEvent]:
-        snapshot = state.snapshot
-        best_bid = _decimal(_first(message, "best_bid", "bestBid", "bid"))
-        best_ask = _decimal(_first(message, "best_ask", "bestAsk", "ask"))
-        best_bid_size = _decimal(_first(message, "best_bid_size", "bestBidSize"))
-        best_ask_size = _decimal(_first(message, "best_ask_size", "bestAskSize"))
-        bids = snapshot.bids
-        asks = snapshot.asks
-
-        side = str(_first(message, "side", "book_side", "direction") or "").lower()
-        price = _decimal(_first(message, "price", "new_price", "p"))
-        size = _decimal(_first(message, "size", "new_size", "quantity", "qty"))
-        if price is not None and size is not None:
-            if side in {"bid", "buy", "yes"}:
-                bids = self._upsert_level(bids, price, size)
-                best_bid = best_bid or _best_price(bids)
-                best_bid_size = best_bid_size or self._size_for_price(bids, best_bid)
-            else:
-                asks = self._upsert_level(asks, price, size)
-                best_ask = best_ask or _worst_ask(asks)
-                best_ask_size = best_ask_size or self._size_for_price(asks, best_ask)
-
-        snapshot = replace(
-            snapshot,
-            best_bid=best_bid if best_bid is not None else snapshot.best_bid,
-            best_ask=best_ask if best_ask is not None else snapshot.best_ask,
-            best_bid_size=best_bid_size if best_bid_size is not None else snapshot.best_bid_size,
-            best_ask_size=best_ask_size if best_ask_size is not None else snapshot.best_ask_size,
-            bids=bids,
-            asks=asks,
-            received_at=_utc_now(),
-        )
-        state.snapshot = snapshot
+        self._book_projector.apply_price_message(state, message)
         return await self._emit_snapshot_update(
             token_id,
             state,
@@ -475,12 +403,7 @@ class MarketWsWorker:
                 self._registry.upsert(replace(market, tick_size=tick_size))
             market = replace(market, tick_size=tick_size)
             self._tracked_markets[token_id] = market
-        snapshot = replace(
-            state.snapshot,
-            tick_size=tick_size or state.snapshot.tick_size,
-            received_at=_utc_now(),
-        )
-        state.snapshot = snapshot
+        self._book_projector.apply_tick_size_change(state, tick_size)
         return await self._emit_snapshot_update(
             token_id,
             state,
@@ -520,11 +443,7 @@ class MarketWsWorker:
                         message=message,
                     )
                 )
-        state.snapshot = replace(
-            state.snapshot,
-            last_trade_price=last_trade_price,
-            received_at=_utc_now(),
-        )
+        self._book_projector.apply_last_trade_price(state, last_trade_price)
         events.extend(
             await self._emit_snapshot_update(
                 token_id,
@@ -544,7 +463,7 @@ class MarketWsWorker:
         source: str,
     ) -> list[DomainEvent]:
         state.resolved = True
-        state.snapshot = replace(state.snapshot, received_at=_utc_now())
+        self._book_projector.touch(state)
         market = self._tracked_markets.get(token_id)
         if market is not None and self._registry is not None:
             resolved_market = self._registry.mark_resolved(market.condition_id)
@@ -554,10 +473,7 @@ class MarketWsWorker:
                     tracked_state = self._states.get(tracked_token_id)
                     if tracked_state is not None:
                         tracked_state.resolved = True
-                        tracked_state.snapshot = replace(
-                            tracked_state.snapshot,
-                            received_at=state.snapshot.received_at,
-                        )
+                        self._book_projector.touch(tracked_state)
         event = MarketWsEvent(
             trace_id=uuid4().hex,
             event_type=DomainEventType.MARKET_RESOLVED_OR_DISABLED,
@@ -570,7 +486,7 @@ class MarketWsWorker:
             merge_key=f"market_resolved_or_disabled|{token_id}",
             payload={
                 "source": source,
-                "snapshot": self._snapshot_payload(state.snapshot),
+                "snapshot": self._book_projector.snapshot_payload(state.snapshot),
                 "message": dict(message),
             },
         )
@@ -600,7 +516,7 @@ class MarketWsWorker:
                 )
             elif self._registry is not None:
                 self._registry.upsert(market)
-        state.snapshot = replace(state.snapshot, received_at=_utc_now())
+        self._book_projector.touch(state)
         events.extend(
             await self._emit_snapshot_update(token_id, state, source=source, reason="new_market")
         )
@@ -628,9 +544,9 @@ class MarketWsWorker:
             merge_key=f"orderbook_snapshot_updated|{token_id}",
             payload={
                 "source": source,
-                "snapshot": self._snapshot_payload(snapshot),
-                "spread": self._serialize_decimal(snapshot.spread),
-                "ask_depth": self._serialize_decimal(snapshot.buyable_ask_depth()),
+                "snapshot": self._book_projector.snapshot_payload(snapshot),
+                "spread": self._book_projector.serialize_decimal(snapshot.spread),
+                "ask_depth": self._book_projector.serialize_decimal(snapshot.buyable_ask_depth()),
                 "snapshot_time": snapshot.snapshot_time.isoformat(),
                 "needs_rest_snapshot": state.needs_rest_snapshot,
             },
@@ -693,18 +609,7 @@ class MarketWsWorker:
         state = self._states.get(token_id)
         if state is not None:
             return state
-        snapshot = OrderbookSnapshot(
-            token_id=token_id,
-            best_bid=None,
-            best_ask=None,
-            bids=(),
-            asks=(),
-            received_at=_utc_now(),
-            market_slug=market.market_slug if market is not None else None,
-            condition_id=market.condition_id if market is not None else None,
-            tick_size=market.tick_size if market is not None else None,
-        )
-        state = _BookState(snapshot=snapshot)
+        state = self._book_projector.initial_state(token_id, market=market)
         self._states[token_id] = state
         return state
 
@@ -741,130 +646,6 @@ class MarketWsWorker:
                     return market
         return None
 
-    def _snapshot_from_message(
-        self,
-        token_id: str,
-        message: Mapping[str, Any],
-        *,
-        previous: OrderbookSnapshot | None = None,
-    ) -> OrderbookSnapshot:
-        book = _first(message, "book", "orderbook", "snapshot", "rest_snapshot")
-        payload = book if isinstance(book, Mapping) else message
-        bids = _parse_levels(_first(payload, "bids", "yes_bids"))
-        asks = _parse_levels(_first(payload, "asks", "no_asks"))
-        best_bid = _decimal(_first(payload, "best_bid", "bestBid")) or _best_price(bids)
-        best_ask = _decimal(_first(payload, "best_ask", "bestAsk")) or _worst_ask(asks)
-        best_bid_size = _decimal(_first(payload, "best_bid_size", "bestBidSize"))
-        best_ask_size = _decimal(_first(payload, "best_ask_size", "bestAskSize"))
-        if best_bid_size is None and best_bid is not None:
-            best_bid_size = self._size_for_price(bids, best_bid)
-        if best_ask_size is None and best_ask is not None:
-            best_ask_size = self._size_for_price(asks, best_ask)
-        market_slug = str(
-            _first(payload, "market_slug", "marketSlug", "slug")
-            or (previous.market_slug if previous else "")
-        ) or None
-        condition_id = str(
-            _first(payload, "condition_id", "conditionId", "market")
-            or (previous.condition_id if previous else "")
-        ) or None
-        tick_size = _decimal(_first(payload, "tick_size", "tickSize")) or (
-            previous.tick_size if previous else None
-        )
-        last_trade_price = _decimal(_first(payload, "last_trade_price", "lastTradePrice")) or (
-            previous.last_trade_price if previous else None
-        )
-        return OrderbookSnapshot(
-            token_id=token_id,
-            best_bid=best_bid,
-            best_ask=best_ask,
-            bids=bids,
-            asks=asks,
-            received_at=_utc_now(),
-            market_slug=market_slug,
-            condition_id=condition_id,
-            best_bid_size=best_bid_size,
-            best_ask_size=best_ask_size,
-            last_trade_price=last_trade_price,
-            tick_size=tick_size,
-        )
-
-    def _snapshot_from_mapping(
-        self,
-        token_id: str,
-        payload: Mapping[str, Any],
-        *,
-        market: Market | None = None,
-        previous: OrderbookSnapshot | None = None,
-    ) -> OrderbookSnapshot:
-        if previous is None and market is not None:
-            previous = OrderbookSnapshot(
-                token_id=token_id,
-                best_bid=None,
-                best_ask=None,
-                bids=(),
-                asks=(),
-                received_at=_utc_now(),
-                market_slug=market.market_slug,
-                condition_id=market.condition_id,
-                tick_size=market.tick_size,
-            )
-        return self._snapshot_from_message(token_id, payload, previous=previous)
-
-    def _sequence_gap_detected(self, state: _BookState, sequence: int | None) -> bool:
-        if sequence is None:
-            return False
-        if state.last_sequence is None:
-            return False
-        return sequence > state.last_sequence + 1
-
-    def _upsert_level(
-        self,
-        levels: tuple[PriceLevel, ...],
-        price: Decimal,
-        size: Decimal,
-    ) -> tuple[PriceLevel, ...]:
-        updated: list[PriceLevel] = []
-        replaced = False
-        for level in levels:
-            if level.price == price:
-                updated.append(PriceLevel(price=price, size=size))
-                replaced = True
-            else:
-                updated.append(level)
-        if not replaced:
-            updated.append(PriceLevel(price=price, size=size))
-        return tuple(updated)
-
-    def _size_for_price(
-        self,
-        levels: tuple[PriceLevel, ...],
-        price: Decimal | None,
-    ) -> Decimal | None:
-        if price is None:
-            return None
-        for level in levels:
-            if level.price == price:
-                return level.size
-        return None
-
-    def _snapshot_payload(self, snapshot: OrderbookSnapshot) -> dict[str, Any]:
-        return {
-            "token_id": snapshot.token_id,
-            "market_slug": snapshot.market_slug,
-            "condition_id": snapshot.condition_id,
-            "best_bid": self._serialize_decimal(snapshot.best_bid),
-            "best_ask": self._serialize_decimal(snapshot.best_ask),
-            "best_bid_size": self._serialize_decimal(snapshot.best_bid_size),
-            "best_ask_size": self._serialize_decimal(snapshot.best_ask_size),
-            "last_trade_price": self._serialize_decimal(snapshot.last_trade_price),
-            "tick_size": self._serialize_decimal(snapshot.tick_size),
-            "spread": self._serialize_decimal(snapshot.spread),
-            "ask_depth": self._serialize_decimal(snapshot.buyable_ask_depth()),
-            "received_at": snapshot.received_at.isoformat(),
-            "snapshot_time": snapshot.snapshot_time.isoformat(),
-        }
-
     def _market_payload(self, market: Market) -> dict[str, Any]:
         return {
             "condition_id": market.condition_id,
@@ -880,8 +661,8 @@ class MarketWsWorker:
                 }
                 for outcome in market.outcomes
             ],
-            "tick_size": self._serialize_decimal(market.tick_size),
-            "min_order_size": self._serialize_decimal(market.min_order_size),
+            "tick_size": self._book_projector.serialize_decimal(market.tick_size),
+            "min_order_size": self._book_projector.serialize_decimal(market.min_order_size),
             "neg_risk": market.neg_risk,
             "fees": {
                 "enabled": market.fees_enabled,
@@ -1004,8 +785,3 @@ class MarketWsWorker:
             },
         )
         return await self._publish(OutboxPriority.P2, event)
-
-    def _serialize_decimal(self, value: Decimal | None) -> str | None:
-        if value is None:
-            return None
-        return format(value, "f")

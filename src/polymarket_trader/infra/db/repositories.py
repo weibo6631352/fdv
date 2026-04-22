@@ -25,7 +25,7 @@ from polymarket_trader.infra.db.models import (
     OutboxEventModel,
     PositionModel,
 )
-from polymarket_trader.runtime.account_state import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot
 
 T = TypeVar("T")
 

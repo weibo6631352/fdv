@@ -6,7 +6,7 @@ from typing import Callable, Mapping
 from polymarket_trader.domain.market import Market
 from polymarket_trader.domain.order import Order
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
-from polymarket_trader.runtime.account_state import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistry
 from polymarket_trader.extension_api import ExtensionPorts
 

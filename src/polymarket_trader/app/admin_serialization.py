@@ -15,7 +15,7 @@ from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.domain.position import Position
 from polymarket_trader.infra.db import RepositoryPage
 from polymarket_trader.infra.polymarket import ClobPriceHistoryDTO
-from polymarket_trader.runtime.account_state import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistrySnapshot
 from polymarket_trader.serialization import decimal_text, jsonable
 

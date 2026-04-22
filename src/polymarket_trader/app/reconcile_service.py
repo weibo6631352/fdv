@@ -17,7 +17,7 @@ from polymarket_trader.domain.order import (
     SellOrderIntent,
 )
 from polymarket_trader.domain.position import Position
-from polymarket_trader.runtime.account_state import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistrySnapshot
 from polymarket_trader.extension_api import (
     ExtensionHooks,

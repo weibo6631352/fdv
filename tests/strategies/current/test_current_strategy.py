@@ -11,7 +11,7 @@ from polymarket_trader.extension_api import (
     ExtensionAction,
     ExtensionContext,
 )
-from polymarket_trader.runtime.account_state import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot
 from strategies.current.strategy import build_strategy
 from tests.helpers.markets import build_binary_market
 

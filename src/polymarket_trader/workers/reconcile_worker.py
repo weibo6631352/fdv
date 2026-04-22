@@ -39,7 +39,8 @@ from polymarket_trader.domain.order import (
 )
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.domain.position import Position
-from polymarket_trader.runtime.account_state import AccountSnapshot, AccountStateStore
+from polymarket_trader.domain.account import AccountSnapshot
+from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry, MarketRegistrySnapshot
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker

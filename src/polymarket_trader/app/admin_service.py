@@ -28,7 +28,7 @@ from polymarket_trader.infra.db import (
     PositionRepository,
     RepositoryPage,
 )
-from polymarket_trader.runtime.account_state import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot
 from polymarket_trader.runtime.event_bus import QueueDepthSnapshot
 from polymarket_trader.runtime.registry import MarketRegistrySnapshot
 from polymarket_trader.serialization import utc_now

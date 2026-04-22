@@ -11,7 +11,8 @@ from polymarket_trader.domain.events import DomainEvent, DomainEventType, Fill, 
 from polymarket_trader.domain.order import Order, OrderStatus
 from polymarket_trader.domain.position import Position
 from polymarket_trader.infra.polymarket import user_ws_adapter
-from polymarket_trader.runtime.account_state import AccountSnapshot, AccountStateStore
+from polymarket_trader.domain.account import AccountSnapshot
+from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
 
 MessageSource = Callable[[], Awaitable[Mapping[str, Any] | DomainEvent | None]]
