@@ -5,11 +5,11 @@ import inspect
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from functools import partial
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Mapping
 
 from polymarket_trader.domain.events import DomainEventType, OutboxEvent, sanitize_raw_response
 from polymarket_trader.domain.order import (
@@ -25,22 +25,20 @@ from polymarket_trader.domain.order import (
     ReplaceOrderIntent,
     SellOrderIntent,
 )
+from polymarket_trader.infra.polymarket.order_execution_types import (
+    OrderExecutionClient,
+    OrderExecutionRequest,
+    OrderExecutionResponse,
+)
+from polymarket_trader.infra.polymarket.order_result_builder import (
+    build_order_result,
+    normalize_execution_response,
+)
 from polymarket_trader.infra.outbox.local_queue import DEFAULT_ENQUEUE_TIMEOUT, LocalOutbox
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _decimal(value: Any | None) -> Decimal | None:
-    if value is None:
-        return None
-    if isinstance(value, Decimal):
-        return value
-    text = str(value).strip()
-    if not text:
-        return None
-    return Decimal(text)
 
 
 def _as_text(value: Any | None) -> str | None:
@@ -52,27 +50,6 @@ def _as_text(value: Any | None) -> str | None:
 
 def _summarize_response(response: Any | None, *, max_length: int = 512) -> str | None:
     return sanitize_raw_response(response, max_length=max_length)
-
-
-def _request_signature(request: OrderExecutionRequest) -> str:
-    return "|".join(
-        [
-            request.action,
-            request.trace_id,
-            request.idempotency_key,
-            request.condition_id,
-            request.token_id,
-            request.market_slug or "",
-            request.side.value if request.side is not None else "",
-            request.order_type.value if request.order_type is not None else "",
-            "" if request.price is None else str(request.price),
-            "" if request.amount_usdc is None else str(request.amount_usdc),
-            "" if request.size_shares is None else str(request.size_shares),
-            request.order_id or "",
-            "" if request.new_price is None else str(request.new_price),
-            str(int(request.post_only)),
-        ]
-    )
 
 
 def _request_idempotency_key(
@@ -112,100 +89,6 @@ def _request_idempotency_key(
         str(int(post_only)),
     ]
     return ":".join(parts)
-
-
-def _coerce_status(value: Any | None, *, action: str, intent: ManagedOrderIntent | None) -> OrderResultStatus:
-    if isinstance(value, OrderResultStatus):
-        return value
-    if value is None:
-        return _default_status_for_action(action, intent)
-    text = str(value).strip().lower().replace(" ", "_")
-    mapping = {
-        "full_fill": OrderResultStatus.FULL_FILL,
-        "full": OrderResultStatus.FULL_FILL,
-        "filled": OrderResultStatus.FULL_FILL,
-        "partial_fill": OrderResultStatus.PARTIAL_FILL,
-        "partial": OrderResultStatus.PARTIAL_FILL,
-        "partially_filled": OrderResultStatus.PARTIAL_FILL,
-        "no_fill": OrderResultStatus.NO_FILL,
-        "nofill": OrderResultStatus.NO_FILL,
-        "live": OrderResultStatus.LIVE,
-        "resting": OrderResultStatus.LIVE,
-        "rejected": OrderResultStatus.REJECTED,
-        "failed": OrderResultStatus.FAILED,
-        "cancelled": OrderResultStatus.CANCELLED,
-        "canceled": OrderResultStatus.CANCELLED,
-        "unknown_timeout": OrderResultStatus.UNKNOWN_TIMEOUT,
-        "timeout": OrderResultStatus.UNKNOWN_TIMEOUT,
-    }
-    if text in mapping:
-        return mapping[text]
-    return _default_status_for_action(action, intent)
-
-
-def _default_status_for_action(
-    action: str,
-    intent: ManagedOrderIntent | None,
-) -> OrderResultStatus:
-    if action == "cancel":
-        return OrderResultStatus.CANCELLED
-    if action == "replace":
-        return OrderResultStatus.LIVE
-    if isinstance(intent, BuyOrderIntent):
-        return OrderResultStatus.NO_FILL if intent.order_type == OrderType.FAK else OrderResultStatus.LIVE
-    if isinstance(intent, SellOrderIntent):
-        return OrderResultStatus.LIVE
-    return OrderResultStatus.FAILED
-
-
-@dataclass(frozen=True, slots=True)
-class OrderExecutionRequest:
-    action: str
-    trace_id: str
-    idempotency_key: str
-    condition_id: str
-    token_id: str
-    market_slug: str | None = None
-    side: OrderSide | None = None
-    order_type: OrderType | None = None
-    price: Decimal | None = None
-    amount_usdc: Decimal | None = None
-    size_shares: Decimal | None = None
-    order_id: str | None = None
-    new_price: Decimal | None = None
-    post_only: bool = False
-    reason: str = ""
-    retry_count: int = 0
-    timestamps: ExecutionTimestamps = field(default_factory=ExecutionTimestamps)
-
-    def fingerprint(self) -> str:
-        return _request_signature(self)
-
-
-@dataclass(frozen=True, slots=True)
-class OrderExecutionResponse:
-    status: OrderResultStatus | str | None = None
-    order_id: str | None = None
-    trade_id: str | None = None
-    matched_shares: Decimal | str | None = None
-    remaining_shares: Decimal | str | None = None
-    spent_usdc: Decimal | str | None = None
-    notional_usdc: Decimal | str | None = None
-    raw_response: Any | None = None
-    reason: str = ""
-    retryable: bool = False
-    timestamps: ExecutionTimestamps | None = None
-
-
-@runtime_checkable
-class OrderExecutionClient(Protocol):
-    def sign_order(self, request: OrderExecutionRequest) -> Any: ...
-
-    def submit_order(self, request: OrderExecutionRequest) -> Any: ...
-
-    def cancel_order(self, request: OrderExecutionRequest) -> Any: ...
-
-    def replace_order(self, request: OrderExecutionRequest) -> Any: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -591,13 +474,13 @@ class PolymarketOrderExecutor:
                 request,
                 timeout_s=self._timeout_for_action(request.action),
             )
-            response_model = _normalize_response(
+            response_model = normalize_execution_response(
                 response,
                 action=request.action,
                 intent=intent,
                 timestamps=timestamps,
             )
-            result = _build_order_result(
+            result = build_order_result(
                 request=request,
                 intent=intent,
                 response=response_model,
@@ -878,135 +761,6 @@ def _adapter_method_for_action(action: str) -> str:
     if action == "replace":
         return "replace_order"
     return "submit_order"
-
-
-def _normalize_response(
-    response: Any,
-    *,
-    action: str,
-    intent: ManagedOrderIntent,
-    timestamps: ExecutionTimestamps,
-) -> OrderExecutionResponse:
-    if isinstance(response, OrderExecutionResponse):
-        return response
-    if isinstance(response, OrderResult):
-        return OrderExecutionResponse(
-            status=response.status,
-            order_id=response.order_id,
-            trade_id=response.trade_id,
-            matched_shares=response.matched_shares,
-            remaining_shares=response.remaining_shares,
-            spent_usdc=response.spent_usdc,
-            notional_usdc=response.notional_usdc,
-            raw_response=response.raw_response_summary,
-            reason=response.reason,
-            retryable=response.retryable,
-            timestamps=response.timestamps,
-        )
-    if isinstance(response, Mapping):
-        return OrderExecutionResponse(
-            status=response.get("status"),
-            order_id=_as_text(response.get("order_id")),
-            trade_id=_as_text(response.get("trade_id")),
-            matched_shares=_decimal(response.get("matched_shares") or response.get("filled_shares")),
-            remaining_shares=_decimal(response.get("remaining_shares")),
-            spent_usdc=_decimal(response.get("spent_usdc") or response.get("amount_usdc")),
-            notional_usdc=_decimal(response.get("notional_usdc")),
-            raw_response=response,
-            reason=_as_text(response.get("reason")) or "",
-            retryable=bool(response.get("retryable", False)),
-            timestamps=timestamps,
-        )
-    return OrderExecutionResponse(
-        status=_coerce_status(None, action=action, intent=intent),
-        raw_response=response,
-        reason=_as_text(getattr(response, "reason", None)) or "",
-        timestamps=timestamps,
-    )
-
-
-def _build_order_result(
-    *,
-    request: OrderExecutionRequest,
-    intent: ManagedOrderIntent,
-    response: OrderExecutionResponse,
-    timestamps: ExecutionTimestamps,
-) -> OrderResult:
-    status = _coerce_status(response.status, action=request.action, intent=intent)
-    matched_shares = _decimal(response.matched_shares) or Decimal("0")
-    remaining_shares = _decimal(response.remaining_shares) or Decimal("0")
-    spent_usdc = _decimal(response.spent_usdc) or Decimal("0")
-    notional_usdc = _decimal(response.notional_usdc) or Decimal("0")
-    price = request.price or request.new_price
-
-    if isinstance(intent, BuyOrderIntent):
-        requested_amount_usdc = intent.amount_usdc
-        requested_size_shares = None
-        notional_usdc = notional_usdc or intent.amount_usdc
-        if notional_usdc and status in {OrderResultStatus.FULL_FILL, OrderResultStatus.PARTIAL_FILL} and spent_usdc == Decimal("0"):
-            spent_usdc = notional_usdc
-        if status in {OrderResultStatus.FULL_FILL, OrderResultStatus.PARTIAL_FILL} and matched_shares == Decimal("0") and spent_usdc and price:
-            matched_shares = spent_usdc / price
-        if status == OrderResultStatus.NO_FILL:
-            remaining_shares = Decimal("0")
-    elif isinstance(intent, SellOrderIntent):
-        requested_amount_usdc = None
-        requested_size_shares = intent.size_shares
-        notional_usdc = notional_usdc or intent.notional_usdc
-        if status in {OrderResultStatus.FULL_FILL, OrderResultStatus.PARTIAL_FILL} and spent_usdc == Decimal("0") and price:
-            spent_usdc = price * (matched_shares or intent.size_shares)
-        if status in {OrderResultStatus.FULL_FILL, OrderResultStatus.PARTIAL_FILL} and matched_shares == Decimal("0"):
-            matched_shares = intent.size_shares - remaining_shares if remaining_shares else intent.size_shares
-    else:
-        requested_amount_usdc = None
-        requested_size_shares = None
-
-    if status == OrderResultStatus.CANCELLED:
-        matched_shares = Decimal("0")
-        remaining_shares = Decimal("0")
-        spent_usdc = Decimal("0")
-
-    return OrderResult(
-        trace_id=request.trace_id,
-        condition_id=request.condition_id,
-        token_id=request.token_id,
-        market_slug=request.market_slug,
-        status=status,
-        intent=intent,
-        order_id=response.order_id,
-        trade_id=response.trade_id,
-        side=request.side,
-        order_type=request.order_type,
-        price=price,
-        requested_amount_usdc=requested_amount_usdc,
-        requested_size_shares=requested_size_shares,
-        matched_shares=matched_shares,
-        remaining_shares=remaining_shares,
-        spent_usdc=spent_usdc,
-        notional_usdc=notional_usdc,
-        reason=response.reason or _default_reason(status, request.action),
-        retryable=response.retryable,
-        raw_response_summary=_summarize_response(response.raw_response),
-        timestamps=timestamps,
-    )
-
-
-def _default_reason(status: OrderResultStatus, action: str) -> str:
-    if status == OrderResultStatus.UNKNOWN_TIMEOUT:
-        return f"{action}_timeout"
-    if status == OrderResultStatus.CANCELLED:
-        return "cancelled"
-    if status == OrderResultStatus.NO_FILL:
-        return "no_fill"
-    if status == OrderResultStatus.FULL_FILL:
-        return "full_fill"
-    if status == OrderResultStatus.PARTIAL_FILL:
-        return "partial_fill"
-    if status == OrderResultStatus.LIVE:
-        return "live"
-    if status == OrderResultStatus.REJECTED:
-        return "rejected"
-    return "failed"
 
 
 def _final_event_type(action: str, status: OrderResultStatus) -> str:

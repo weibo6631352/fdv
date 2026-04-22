@@ -9,7 +9,7 @@ from typing import Any, Mapping
 
 from polymarket_trader.config import Settings
 from polymarket_trader.domain.order import OrderSide, OrderType
-from polymarket_trader.infra.polymarket.order_executor import (
+from polymarket_trader.infra.polymarket.order_execution_types import (
     OrderExecutionRequest,
     OrderExecutionResponse,
 )
