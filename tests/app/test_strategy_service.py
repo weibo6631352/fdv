@@ -72,6 +72,13 @@ class _CustomSizingStrategy:
         return ()
 
 
+def test_strategy_service_accepts_extension_hooks_name() -> None:
+    hooks = _CustomSizingStrategy()
+    service = StrategyService(extension_hooks=hooks)
+
+    assert service is not None
+
+
 def test_strategy_service_uses_strategy_sizing_policy() -> None:
     registry = MarketRegistry()
     primary = build_binary_market(
@@ -99,7 +106,7 @@ def test_strategy_service_uses_strategy_sizing_policy() -> None:
         secondary.require_token_id("NO"): _snapshot(secondary),
     }
     service = StrategyService(
-        strategy_module=_CustomSizingStrategy(),
+        extension_hooks=_CustomSizingStrategy(),
         registry=registry,
         orderbook_reader=snapshots.get,
     )

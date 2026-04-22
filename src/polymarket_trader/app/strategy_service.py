@@ -22,8 +22,8 @@ from polymarket_trader.observability.trace import ensure_trace_id
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistry
 from polymarket_trader.extension_api import (
-    BusinessExtension as StrategyModule,
     EntryCandidate,
+    ExtensionHooks,
     MarketTokenView,
     StrategyAction,
     StrategyContext,
@@ -39,11 +39,11 @@ class StrategyService:
     def __init__(
         self,
         *,
-        strategy_module: StrategyModule,
+        extension_hooks: ExtensionHooks,
         registry: MarketRegistry | None = None,
         orderbook_reader: OrderbookReader | None = None,
     ) -> None:
-        self._strategy_module = strategy_module
+        self._extension_hooks = extension_hooks
         self._registry = registry
         self._orderbook_reader = orderbook_reader
 
@@ -145,7 +145,7 @@ class StrategyService:
                 ),
             )
 
-        sizing = self._strategy_module.size_entry(
+        sizing = self._extension_hooks.size_entry(
             StrategyContext(
                 trace_id=trace_id,
                 market=resolved_market,
@@ -203,7 +203,7 @@ class StrategyService:
         if allocation is not None:
             reason = allocation.reason or reason
             if allocation.buy_budget_usdc > Decimal("0"):
-                decision = self._strategy_module.decide_entry(
+                decision = self._extension_hooks.decide_entry(
                     StrategyContext(
                         trace_id=trace_id,
                         market=resolved_market,
@@ -260,7 +260,7 @@ class StrategyService:
         )
 
     def decide_follow_up(self, context: StrategyContext) -> tuple[StrategyDecision, ...]:
-        return self._strategy_module.decide_follow_up(context)
+        return self._extension_hooks.decide_follow_up(context)
 
     def build_intent_from_decision(
         self,

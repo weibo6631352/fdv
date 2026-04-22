@@ -113,7 +113,7 @@ def test_market_discovery_worker_skips_untracked_filtered_out_markets() -> None:
         outbox = LocalOutbox(max_size=8)
         event_bus.bind_persistence_sink(build_domain_event_outbox_sink(outbox))
         worker = MarketDiscoveryWorker(
-            market_service=MarketService(strategy_module=_RejectingStrategy()),
+            market_service=MarketService(extension_hooks=_RejectingStrategy()),
             event_bus=event_bus,
         )
 
@@ -158,7 +158,7 @@ def test_market_discovery_worker_skips_duplicate_market_payloads() -> None:
         registry = MarketRegistry()
         worker = MarketDiscoveryWorker(
             market_service=MarketService(
-                strategy_module=_AcceptingStrategy(),
+                extension_hooks=_AcceptingStrategy(),
                 registry=registry,
             ),
             event_bus=event_bus,
@@ -201,7 +201,7 @@ def test_market_discovery_worker_replays_duplicate_payload_when_tracking_state_c
         strategy = _SwitchingStrategy(selected=True, keep_tracking=False)
         worker = MarketDiscoveryWorker(
             market_service=MarketService(
-                strategy_module=strategy,
+                extension_hooks=strategy,
                 registry=registry,
             ),
             event_bus=event_bus,
@@ -246,7 +246,7 @@ def test_market_discovery_worker_treats_fee_schedule_change_as_market_update() -
         registry = MarketRegistry()
         worker = MarketDiscoveryWorker(
             market_service=MarketService(
-                strategy_module=_AcceptingStrategy(),
+                extension_hooks=_AcceptingStrategy(),
                 registry=registry,
             ),
             event_bus=event_bus,

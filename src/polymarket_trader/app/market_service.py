@@ -11,7 +11,7 @@ from polymarket_trader.domain.market import Market
 from polymarket_trader.observability.trace import ensure_trace_id
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistry
-from polymarket_trader.extension_api import BusinessExtension as StrategyModule, UniverseDecision
+from polymarket_trader.extension_api import ExtensionHooks, UniverseDecision
 
 AccountSnapshotProvider = Callable[[], AccountSnapshot]
 
@@ -22,14 +22,14 @@ class MarketService:
     def __init__(
         self,
         *,
-        strategy_module: StrategyModule,
+        extension_hooks: ExtensionHooks,
         parser: MarketPayloadParser | None = None,
         registry: MarketRegistry | None = None,
         market_tracker: Any | None = None,
         account_snapshot_provider: AccountSnapshotProvider | None = None,
     ) -> None:
         self._parser = parser or MarketPayloadParser()
-        self._strategy_module = strategy_module
+        self._extension_hooks = extension_hooks
         self._registry = registry
         self._market_tracker = market_tracker
         self._account_snapshot_provider = account_snapshot_provider
@@ -83,7 +83,7 @@ class MarketService:
                         fee_rate_updated_at=existing_market.fee_rate_updated_at,
                     )
 
-            universe_decision = self._strategy_module.select_market(candidate_market)
+            universe_decision = self._extension_hooks.select_market(candidate_market)
             if universe_decision.selected:
                 market = candidate_market
                 tracked_market = market
@@ -239,7 +239,7 @@ class MarketService:
         market: Market,
         account_snapshot: AccountSnapshot | None,
     ) -> bool:
-        return self._strategy_module.should_keep_tracking(market, account_snapshot)
+        return self._extension_hooks.should_keep_tracking(market, account_snapshot)
 
     def _build_retained_filtered_market(
         self,
@@ -248,7 +248,7 @@ class MarketService:
         existing_market: Market,
         reason: str,
     ) -> Market:
-        return self._strategy_module.build_filtered_tracking_market(
+        return self._extension_hooks.build_filtered_tracking_market(
             candidate_market,
             existing_market=existing_market,
             reason=reason,

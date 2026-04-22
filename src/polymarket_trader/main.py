@@ -260,13 +260,13 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     )
     bind_strategy_orderbook_reader(strategy_ports, market_ws_worker.snapshot)
     market_service = MarketService(
-        strategy_module=extension.hooks,
+        extension_hooks=extension.hooks,
         registry=registry,
         market_tracker=market_ws_worker,
         account_snapshot_provider=account_state_store.snapshot,
     )
     strategy_service = StrategyService(
-        strategy_module=extension.hooks,
+        extension_hooks=extension.hooks,
         registry=registry,
         orderbook_reader=market_ws_worker.snapshot,
     )
@@ -289,7 +289,7 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         max_open_orders=settings.max_open_orders,
         order_retry_limit=settings.order_retry_limit,
     )
-    reconcile_service = ReconcileService(strategy_module=extension.hooks)
+    reconcile_service = ReconcileService(extension_hooks=extension.hooks)
     reconcile_worker = ReconcileWorker(
         event_bus=event_bus,
         reconcile_service=reconcile_service,

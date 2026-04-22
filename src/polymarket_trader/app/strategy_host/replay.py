@@ -59,7 +59,7 @@ def run_entry_replay(
         config_path=extension_config_path,
     )
     plan = StrategyService(
-        strategy_module=extension.hooks,
+        extension_hooks=extension.hooks,
         registry=registry,
         orderbook_reader=orderbooks.get,
     ).build_entry_plan(

@@ -182,7 +182,7 @@ def test_strategy_service_allocates_equally_across_eligible_markets() -> None:
         _no_token_id(secondary): _snapshot(market=secondary),
     }
     service = StrategyService(
-        strategy_module=strategy,
+        extension_hooks=strategy,
         registry=registry,
         orderbook_reader=snapshots.get,
     )
@@ -217,7 +217,7 @@ def test_strategy_worker_turns_orderbook_update_into_risk_result() -> None:
         market_ws_worker.track_market(market)
 
         strategy_service = StrategyService(
-            strategy_module=strategy,
+            extension_hooks=strategy,
             registry=registry,
             orderbook_reader=market_ws_worker.snapshot,
         )
@@ -270,7 +270,7 @@ def test_strategy_worker_partial_fill_only_sells_filled_shares() -> None:
         market = _market(condition_id="condition", token_id="no-token", market_slug="token")
         registry.upsert(market)
         strategy_service = StrategyService(
-            strategy_module=strategy,
+            extension_hooks=strategy,
             registry=registry,
             orderbook_reader={_no_token_id(market): _snapshot(market=market)}.get,
         )
@@ -335,7 +335,7 @@ def test_strategy_worker_tracks_live_follow_up_sell_in_hot_state() -> None:
         market = _market(condition_id="condition", token_id="no-token", market_slug="token")
         registry.upsert(market)
         strategy_service = StrategyService(
-            strategy_module=strategy,
+            extension_hooks=strategy,
             registry=registry,
             orderbook_reader={_no_token_id(market): _snapshot(market=market)}.get,
         )
@@ -407,7 +407,7 @@ def test_strategy_worker_no_fill_releases_budget_for_next_market() -> None:
         registry.upsert(first)
         registry.upsert(second)
         strategy_service = StrategyService(
-            strategy_module=strategy,
+            extension_hooks=strategy,
             registry=registry,
             orderbook_reader={
                 _no_token_id(first): _snapshot(market=first),

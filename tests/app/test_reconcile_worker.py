@@ -250,7 +250,7 @@ def test_reconcile_worker_cancels_open_buy_and_backfills_missing_sell() -> None:
 
         executor = _StubExecutor()
         worker = ReconcileWorker(
-            reconcile_service=ReconcileService(strategy_module=build_strategy()),
+            reconcile_service=ReconcileService(extension_hooks=build_strategy()),
             registry_snapshot_provider=registry.snapshot,
             account_state_store=account_state_store,
             trading_service=TradingService(executor=executor),
@@ -315,7 +315,7 @@ def test_reconcile_worker_refreshes_market_fee_fields() -> None:
         clob_client = _StubClobClient(orderbook_snapshot, fee_rate_bps=125)
 
         worker = ReconcileWorker(
-            reconcile_service=ReconcileService(strategy_module=build_strategy()),
+            reconcile_service=ReconcileService(extension_hooks=build_strategy()),
             registry_snapshot_provider=registry.snapshot,
             registry=registry,
             gamma_client=_StubGammaClient(refreshed_market),
@@ -391,7 +391,7 @@ def test_reconcile_worker_keeps_gamma_fee_schedule_without_fetching_fee_rate() -
         clob_client = _StubClobClient(orderbook_snapshot, fee_rate_bps=1000)
 
         worker = ReconcileWorker(
-            reconcile_service=ReconcileService(strategy_module=build_strategy()),
+            reconcile_service=ReconcileService(extension_hooks=build_strategy()),
             registry_snapshot_provider=registry.snapshot,
             registry=registry,
             gamma_client=_StubGammaClient(refreshed_market),
@@ -462,7 +462,7 @@ def test_reconcile_worker_executes_replace_requests_and_keeps_sell_coverage() ->
 
         executor = _StubExecutor()
         worker = ReconcileWorker(
-            reconcile_service=ReconcileService(strategy_module=_ReplaceRecoveryStrategy()),
+            reconcile_service=ReconcileService(extension_hooks=_ReplaceRecoveryStrategy()),
             registry_snapshot_provider=registry.snapshot,
             account_state_store=account_state_store,
             trading_service=TradingService(executor=executor),
@@ -497,7 +497,7 @@ def test_reconcile_worker_refreshes_account_balance_from_clob_balance_allowance(
     async def run() -> None:
         account_state_store = AccountStateStore()
         worker = ReconcileWorker(
-            reconcile_service=ReconcileService(strategy_module=build_strategy()),
+            reconcile_service=ReconcileService(extension_hooks=build_strategy()),
             account_state_store=account_state_store,
             data_client=_StubPositionsDataClient(),
             clob_client=_StubAccountClobClient(
@@ -543,7 +543,7 @@ def test_reconcile_worker_prunes_strategy_filtered_market_after_flattening() -> 
         market_ws_worker.track_market(market)
 
         worker = ReconcileWorker(
-            reconcile_service=ReconcileService(strategy_module=build_strategy()),
+            reconcile_service=ReconcileService(extension_hooks=build_strategy()),
             registry_snapshot_provider=registry.snapshot,
             account_state_store=account_state_store,
             registry=registry,
@@ -581,7 +581,7 @@ def test_reconcile_worker_emits_observe_events_without_requeueing_maintenance() 
 
         worker = ReconcileWorker(
             event_bus=event_bus,
-            reconcile_service=ReconcileService(strategy_module=build_strategy()),
+            reconcile_service=ReconcileService(extension_hooks=build_strategy()),
             registry_snapshot_provider=registry.snapshot,
             account_state_store=account_state_store,
             registry=registry,

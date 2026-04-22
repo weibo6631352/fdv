@@ -125,7 +125,7 @@ def test_market_service_ingests_market_into_registry_and_tracker() -> None:
     registry = MarketRegistry()
     tracker = _Tracker()
     service = MarketService(
-        strategy_module=_AcceptingStrategy(),
+        extension_hooks=_AcceptingStrategy(),
         registry=registry,
         market_tracker=tracker,
     )
@@ -150,7 +150,7 @@ def test_market_service_ingests_market_into_registry_and_tracker() -> None:
 def test_market_service_marks_existing_market_as_updated() -> None:
     registry = MarketRegistry()
     service = MarketService(
-        strategy_module=_AcceptingStrategy(),
+        extension_hooks=_AcceptingStrategy(),
         registry=registry,
     )
 
@@ -199,7 +199,7 @@ def test_market_service_respects_strategy_universe_filter() -> None:
     registry = MarketRegistry()
     tracker = _Tracker()
     service = MarketService(
-        strategy_module=_RejectingStrategy(),
+        extension_hooks=_RejectingStrategy(),
         registry=registry,
         market_tracker=tracker,
     )
@@ -230,7 +230,7 @@ def test_market_service_keeps_filtered_existing_market_paused_while_exposure_rem
         )
     )
     service = MarketService(
-        strategy_module=strategy,
+        extension_hooks=strategy,
         registry=registry,
         market_tracker=tracker,
         account_snapshot_provider=account_state_store.snapshot,
@@ -260,7 +260,7 @@ def test_market_service_removes_filtered_existing_market_when_flat_and_orderless
     strategy = _SwitchingStrategy(selected=True)
     account_state_store = AccountStateStore()
     service = MarketService(
-        strategy_module=strategy,
+        extension_hooks=strategy,
         registry=registry,
         market_tracker=tracker,
         account_snapshot_provider=account_state_store.snapshot,

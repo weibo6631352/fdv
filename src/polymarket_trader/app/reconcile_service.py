@@ -20,7 +20,7 @@ from polymarket_trader.domain.position import Position
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistrySnapshot
 from polymarket_trader.extension_api import (
-    BusinessExtension as StrategyModule,
+    ExtensionHooks,
     MarketTokenView,
     StrategyContext,
 )
@@ -123,9 +123,9 @@ class ReconcileService:
     def __init__(
         self,
         *,
-        strategy_module: StrategyModule,
+        extension_hooks: ExtensionHooks,
     ) -> None:
-        self._strategy_module = strategy_module
+        self._extension_hooks = extension_hooks
 
     def build_reconcile_plan(
         self,
@@ -185,7 +185,7 @@ class ReconcileService:
             )
             for outcome in market.outcomes
         )
-        recovery = self._strategy_module.decide_recovery(
+        recovery = self._extension_hooks.decide_recovery(
             StrategyContext(
                 trace_id=trace_id,
                 market=market,
