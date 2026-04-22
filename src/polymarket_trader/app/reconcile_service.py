@@ -6,7 +6,7 @@ from decimal import Decimal
 from enum import StrEnum
 from uuid import uuid4
 
-from polymarket_trader.app.strategy_service import decision_to_managed_intent
+from polymarket_trader.app.trading_decision_service import decision_to_managed_intent
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.order import (
     BuyOrderIntent,

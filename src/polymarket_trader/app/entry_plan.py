@@ -9,7 +9,7 @@ from polymarket_trader.domain.orderbook import OrderbookSnapshot
 
 
 @dataclass(frozen=True, slots=True)
-class StrategyEntryPlan:
+class EntryPlan:
     trace_id: str
     market: Market | None
     orderbook: OrderbookSnapshot | None

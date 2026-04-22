@@ -38,9 +38,9 @@ def test_build_runtime_wires_m2_components() -> None:
     assert runtime.market_service is not None
     assert runtime.market_ws_worker is not None
     assert runtime.user_ws_worker is not None
-    assert runtime.strategy_service is not None
+    assert runtime.trading_decision_service is not None
     assert runtime.trading_service is not None
-    assert runtime.strategy_worker is not None
+    assert runtime.trading_decision_worker is not None
     assert runtime.account_state_store is not None
     assert runtime.account_state_store.snapshot().user_ws_connected is False
     assert runtime.account_state_store.snapshot().allow_new_entries is False
@@ -48,7 +48,7 @@ def test_build_runtime_wires_m2_components() -> None:
     assert runtime.order_executor is not None
     assert runtime.reconcile_service is not None
     assert runtime.reconcile_worker is not None
-    assert runtime.strategy_worker.priority == "P0"
+    assert runtime.trading_decision_worker.priority == "P0"
 
 
 def test_build_runtime_binds_market_event_outbox_sink() -> None:

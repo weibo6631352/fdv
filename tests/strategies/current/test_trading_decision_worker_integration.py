@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from polymarket_trader.app.strategy_service import StrategyService
+from polymarket_trader.app.trading_decision_service import TradingDecisionService
 from polymarket_trader.app.trading_service import TradingService
 from polymarket_trader.domain.events import DomainEvent, DomainEventType
 from polymarket_trader.domain.market import Market, TradingStatus
@@ -25,7 +25,7 @@ from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
 from strategies.current.strategy import build_strategy
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
-from polymarket_trader.workers.strategy_worker import StrategyWorker
+from polymarket_trader.workers.trading_decision_worker import TradingDecisionWorker
 from tests.helpers.markets import build_binary_market
 
 
@@ -170,7 +170,7 @@ class _ScriptedExecutor:
         return self._results.pop(0)
 
 
-def test_strategy_service_allocates_equally_across_eligible_markets() -> None:
+def test_trading_decision_service_allocates_equally_across_eligible_markets() -> None:
     registry = MarketRegistry()
     strategy = build_strategy()
     primary = _market(condition_id="condition-1", token_id="no-1", market_slug="token-1")
@@ -181,7 +181,7 @@ def test_strategy_service_allocates_equally_across_eligible_markets() -> None:
         _no_token_id(primary): _snapshot(market=primary),
         _no_token_id(secondary): _snapshot(market=secondary),
     }
-    service = StrategyService(
+    service = TradingDecisionService(
         extension_hooks=strategy,
         registry=registry,
         orderbook_reader=snapshots.get,
@@ -206,7 +206,7 @@ def test_strategy_service_allocates_equally_across_eligible_markets() -> None:
     assert plan.intent.amount_usdc == Decimal("50")
 
 
-def test_strategy_worker_turns_orderbook_update_into_risk_result() -> None:
+def test_trading_decision_worker_turns_orderbook_update_into_risk_result() -> None:
     async def run() -> None:
         event_bus = EventBus()
         registry = MarketRegistry()
@@ -216,15 +216,15 @@ def test_strategy_worker_turns_orderbook_update_into_risk_result() -> None:
         market = _market(condition_id="condition", token_id="no-token", market_slug="token")
         market_ws_worker.track_market(market)
 
-        strategy_service = StrategyService(
+        trading_decision_service = TradingDecisionService(
             extension_hooks=strategy,
             registry=registry,
             orderbook_reader=market_ws_worker.snapshot,
         )
         executor = PolymarketOrderExecutor(client=InMemoryPolymarketOrderClient())
-        strategy_worker = StrategyWorker(
+        trading_decision_worker = TradingDecisionWorker(
             event_bus=event_bus,
-            strategy_service=strategy_service,
+            trading_decision_service=trading_decision_service,
             trading_service=TradingService(executor=executor),
             account_state_store=account_state_store,
             portfolio_budget_usdc=Decimal("100"),
@@ -249,7 +249,7 @@ def test_strategy_worker_turns_orderbook_update_into_risk_result() -> None:
             }
         )
         entry_event = await event_bus.next_trading_event()
-        result = await strategy_worker.process_event(entry_event)
+        result = await trading_decision_worker.process_event(entry_event)
 
         assert result is not None
         assert result.plan.ready_to_trade
@@ -262,14 +262,14 @@ def test_strategy_worker_turns_orderbook_update_into_risk_result() -> None:
     asyncio.run(run())
 
 
-def test_strategy_worker_partial_fill_only_sells_filled_shares() -> None:
+def test_trading_decision_worker_partial_fill_only_sells_filled_shares() -> None:
     async def run() -> None:
         registry = MarketRegistry()
         account_state_store = _ready_account_state_store()
         strategy = build_strategy()
         market = _market(condition_id="condition", token_id="no-token", market_slug="token")
         registry.upsert(market)
-        strategy_service = StrategyService(
+        trading_decision_service = TradingDecisionService(
             extension_hooks=strategy,
             registry=registry,
             orderbook_reader={_no_token_id(market): _snapshot(market=market)}.get,
@@ -288,8 +288,8 @@ def test_strategy_worker_partial_fill_only_sells_filled_shares() -> None:
             ),
             _sell_result(market=market, size_shares=Decimal("4")),
         )
-        strategy_worker = StrategyWorker(
-            strategy_service=strategy_service,
+        trading_decision_worker = TradingDecisionWorker(
+            trading_decision_service=trading_decision_service,
             trading_service=TradingService(executor=executor),
             account_state_store=account_state_store,
             portfolio_budget_usdc=Decimal("100"),
@@ -303,7 +303,7 @@ def test_strategy_worker_partial_fill_only_sells_filled_shares() -> None:
             order_retry_limit=2,
         )
 
-        result = await strategy_worker.process_event(_entry_event(market, trace_id="trace-partial"))
+        result = await trading_decision_worker.process_event(_entry_event(market, trace_id="trace-partial"))
 
         assert result is not None
         assert result.review is not None
@@ -327,14 +327,14 @@ def test_strategy_worker_partial_fill_only_sells_filled_shares() -> None:
     asyncio.run(run())
 
 
-def test_strategy_worker_tracks_live_follow_up_sell_in_hot_state() -> None:
+def test_trading_decision_worker_tracks_live_follow_up_sell_in_hot_state() -> None:
     async def run() -> None:
         registry = MarketRegistry()
         account_state_store = _ready_account_state_store()
         strategy = build_strategy()
         market = _market(condition_id="condition", token_id="no-token", market_slug="token")
         registry.upsert(market)
-        strategy_service = StrategyService(
+        trading_decision_service = TradingDecisionService(
             extension_hooks=strategy,
             registry=registry,
             orderbook_reader={_no_token_id(market): _snapshot(market=market)}.get,
@@ -359,8 +359,8 @@ def test_strategy_worker_tracks_live_follow_up_sell_in_hot_state() -> None:
                 remaining_shares=filled_shares,
             ),
         )
-        strategy_worker = StrategyWorker(
-            strategy_service=strategy_service,
+        trading_decision_worker = TradingDecisionWorker(
+            trading_decision_service=trading_decision_service,
             trading_service=TradingService(executor=executor),
             account_state_store=account_state_store,
             portfolio_budget_usdc=Decimal("100"),
@@ -374,7 +374,7 @@ def test_strategy_worker_tracks_live_follow_up_sell_in_hot_state() -> None:
             order_retry_limit=2,
         )
 
-        result = await strategy_worker.process_event(_entry_event(market, trace_id="trace-live-sell"))
+        result = await trading_decision_worker.process_event(_entry_event(market, trace_id="trace-live-sell"))
 
         assert result is not None
         assert result.review is not None
@@ -397,7 +397,7 @@ def test_strategy_worker_tracks_live_follow_up_sell_in_hot_state() -> None:
     asyncio.run(run())
 
 
-def test_strategy_worker_no_fill_releases_budget_for_next_market() -> None:
+def test_trading_decision_worker_no_fill_releases_budget_for_next_market() -> None:
     async def run() -> None:
         registry = MarketRegistry()
         account_state_store = _ready_account_state_store()
@@ -406,7 +406,7 @@ def test_strategy_worker_no_fill_releases_budget_for_next_market() -> None:
         second = _market(condition_id="condition-2", token_id="no-2", market_slug="token-2")
         registry.upsert(first)
         registry.upsert(second)
-        strategy_service = StrategyService(
+        trading_decision_service = TradingDecisionService(
             extension_hooks=strategy,
             registry=registry,
             orderbook_reader={
@@ -436,8 +436,8 @@ def test_strategy_worker_no_fill_releases_budget_for_next_market() -> None:
                 reason="no_fill",
             ),
         )
-        strategy_worker = StrategyWorker(
-            strategy_service=strategy_service,
+        trading_decision_worker = TradingDecisionWorker(
+            trading_decision_service=trading_decision_service,
             trading_service=TradingService(executor=executor),
             account_state_store=account_state_store,
             portfolio_budget_usdc=Decimal("100"),
@@ -451,7 +451,7 @@ def test_strategy_worker_no_fill_releases_budget_for_next_market() -> None:
             order_retry_limit=2,
         )
 
-        first_result = await strategy_worker.process_event(
+        first_result = await trading_decision_worker.process_event(
             _entry_event(first, trace_id="trace-no-fill-1")
         )
         assert first_result.review is not None
@@ -465,7 +465,7 @@ def test_strategy_worker_no_fill_releases_budget_for_next_market() -> None:
         assert account_state_store.snapshot().allow_new_entries is True
         assert account_state_store.snapshot().balance_usdc == Decimal("100")
 
-        second_result = await strategy_worker.process_event(
+        second_result = await trading_decision_worker.process_event(
             _entry_event(second, trace_id="trace-no-fill-2")
         )
 

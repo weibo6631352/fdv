@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Mapping
 
-from polymarket_trader.app.strategy_service import StrategyEntryPlan
+from polymarket_trader.app.trading_decision_service import EntryPlan
 from polymarket_trader.app.trading_service import TradingReviewResult
 from polymarket_trader.domain.account import AccountSnapshot
 from polymarket_trader.domain.events import DomainEvent, DomainEventType
@@ -18,11 +18,11 @@ from polymarket_trader.domain.order import (
 )
 from polymarket_trader.domain.position import Position
 
-STRATEGY_WORKER_ORIGIN = "strategy_worker"
+TRADING_DECISION_WORKER_ORIGIN = "trading_decision_worker"
 
 
 def is_self_emitted(event: DomainEvent) -> bool:
-    return event.payload.get("origin") == STRATEGY_WORKER_ORIGIN
+    return event.payload.get("origin") == TRADING_DECISION_WORKER_ORIGIN
 
 
 def serialize_snapshot(snapshot: AccountSnapshot | None) -> dict[str, object] | None:
@@ -66,7 +66,7 @@ def serialize_snapshot(snapshot: AccountSnapshot | None) -> dict[str, object] | 
     }
 
 
-def serialize_allocation_plan(plan: StrategyEntryPlan) -> dict[str, object]:
+def serialize_allocation_plan(plan: EntryPlan) -> dict[str, object]:
     return {
         "trace_id": plan.allocation_plan.trace_id,
         "total_budget_usdc": str(plan.allocation_plan.total_budget_usdc),
@@ -77,7 +77,7 @@ def serialize_allocation_plan(plan: StrategyEntryPlan) -> dict[str, object]:
     }
 
 
-def serialize_allocation(plan: StrategyEntryPlan) -> dict[str, object] | None:
+def serialize_allocation(plan: EntryPlan) -> dict[str, object] | None:
     if plan.allocation is None:
         return None
     return {

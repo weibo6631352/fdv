@@ -7,7 +7,7 @@ from polymarket_trader.app.order_projection import (
     has_unexpected_resting_order,
     released_budget,
 )
-from polymarket_trader.app.strategy_service import StrategyEntryPlan, StrategyService
+from polymarket_trader.app.trading_decision_service import EntryPlan, TradingDecisionService
 from polymarket_trader.app.trading_service import TradingReviewResult, TradingService
 from polymarket_trader.domain.account import AccountSnapshot
 from polymarket_trader.domain.events import DomainEvent, DomainEventType
@@ -23,8 +23,8 @@ from polymarket_trader.domain.order import (
 from polymarket_trader.domain.state_machine import MarketLifecycle
 from polymarket_trader.extension_api import ExtensionContext, MarketTokenView
 from polymarket_trader.runtime.account_state import AccountStateStore
-from polymarket_trader.workers.strategy_event_payloads import (
-    STRATEGY_WORKER_ORIGIN,
+from polymarket_trader.workers.trading_decision_event_payloads import (
+    TRADING_DECISION_WORKER_ORIGIN,
     coerce_order_result_from_event,
     result_event_type,
     serialize_control_intent,
@@ -33,10 +33,10 @@ from polymarket_trader.workers.strategy_event_payloads import (
     serialize_review,
     snapshot_position,
 )
-from polymarket_trader.workers.strategy_worker_result import StrategyWorkerResult
+from polymarket_trader.workers.trading_decision_worker_result import TradingDecisionWorkerResult
 
 
-class StrategyOrderResultHost(Protocol):
+class TradingOrderResultHost(Protocol):
     async def _publish(
         self,
         event_type: DomainEventType,
@@ -73,17 +73,17 @@ class StrategyOrderResultHost(Protocol):
     def _account_projector(self) -> AccountStateProjector | None: ...
 
 
-class StrategyOrderResultProcessor:
+class TradingOrderResultProcessor:
     def __init__(
         self,
         *,
-        host: StrategyOrderResultHost,
-        strategy_service: StrategyService,
+        host: TradingOrderResultHost,
+        trading_decision_service: TradingDecisionService,
         trading_service: TradingService,
         account_state_store: AccountStateStore | None,
     ) -> None:
         self._host = host
-        self._strategy_service = strategy_service
+        self._trading_decision_service = trading_decision_service
         self._trading_service = trading_service
         self._account_state_store = account_state_store
 
@@ -94,12 +94,12 @@ class StrategyOrderResultProcessor:
         order_result: OrderResult | None,
         snapshot: AccountSnapshot | None,
         execution: TradingReviewResult | None = None,
-        plan: StrategyEntryPlan | None = None,
-    ) -> StrategyWorkerResult:
+        plan: EntryPlan | None = None,
+    ) -> TradingDecisionWorkerResult:
         if order_result is None:
             order_result = coerce_order_result_from_event(source_event)
         if order_result is None:
-            return StrategyWorkerResult(
+            return TradingDecisionWorkerResult(
                 entry_event=source_event,
                 plan=plan,
                 review=execution,
@@ -119,7 +119,7 @@ class StrategyOrderResultProcessor:
             token_id=order_result.token_id,
             reason=order_result.reason,
             payload={
-                "origin": STRATEGY_WORKER_ORIGIN,
+                "origin": TRADING_DECISION_WORKER_ORIGIN,
                 "source_event_id": source_event.event_id,
                 "operation": execution.operation if execution is not None else "result",
                 "order_result": serialize_order_result(order_result),
@@ -208,7 +208,7 @@ class StrategyOrderResultProcessor:
                     token_id=order_result.token_id,
                     reason=order_result.reason,
                     payload={
-                        "origin": STRATEGY_WORKER_ORIGIN,
+                        "origin": TRADING_DECISION_WORKER_ORIGIN,
                         "state": "rejected",
                         "order_result": serialize_order_result(order_result),
                     },
@@ -229,7 +229,7 @@ class StrategyOrderResultProcessor:
         projector = self._host._account_projector()
         if projector is not None:
             projector.apply_result_flags(order_result, snapshot=snapshot)
-        return StrategyWorkerResult(
+        return TradingDecisionWorkerResult(
             entry_event=source_event,
             plan=plan,
             review=execution,
@@ -256,7 +256,7 @@ class StrategyOrderResultProcessor:
             token_id=order_result.token_id,
             reason="budget_released",
             payload={
-                "origin": STRATEGY_WORKER_ORIGIN,
+                "origin": TRADING_DECISION_WORKER_ORIGIN,
                 "state": state,
                 "released_budget_usdc": str(released_budget_usdc),
                 "order_result": serialize_order_result(order_result),
@@ -277,7 +277,7 @@ class StrategyOrderResultProcessor:
             token_id=order_result.token_id,
             reason=order_result.reason or "unexpected_resting_order",
             payload={
-                "origin": STRATEGY_WORKER_ORIGIN,
+                "origin": TRADING_DECISION_WORKER_ORIGIN,
                 "state": "unexpected_resting_order",
                 "order_result": serialize_order_result(order_result),
             },
@@ -306,7 +306,7 @@ class StrategyOrderResultProcessor:
             token_id=cancel_intent.token_id,
             reason=cancel_intent.reason,
             payload={
-                "origin": STRATEGY_WORKER_ORIGIN,
+                "origin": TRADING_DECISION_WORKER_ORIGIN,
                 "cancel_intent": serialize_control_intent(cancel_intent),
                 "order_result": serialize_order_result(order_result),
             },
@@ -323,7 +323,7 @@ class StrategyOrderResultProcessor:
                 token_id=cancel_intent.token_id,
                 reason=cancel_review.order_result.reason,
                 payload={
-                    "origin": STRATEGY_WORKER_ORIGIN,
+                    "origin": TRADING_DECISION_WORKER_ORIGIN,
                     "cancel_review": serialize_review(cancel_review),
                     "order_result": serialize_order_result(cancel_review.order_result),
                 },
@@ -339,11 +339,11 @@ class StrategyOrderResultProcessor:
         follow_up_intents: list[ManagedOrderIntent],
         follow_up_results: list[TradingReviewResult],
     ) -> tuple[AccountSnapshot | None, DomainEvent]:
-        resolved_market = self._strategy_service.resolve_market(
+        resolved_market = self._trading_decision_service.resolve_market(
             condition_id=order_result.condition_id,
             token_id=order_result.token_id,
         )
-        follow_up_decisions = self._strategy_service.decide_follow_up(
+        follow_up_decisions = self._trading_decision_service.decide_follow_up(
             ExtensionContext(
                 trace_id=order_result.trace_id,
                 market=resolved_market,
@@ -373,7 +373,7 @@ class StrategyOrderResultProcessor:
             )
         )
         for decision in follow_up_decisions:
-            intent = self._strategy_service.build_intent_from_decision(
+            intent = self._trading_decision_service.build_intent_from_decision(
                 trace_id=order_result.trace_id,
                 condition_id=order_result.condition_id,
                 market_slug=order_result.market_slug,
@@ -400,7 +400,7 @@ class StrategyOrderResultProcessor:
                     else follow_up_review.order_result.reason
                 ),
                 payload={
-                    "origin": STRATEGY_WORKER_ORIGIN,
+                    "origin": TRADING_DECISION_WORKER_ORIGIN,
                     "phase": "follow_up",
                     "source_order_result": serialize_order_result(order_result),
                     "intent": serialize_intent(intent),

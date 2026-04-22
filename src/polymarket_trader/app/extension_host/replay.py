@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 from polymarket_trader.app.ports import build_extension_ports
 from polymarket_trader.app.extension_host.loader import load_extension
-from polymarket_trader.app.strategy_service import StrategyEntryPlan, StrategyService
+from polymarket_trader.app.trading_decision_service import EntryPlan, TradingDecisionService
 from polymarket_trader.domain.market import Market, MarketOutcome, TradingStatus
 from polymarket_trader.domain.order import Order, OrderSide, OrderStatus, OrderType
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
@@ -60,14 +60,14 @@ def run_entry_replay(
         ),
         config_path=extension_config_path,
     )
-    plan = StrategyService(
+    plan = TradingDecisionService(
         extension_hooks=extension.hooks,
         registry=registry,
         orderbook_reader=orderbooks.get,
     ).build_entry_plan(
         condition_id=_text(target, "condition_id"),
         token_id=_text(target, "token_id"),
-        trace_id=_text(fixture, "trace_id") or "strategy-replay",
+        trace_id=_text(fixture, "trace_id") or "extension-replay",
         portfolio_budget_usdc=_decimal(budgets, "portfolio_budget_usdc"),
         available_usdc=available_usdc,
         max_order_usdc=_decimal(budgets, "max_order_usdc"),
@@ -162,7 +162,7 @@ def _load_order(item: Mapping[str, Any]) -> Order:
     )
 
 
-def _serialize_plan(plan: StrategyEntryPlan) -> dict[str, Any]:
+def _serialize_plan(plan: EntryPlan) -> dict[str, Any]:
     return {
         "trace_id": plan.trace_id,
         "reason": plan.reason,

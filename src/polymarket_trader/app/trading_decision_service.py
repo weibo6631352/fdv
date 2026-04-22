@@ -4,8 +4,8 @@ from decimal import Decimal
 from typing import Iterable
 
 from polymarket_trader.app.extension_intent_builder import decision_to_managed_intent
-from polymarket_trader.app.strategy_entry_plan import StrategyEntryPlan
-from polymarket_trader.app.strategy_entry_planner import OrderbookReader, StrategyEntryPlanner
+from polymarket_trader.app.entry_plan import EntryPlan
+from polymarket_trader.app.entry_planner import OrderbookReader, EntryPlanner
 from polymarket_trader.domain.account import AccountSnapshot
 from polymarket_trader.domain.market import Market
 from polymarket_trader.domain.order import ManagedOrderIntent, Order
@@ -15,7 +15,7 @@ from polymarket_trader.extension_api import ExtensionContext, ExtensionDecision,
 from polymarket_trader.runtime.registry import MarketRegistry
 
 
-class StrategyService:
+class TradingDecisionService:
     """Bridge extension hooks into framework plans and managed order intents."""
 
     def __init__(
@@ -28,7 +28,7 @@ class StrategyService:
         self._extension_hooks = extension_hooks
         self._registry = registry
         self._orderbook_reader = orderbook_reader
-        self._entry_planner = StrategyEntryPlanner(
+        self._entry_planner = EntryPlanner(
             extension_hooks=extension_hooks,
             registry=registry,
             orderbook_reader=orderbook_reader,
@@ -50,7 +50,7 @@ class StrategyService:
         max_total_usdc: Decimal,
         positions: Iterable[Position] = (),
         open_orders: Iterable[Order] = (),
-    ) -> StrategyEntryPlan:
+    ) -> EntryPlan:
         return self._entry_planner.build_entry_plan(
             market=market,
             orderbook=orderbook,

@@ -15,7 +15,7 @@ from polymarket_trader.app.market_service import MarketService
 from polymarket_trader.app.ports import bind_extension_orderbook_reader, build_extension_ports
 from polymarket_trader.app.reconcile_service import ReconcileService
 from polymarket_trader.app.extension_host import load_extension
-from polymarket_trader.app.strategy_service import StrategyService
+from polymarket_trader.app.trading_decision_service import TradingDecisionService
 from polymarket_trader.app.trading_service import TradingService
 from polymarket_trader.config import ConfigIssue, ConfigLoadError, Settings, StartupReadiness, load_settings
 from polymarket_trader.domain.events import DomainEvent, OutboxPriority
@@ -66,7 +66,7 @@ from polymarket_trader.workers.market_discovery_worker import MarketDiscoveryWor
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 from polymarket_trader.workers.persistence_worker import PersistenceWorker
 from polymarket_trader.workers.reconcile_worker import ReconcileWorker
-from polymarket_trader.workers.strategy_worker import StrategyWorker
+from polymarket_trader.workers.trading_decision_worker import TradingDecisionWorker
 from polymarket_trader.workers.user_ws_worker import UserWsWorker
 
 logger = logging.getLogger(__name__)
@@ -96,9 +96,9 @@ class RuntimeComponents:
     market_service: MarketService
     market_discovery_worker: MarketDiscoveryWorker
     market_discovery_scan: FullMarketDiscoveryState
-    strategy_service: StrategyService
+    trading_decision_service: TradingDecisionService
     trading_service: TradingService
-    strategy_worker: StrategyWorker
+    trading_decision_worker: TradingDecisionWorker
     reconcile_service: ReconcileService
     reconcile_worker: ReconcileWorker
     scheduler: Scheduler
@@ -210,7 +210,7 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         market_tracker=market_ws_worker,
         account_snapshot_provider=account_state_store.snapshot,
     )
-    strategy_service = StrategyService(
+    trading_decision_service = TradingDecisionService(
         extension_hooks=extension.hooks,
         registry=registry,
         orderbook_reader=market_ws_worker.snapshot,
@@ -222,9 +222,9 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         event_bus=event_bus,
         account_state_store=account_state_store,
     )
-    strategy_worker = StrategyWorker(
+    trading_decision_worker = TradingDecisionWorker(
         event_bus=event_bus,
-        strategy_service=strategy_service,
+        trading_decision_service=trading_decision_service,
         trading_service=trading_service,
         account_state_store=account_state_store,
         portfolio_budget_usdc=settings.portfolio_budget_usdc,
@@ -294,9 +294,9 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         market_service=market_service,
         market_discovery_worker=market_discovery_worker,
         market_discovery_scan=market_discovery_scan,
-        strategy_service=strategy_service,
+        trading_decision_service=trading_decision_service,
         trading_service=trading_service,
-        strategy_worker=strategy_worker,
+        trading_decision_worker=trading_decision_worker,
         reconcile_service=reconcile_service,
         reconcile_worker=reconcile_worker,
         scheduler=scheduler,
@@ -422,7 +422,7 @@ def _register_runtime_workers(runtime: RuntimeComponents) -> None:
     runtime.supervisor.register_worker("market_discovery", priority="P2")
     runtime.supervisor.register_worker("market_ws", priority="P0", state=WorkerLifecycleState.PAUSED)
     runtime.supervisor.register_worker("user_ws", priority="P0", state=WorkerLifecycleState.PAUSED)
-    runtime.supervisor.register_worker("strategy", priority="P0")
+    runtime.supervisor.register_worker("trading_decision", priority="P0")
     runtime.supervisor.register_worker("reconcile", priority="P2")
     runtime.supervisor.register_worker("persistence", priority="P3")
 
@@ -510,13 +510,13 @@ def _start_background_tasks(runtime: RuntimeComponents) -> None:
         ),
         name="trader:user-ws",
     )
-    runtime.background_tasks["strategy"] = asyncio.create_task(
+    runtime.background_tasks["trading_decision"] = asyncio.create_task(
         _run_supervised_loop(
             runtime,
-            name="strategy",
-            runner=runtime.strategy_worker.run,
+            name="trading_decision",
+            runner=runtime.trading_decision_worker.run,
         ),
-        name="trader:strategy",
+        name="trader:trading-decision",
     )
     runtime.background_tasks["reconcile"] = asyncio.create_task(
         _run_supervised_loop(

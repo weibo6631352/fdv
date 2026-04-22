@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from polymarket_trader.app.strategy_service import StrategyEntryPlan
+from polymarket_trader.app.trading_decision_service import EntryPlan
 from polymarket_trader.app.trading_service import TradingReviewResult
 from polymarket_trader.domain.events import DomainEvent
 from polymarket_trader.domain.order import ManagedOrderIntent
@@ -10,9 +10,9 @@ from polymarket_trader.domain.state_machine import MarketLifecycle
 
 
 @dataclass(frozen=True, slots=True)
-class StrategyWorkerResult:
+class TradingDecisionWorkerResult:
     entry_event: DomainEvent
-    plan: StrategyEntryPlan | None
+    plan: EntryPlan | None
     review: TradingReviewResult | None
     emitted_event: DomainEvent
     emitted_events: tuple[DomainEvent, ...] = ()

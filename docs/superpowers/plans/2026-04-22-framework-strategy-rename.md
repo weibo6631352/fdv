@@ -164,7 +164,7 @@ event -> TradingDecisionWorker -> TradingDecisionService -> PortfolioAllocator -
 - [ ] Run the old framework-name scan:
 
 ```bash
-rg -n "\bStrategy(Service|Worker|Entry|EntryPlan|EntryPlanner|WorkerResult|OrderResultProcessor)|strategy_(service|worker|entry|entry_plan|entry_planner|event_payloads|worker_result|order_result_processor)|STRATEGY_WORKER_ORIGIN|strategy-replay" src/polymarket_trader tests docs README.md AGENTS.md
+rg -n "\bStrategy(Service|Worker|Entry|EntryPlan|EntryPlanner|WorkerResult|OrderResultProcessor)|strategy_(service|worker|entry|entry_plan|entry_planner|event_payloads|worker_result|order_result_processor)|STRATEGY_WORKER_ORIGIN|strategy-replay" src/polymarket_trader tests docs README.md AGENTS.md --glob '!docs/superpowers/plans/2026-04-22-framework-strategy-rename.md'
 ```
 
 Expected: no results except references under `src/strategies/current/` or strategy-specific test names that refer to the actual example strategy. If any result is in `src/polymarket_trader/app`, `src/polymarket_trader/workers`, `src/polymarket_trader/main.py`, `AGENTS.md`, or generic docs, update it.

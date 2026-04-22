@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Callable, Iterable
 
 from polymarket_trader.app.extension_intent_builder import decision_to_trade_intent
-from polymarket_trader.app.strategy_entry_plan import StrategyEntryPlan
+from polymarket_trader.app.entry_plan import EntryPlan
 from polymarket_trader.domain.account import AccountSnapshot
 from polymarket_trader.domain.allocation import Allocation, AllocationPlan
 from polymarket_trader.domain.market import Market
@@ -23,7 +23,7 @@ from polymarket_trader.runtime.registry import MarketRegistry
 OrderbookReader = Callable[[str], OrderbookSnapshot | None]
 
 
-class StrategyEntryPlanner:
+class EntryPlanner:
     def __init__(
         self,
         *,
@@ -51,7 +51,7 @@ class StrategyEntryPlanner:
         max_total_usdc: Decimal,
         positions: Iterable[Position] = (),
         open_orders: Iterable[Order] = (),
-    ) -> StrategyEntryPlan:
+    ) -> EntryPlan:
         trace_id = trace_id or ensure_trace_id()
         available_usdc, positions, open_orders = _entry_account_inputs(
             account_snapshot=account_snapshot,
@@ -167,7 +167,7 @@ class StrategyEntryPlanner:
                 if intent is None and decision.reason:
                     reason = decision.reason
 
-        return StrategyEntryPlan(
+        return EntryPlan(
             trace_id=trace_id,
             market=resolved_market,
             orderbook=resolved_orderbook,
@@ -394,8 +394,8 @@ def _unavailable_entry_plan(
     orderbook: OrderbookSnapshot | None,
     portfolio_budget_usdc: Decimal,
     reason: str,
-) -> StrategyEntryPlan:
-    return StrategyEntryPlan(
+) -> EntryPlan:
+    return EntryPlan(
         trace_id=trace_id,
         market=market,
         orderbook=orderbook,

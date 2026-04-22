@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Callable, Iterable, Mapping
 from uuid import uuid4
 
-from polymarket_trader.app.strategy_service import StrategyEntryPlan, StrategyService
+from polymarket_trader.app.trading_decision_service import EntryPlan, TradingDecisionService
 from polymarket_trader.app.trading_service import TradingReviewResult, TradingService
 from polymarket_trader.app.order_projection import AccountStateProjector
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
@@ -23,8 +23,8 @@ from polymarket_trader.domain.state_machine import MarketLifecycle
 from polymarket_trader.domain.account import AccountSnapshot
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
-from polymarket_trader.workers.strategy_event_payloads import (
-    STRATEGY_WORKER_ORIGIN,
+from polymarket_trader.workers.trading_decision_event_payloads import (
+    TRADING_DECISION_WORKER_ORIGIN,
     coerce_order_result_from_event,
     is_self_emitted,
     market_from_result,
@@ -37,8 +37,8 @@ from polymarket_trader.workers.strategy_event_payloads import (
     snapshot_balance,
     snapshot_position,
 )
-from polymarket_trader.workers.strategy_order_result_processor import StrategyOrderResultProcessor
-from polymarket_trader.workers.strategy_worker_result import StrategyWorkerResult
+from polymarket_trader.workers.trading_order_result_processor import TradingOrderResultProcessor
+from polymarket_trader.workers.trading_decision_worker_result import TradingDecisionWorkerResult
 
 PositionsProvider = Callable[[], Iterable[Position]]
 OpenOrdersProvider = Callable[[], Iterable[Order]]
@@ -47,14 +47,14 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class StrategyWorker:
+class TradingDecisionWorker:
     priority = "P0"
 
     def __init__(
         self,
         *,
         event_bus: EventBus | None = None,
-        strategy_service: StrategyService | None = None,
+        trading_decision_service: TradingDecisionService | None = None,
         trading_service: TradingService | None = None,
         positions_provider: PositionsProvider | None = None,
         open_orders_provider: OpenOrdersProvider | None = None,
@@ -70,9 +70,9 @@ class StrategyWorker:
         order_retry_limit: int | None = None,
     ) -> None:
         self._event_bus = event_bus
-        if strategy_service is None:
-            raise ValueError("strategy_service is required")
-        self._strategy_service = strategy_service
+        if trading_decision_service is None:
+            raise ValueError("trading_decision_service is required")
+        self._trading_decision_service = trading_decision_service
         self._trading_service = trading_service or TradingService()
         self._account_state_store = account_state_store
         self._positions_provider = positions_provider or self._build_positions_provider()
@@ -87,26 +87,26 @@ class StrategyWorker:
         self._max_open_orders = max_open_orders
         self._order_retry_limit = order_retry_limit
         self._market_lifecycle: dict[str, MarketLifecycle] = {}
-        self._order_result_processor = StrategyOrderResultProcessor(
+        self._order_result_processor = TradingOrderResultProcessor(
             host=self,
-            strategy_service=self._strategy_service,
+            trading_decision_service=self._trading_decision_service,
             trading_service=self._trading_service,
             account_state_store=self._account_state_store,
         )
 
     async def run(self) -> None:
         if self._event_bus is None:
-            raise RuntimeError("StrategyWorker requires an EventBus to run")
+            raise RuntimeError("TradingDecisionWorker requires an EventBus to run")
         while True:
             await self.run_once()
 
-    async def run_once(self) -> "StrategyWorkerResult | None":
+    async def run_once(self) -> "TradingDecisionWorkerResult | None":
         if self._event_bus is None:
-            raise RuntimeError("StrategyWorker requires an EventBus to run")
+            raise RuntimeError("TradingDecisionWorker requires an EventBus to run")
         event = await self._event_bus.next_trading_event()
         return await self.process_event(event)
 
-    async def process_event(self, event: DomainEvent) -> "StrategyWorkerResult | None":
+    async def process_event(self, event: DomainEvent) -> "TradingDecisionWorkerResult | None":
         if is_self_emitted(event):
             return None
 
@@ -132,8 +132,8 @@ class StrategyWorker:
         self,
         event: DomainEvent,
         snapshot: AccountSnapshot | None,
-    ) -> "StrategyWorkerResult | None":
-        plan = self._strategy_service.build_entry_plan(
+    ) -> "TradingDecisionWorkerResult | None":
+        plan = self._trading_decision_service.build_entry_plan(
             trace_id=event.trace_id,
             condition_id=event.condition_id,
             token_id=event.token_id,
@@ -165,8 +165,8 @@ class StrategyWorker:
         *,
         event: DomainEvent,
         snapshot: AccountSnapshot | None,
-        plan: StrategyEntryPlan,
-    ) -> "StrategyWorkerResult":
+        plan: EntryPlan,
+    ) -> "TradingDecisionWorkerResult":
         positions = snapshot.positions if snapshot is not None else tuple(self._positions_provider())
         open_orders = (
             snapshot.open_orders if snapshot is not None else tuple(self._open_orders_provider())
@@ -181,13 +181,13 @@ class StrategyWorker:
                 reason="entry_paused",
                 payload={
                     "entry_event_id": event.event_id,
-                    "origin": STRATEGY_WORKER_ORIGIN,
+                    "origin": TRADING_DECISION_WORKER_ORIGIN,
                     "reason": "entry_paused",
                     "account_snapshot": serialize_snapshot(snapshot),
                 },
             )
             self._transition_market(plan.market, MarketLifecycle.PAUSED if plan.market else None)
-            return StrategyWorkerResult(
+            return TradingDecisionWorkerResult(
                 entry_event=event,
                 plan=plan,
                 review=None,
@@ -197,7 +197,7 @@ class StrategyWorker:
 
         if not plan.ready_to_trade or plan.intent is None or plan.market is None or plan.orderbook is None:
             self._transition_market(plan.market, MarketLifecycle.WATCHING_ORDERBOOK if plan.market else None)
-            return StrategyWorkerResult(
+            return TradingDecisionWorkerResult(
                 entry_event=event,
                 plan=plan,
                 review=None,
@@ -239,7 +239,7 @@ class StrategyWorker:
             reason="" if review.risk_decision is None else review.risk_decision.reason,
             payload={
                 "entry_event_id": event.event_id,
-                "origin": STRATEGY_WORKER_ORIGIN,
+                "origin": TRADING_DECISION_WORKER_ORIGIN,
                 "allocation_plan": serialize_allocation_plan(plan),
                 "allocation": serialize_allocation(plan),
                 "intent": serialize_intent(plan.intent),
@@ -253,7 +253,7 @@ class StrategyWorker:
             execution=review,
             plan=plan,
         )
-        return StrategyWorkerResult(
+        return TradingDecisionWorkerResult(
             entry_event=event,
             plan=plan,
             review=review,
@@ -272,8 +272,8 @@ class StrategyWorker:
         order_result: OrderResult | None,
         snapshot: AccountSnapshot | None,
         execution: TradingReviewResult | None = None,
-        plan: StrategyEntryPlan | None = None,
-    ) -> "StrategyWorkerResult":
+        plan: EntryPlan | None = None,
+    ) -> "TradingDecisionWorkerResult":
         return await self._order_result_processor.handle(
             source_event=source_event,
             order_result=order_result,
@@ -286,9 +286,9 @@ class StrategyWorker:
         self,
         event: DomainEvent,
         snapshot: AccountSnapshot | None,
-    ) -> "StrategyWorkerResult":
+    ) -> "TradingDecisionWorkerResult":
         if snapshot is None:
-            return StrategyWorkerResult(
+            return TradingDecisionWorkerResult(
                 entry_event=event,
                 plan=None,
                 review=None,
@@ -298,7 +298,7 @@ class StrategyWorker:
         market = self._market_fromsnapshot_position(snapshot, event.condition_id, event.token_id)
         if market is not None:
             self._transition_market(market, MarketLifecycle.POSITION_OPEN)
-        return StrategyWorkerResult(
+        return TradingDecisionWorkerResult(
             entry_event=event,
             plan=None,
             review=None,
@@ -317,7 +317,7 @@ class StrategyWorker:
         reason: str = "",
         payload: Mapping[str, object] | None = None,
     ) -> DomainEvent:
-        payload_dict = {"origin": STRATEGY_WORKER_ORIGIN}
+        payload_dict = {"origin": TRADING_DECISION_WORKER_ORIGIN}
         if payload is not None:
             payload_dict.update(dict(payload))
         event = DomainEvent(
@@ -414,7 +414,7 @@ class StrategyWorker:
         position = snapshot.get_position(condition_id, token_id)
         if position is None:
             return None
-        market = self._strategy_service.resolve_market(condition_id=condition_id, token_id=token_id)
+        market = self._trading_decision_service.resolve_market(condition_id=condition_id, token_id=token_id)
         return market
 
     async def _execute_managed_intent(
@@ -423,7 +423,7 @@ class StrategyWorker:
         *,
         snapshot: AccountSnapshot | None,
     ) -> TradingReviewResult:
-        market = self._strategy_service.resolve_market(
+        market = self._trading_decision_service.resolve_market(
             condition_id=intent.condition_id,
             token_id=intent.token_id,
         )
@@ -434,7 +434,7 @@ class StrategyWorker:
         return await self._trading_service.review_intent(
             intent,
             market=market,
-            orderbook=self._strategy_service.lookup_orderbook(intent.token_id),
+            orderbook=self._trading_decision_service.lookup_orderbook(intent.token_id),
             position=snapshot_position(snapshot, intent.condition_id, intent.token_id),
             open_orders=(
                 snapshot.open_orders_for_market(intent.condition_id, intent.token_id)

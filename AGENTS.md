@@ -39,7 +39,7 @@ runtime -> domain
 交易订单主链路保持：
 
 ```text
-event -> StrategyService -> PortfolioAllocator -> RiskManager -> TradingService -> OrderExecutor -> outbox/audit
+event -> TradingDecisionWorker -> TradingDecisionService -> PortfolioAllocator -> RiskManager -> TradingService -> OrderExecutor -> outbox/audit
 ```
 
 硬约束：
@@ -107,7 +107,7 @@ event -> StrategyService -> PortfolioAllocator -> RiskManager -> TradingService 
 ## 9. 常见误区
 
 - 在 route 里写交易逻辑。
-- 在 worker 里复制 discovery / strategy 业务判断。
+- 在 worker 里复制 discovery / 扩展业务判断。
 - 在 framework 层加入当前业务扩展专属字段或阈值。
 - 为了减少改动，在 Domain 或 SDK 中保留长期同义命名。
 - 让数据库、持久化、日志或报表路径决定交易热路径是否能继续运行。

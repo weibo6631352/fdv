@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from polymarket_trader.app.strategy_service import StrategyService
+from polymarket_trader.app.trading_decision_service import TradingDecisionService
 from polymarket_trader.domain.allocation import Allocation, AllocationPlan
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
@@ -72,14 +72,14 @@ class _CustomSizingStrategy:
         return ()
 
 
-def test_strategy_service_accepts_extension_hooks_name() -> None:
+def test_trading_decision_service_accepts_extension_hooks_name() -> None:
     hooks = _CustomSizingStrategy()
-    service = StrategyService(extension_hooks=hooks)
+    service = TradingDecisionService(extension_hooks=hooks)
 
     assert service is not None
 
 
-def test_strategy_service_uses_strategy_sizing_policy() -> None:
+def test_trading_decision_service_uses_extension_sizing_policy() -> None:
     registry = MarketRegistry()
     primary = build_binary_market(
         condition_id="condition-1",
@@ -105,7 +105,7 @@ def test_strategy_service_uses_strategy_sizing_policy() -> None:
         primary.require_token_id("NO"): _snapshot(primary),
         secondary.require_token_id("NO"): _snapshot(secondary),
     }
-    service = StrategyService(
+    service = TradingDecisionService(
         extension_hooks=_CustomSizingStrategy(),
         registry=registry,
         orderbook_reader=snapshots.get,
