@@ -4,7 +4,7 @@
 
 ## 职责
 
-- Market 解析规则：把外部 market payload 转换成内部候选 market，对缺失交易字段和非法字段做拒绝。
+- Market 领域模型：表达内部 market、outcome、交易状态和拒绝原因。
 - 资金分配基础模型：预算、已分配额度、释放额度、组合暴露等通用概念。
 - 风控规则：单笔、单 market、组合、open orders、价格、spread、流动性和重试限制。
 - 领域模型：market、orderbook、order、fill、position、allocation、events、状态机。
@@ -12,7 +12,7 @@
 ## 文件职责
 
 - `allocation.py`：组合资金分配模型、预算释放记录和通用暴露计算。
-- `classifier.py`：market payload 解析与候选 market 拒绝规则。
+- `discovery.py`：原始 market 发现事件的内部 DTO。
 - `events.py`：领域事件模型。
 - `market.py`：market 元数据和交易状态。
 - `order.py`：订单意图、方向、类型和状态。
