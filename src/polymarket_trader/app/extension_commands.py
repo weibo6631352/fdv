@@ -26,17 +26,38 @@ class ExtensionCommandExecutor:
         self._account_state_store = account_state_store
 
     def execute(self, command: ExtensionCommand, *, trace_id: str) -> ExtensionCommandResult:
-        if command.condition_id is not None and self._account_state_store is not None:
-            if command.action is FrameworkCommandAction.PAUSE_MARKET:
-                self._account_state_store.pause_market(command.condition_id, reason=command.reason)
-            elif command.action is FrameworkCommandAction.RESUME_MARKET:
-                self._account_state_store.resume_market(command.condition_id)
+        if command.action is FrameworkCommandAction.TRIGGER_RECONCILE:
+            return self._result(command, trace_id=trace_id, accepted=True, reason=command.reason)
 
+        if command.action not in {FrameworkCommandAction.PAUSE_MARKET, FrameworkCommandAction.RESUME_MARKET}:
+            return self._result(command, trace_id=trace_id, accepted=False, reason="unsupported_command")
+
+        if command.condition_id is None:
+            return self._result(command, trace_id=trace_id, accepted=False, reason="missing_condition_id")
+
+        if self._account_state_store is None:
+            return self._result(command, trace_id=trace_id, accepted=False, reason="missing_account_state_store")
+
+        if command.action is FrameworkCommandAction.PAUSE_MARKET:
+            self._account_state_store.pause_market(command.condition_id, reason=command.reason)
+        else:
+            self._account_state_store.resume_market(command.condition_id)
+
+        return self._result(command, trace_id=trace_id, accepted=True, reason=command.reason)
+
+    def _result(
+        self,
+        command: ExtensionCommand,
+        *,
+        trace_id: str,
+        accepted: bool,
+        reason: str,
+    ) -> ExtensionCommandResult:
         return ExtensionCommandResult(
             command=command,
             action=command.action,
-            accepted=True,
+            accepted=accepted,
             trace_id=trace_id,
-            reason=command.reason,
+            reason=reason,
             executed_at=_utc_now(),
         )
