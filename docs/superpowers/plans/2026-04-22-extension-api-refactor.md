@@ -1,7 +1,7 @@
 # Extension API Refactor Implementation Plan
 
 > **Status:** Executed. The implementation now lives in `polymarket_trader.extension_api`,
-> the legacy `strategy_sdk` package has been removed, and current business behavior is isolated
+> the legacy strategy contract package has been removed, and current business behavior is isolated
 > under `src/strategies/current/`. The unchecked task boxes below are retained as historical
 > implementation notes and should not be treated as pending work.
 

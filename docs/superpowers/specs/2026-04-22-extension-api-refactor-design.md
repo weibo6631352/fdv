@@ -228,8 +228,8 @@ Move or rename the current business leftovers:
   `MarketPayloadParser`. It should parse required trading fields but not imply business classification.
 - `domain/allocation.py` -> split generic allocation DTOs from equal-weight allocation. Equal-weight logic
   moves to `strategies/current/allocation.py`.
-- Framework references to current strategy reasons such as `strategy_filtered_out`, `strategy_entry`,
-  and `strategy_exit` should become extension-provided strings that the framework records and propagates.
+- Framework references to current strategy-specific reason strings should become extension-provided
+  strings that the framework records and propagates.
 - Outcome fallback like default `YES`/`NO` names may remain as a Polymarket payload normalization behavior
   only where the external protocol actually implies it. Target outcome preference belongs in the extension.
 
