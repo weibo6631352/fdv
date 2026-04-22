@@ -58,7 +58,6 @@
 - manifest：`src/strategies/current/manifest.py`
 - 入口：`src/strategies/current/strategy.py`
 - 配置：`src/strategies/current/config.py`
-- discovery：`src/strategies/current/discovery.py`
 - 市场筛选：`src/strategies/current/universe.py`
 - 交易决策：`src/strategies/current/trading.py`
 - 恢复与跟踪：`src/strategies/current/recovery.py` / `src/strategies/current/tracking.py`

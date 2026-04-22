@@ -1,17 +1,21 @@
 from __future__ import annotations
-from dataclasses import asdict, dataclass, is_dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
-from enum import Enum
 from typing import Any, Callable, Literal, Mapping, Sequence
 from uuid import uuid4
 
-from polymarket_trader.app.reconcile_service import ReconcileAction, ReconcilePlan
-from polymarket_trader.app.trading_service import TradingReviewResult, TradingService
-from polymarket_trader.domain.allocation import Allocation
-from polymarket_trader.domain.events import AuditEvent, Fill, OutboxEvent
-from polymarket_trader.domain.fees import FeeQuote, TakerFeePreview, build_taker_fee_preview
-from polymarket_trader.domain.market import Market, MarketOutcome, TradingStatus
+from polymarket_trader.app.admin_operations import (
+    market_status_allowed_for_manual_order,
+    normalize_condition_ids,
+    normalize_order_id,
+    order_open_shares,
+    order_result_to_order_status,
+    order_status_to_text,
+)
+from polymarket_trader.app.admin_serialization import AdminSerializer, decimal_text, jsonable, page_payload, utc_now
+from polymarket_trader.app.trading_service import TradingService
+from polymarket_trader.domain.market import Market
 from polymarket_trader.domain.order import (
     Order,
     OrderResult,
@@ -32,95 +36,9 @@ from polymarket_trader.infra.db import (
     PositionRepository,
     RepositoryPage,
 )
-from polymarket_trader.infra.polymarket import (
-    ClobPriceHistoryDTO,
-)
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.event_bus import QueueDepthSnapshot
 from polymarket_trader.runtime.registry import MarketRegistrySnapshot
-
-
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _decimal_text(value: Any | None) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, Decimal):
-        return str(value)
-    return str(value)
-
-
-def _jsonable(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc).isoformat()
-    if isinstance(value, Enum):
-        return value.value
-    if is_dataclass(value):
-        return _jsonable(asdict(value))
-    if isinstance(value, Mapping):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [_jsonable(item) for item in value]
-    return str(value)
-
-
-def _page_payload(page: RepositoryPage[Any], *, serializer: Callable[[Any], Any]) -> dict[str, Any]:
-    return {
-        "items": [serializer(item) for item in page.items],
-        "total": page.total,
-        "limit": page.limit,
-        "offset": page.offset,
-    }
-
-
-def _market_status_allowed_for_manual_order(market: Market) -> bool:
-    return market.trading_status not in {
-        TradingStatus.CLOSED,
-        TradingStatus.RESOLVED,
-        TradingStatus.REJECTED,
-    }
-
-
-def _order_result_to_order_status(result: OrderResult) -> OrderStatus:
-    mapping = {
-        OrderResultStatus.FULL_FILL: OrderStatus.MATCHED,
-        OrderResultStatus.PARTIAL_FILL: OrderStatus.PARTIALLY_FILLED,
-        OrderResultStatus.NO_FILL: OrderStatus.NO_FILL,
-        OrderResultStatus.LIVE: OrderStatus.LIVE,
-        OrderResultStatus.REJECTED: OrderStatus.REJECTED,
-        OrderResultStatus.FAILED: OrderStatus.FAILED,
-        OrderResultStatus.CANCELLED: OrderStatus.CANCELLED,
-        OrderResultStatus.UNKNOWN_TIMEOUT: OrderStatus.FAILED,
-    }
-    return mapping.get(result.status, OrderStatus.FAILED)
-
-
-def _normalize_order_id(order: Order) -> str:
-    return order.order_id or order.idempotency_key or (
-        f"{order.condition_id}:{order.token_id}:{order.side.value}:{order.status.value}"
-    )
-
-
-def _order_open_shares(order: Order) -> Decimal | None:
-    if order.remaining_shares is not None:
-        return max(order.remaining_shares, Decimal("0"))
-    if order.size_shares is not None:
-        return max(order.size_shares, Decimal("0"))
-    return None
-
-
-def _normalize_condition_ids(condition_ids: Sequence[str] | None) -> tuple[str, ...]:
-    if not condition_ids:
-        return ()
-    return tuple(condition_id for condition_id in condition_ids if condition_id)
 
 
 MarketFeeSortField = Literal[
@@ -208,7 +126,7 @@ class AdminService:
     def health_snapshot(self) -> dict[str, Any]:
         return {
             "status": "ok",
-            "timestamp": _utc_now().isoformat(),
+            "timestamp": utc_now().isoformat(),
         }
 
     def readiness_snapshot(self) -> dict[str, Any]:
@@ -231,7 +149,7 @@ class AdminService:
         market_discovery = self._market_discovery_snapshot()
         event_bus = self._event_bus_snapshot()
         persistence = self._persistence_snapshot()
-        markets = [self._serialize_market_view(market) for market in registry.markets]
+        markets = [self._serializer().market_view(market) for market in registry.markets]
         return {
             "phase": runtime_status["phase"],
             "ready_to_trade": runtime_status["ready_to_trade"],
@@ -239,17 +157,17 @@ class AdminService:
             "settings": self._settings_snapshot(),
             "identity": self._identity_snapshot(),
             "runtime": runtime_status,
-            "bootstrap_summary": _jsonable(getattr(self.runtime, "bootstrap_summary", {})),
+            "bootstrap_summary": jsonable(getattr(self.runtime, "bootstrap_summary", {})),
             "market_discovery": market_discovery,
             "registry": {
                 "market_count": len(registry.markets),
-                "markets": [_jsonable(market) for market in markets],
+                "markets": [jsonable(market) for market in markets],
             },
-            "account": self._serialize_account_snapshot(account),
-            "event_bus": _jsonable(event_bus) if event_bus is not None else None,
-            "persistence": _jsonable(persistence) if persistence is not None else None,
+            "account": self._serializer().account_snapshot(account),
+            "event_bus": jsonable(event_bus) if event_bus is not None else None,
+            "persistence": jsonable(persistence) if persistence is not None else None,
             "markets": markets,
-            "portfolio": self._portfolio_snapshot(account),
+            "portfolio": self._serializer().portfolio_snapshot(account),
         }
 
     async def list_markets(
@@ -292,14 +210,14 @@ class AdminService:
             )
             page = self._slice_sequence(markets, limit=limit, offset=offset)
             items = [
-                self._serialize_market_view(
+                self._serializer().market_view(
                     market,
                     account_snapshot=account,
                     registry_snapshot=registry,
                 )
                 for market in page.items
             ]
-            return _page_payload(
+            return page_payload(
                 RepositoryPage(items=tuple(items), total=len(markets), limit=page.limit, offset=page.offset),
                 serializer=lambda item: item,
             )
@@ -324,14 +242,14 @@ class AdminService:
         registry = self._registry_snapshot()
         account = self._account_snapshot()
         items = [
-            self._serialize_market_view(
+            self._serializer().market_view(
                 market,
                 account_snapshot=account,
                 registry_snapshot=registry,
             )
             for market in page.items
         ]
-        return _page_payload(
+        return page_payload(
             RepositoryPage(items=tuple(items), total=page.total, limit=page.limit, offset=page.offset),
             serializer=lambda item: item,
         )
@@ -360,7 +278,7 @@ class AdminService:
                 and (trade_id is None or order.trade_id == trade_id)
             ]
             page = self._slice_sequence(orders, limit=limit, offset=offset)
-            return _page_payload(page, serializer=self._serialize_order)
+            return page_payload(page, serializer=self._serializer().order)
 
         if not self._has_db_session_factory():
             snapshot = self._account_snapshot()
@@ -374,7 +292,7 @@ class AdminService:
                 and (trade_id is None or order.trade_id == trade_id)
             ]
             page = self._slice_sequence(orders, limit=limit, offset=offset)
-            return _page_payload(page, serializer=self._serialize_order)
+            return page_payload(page, serializer=self._serializer().order)
 
         async def _query(repos: _RepositoryGroup) -> RepositoryPage[Any]:
             return await repos.order.list_orders_snapshot(
@@ -388,7 +306,7 @@ class AdminService:
             )
 
         page = await self._with_repositories(_query)
-        return _page_payload(page, serializer=self._serialize_order)
+        return page_payload(page, serializer=self._serializer().order)
 
     async def list_fills(
         self,
@@ -409,7 +327,7 @@ class AdminService:
                 and (trade_id is None or fill.trade_id == trade_id)
             ]
             page = self._slice_sequence(fills, limit=limit, offset=offset)
-            return _page_payload(page, serializer=self._serialize_fill)
+            return page_payload(page, serializer=self._serializer().fill)
 
         async def _query(repos: _RepositoryGroup) -> RepositoryPage[Any]:
             return await repos.fill.list_fills_snapshot(
@@ -421,7 +339,7 @@ class AdminService:
             )
 
         page = await self._with_repositories(_query)
-        return _page_payload(page, serializer=self._serialize_fill)
+        return page_payload(page, serializer=self._serializer().fill)
 
     async def list_positions(
         self,
@@ -439,7 +357,7 @@ class AdminService:
             and (token_id is None or position.token_id == token_id)
         ]
         page = self._slice_sequence(positions, limit=limit, offset=offset)
-        return _page_payload(page, serializer=self._serialize_position)
+        return page_payload(page, serializer=self._serializer().position)
 
     async def get_market(
         self,
@@ -470,7 +388,7 @@ class AdminService:
             market = await self._with_repositories(_query)
         if market is None:
             return None
-        return self._serialize_market_view(market)
+        return self._serializer().market_view(market)
 
     async def get_market_orderbook(
         self,
@@ -500,7 +418,7 @@ class AdminService:
             )
             snapshot = orderbook.to_snapshot()
             source = "rest"
-        return self._serialize_market_orderbook(
+        return self._serializer().market_orderbook(
             token_id=resolved_token_id,
             condition_id=resolved_condition_id,
             market_slug=resolved_market_slug,
@@ -533,7 +451,7 @@ class AdminService:
         else:
             midpoint = await self._clob_client().get_midpoint(resolved_token_id)
             source = "rest"
-        return self._serialize_market_midpoint(
+        return self._serializer().market_midpoint(
             token_id=resolved_token_id,
             condition_id=resolved_condition_id,
             market_slug=resolved_market_slug,
@@ -558,7 +476,7 @@ class AdminService:
             interval=interval,
             fidelity=fidelity,
         )
-        return self._serialize_market_prices_history(
+        return self._serializer().market_prices_history(
             token_id=token_id,
             history=history,
             interval=interval,
@@ -575,7 +493,7 @@ class AdminService:
     ) -> dict[str, Any]:
         if not self._has_db_session_factory():
             page = RepositoryPage(items=tuple(), total=0, limit=limit, offset=offset)
-            return _page_payload(page, serializer=self._serialize_audit_event)
+            return page_payload(page, serializer=self._serializer().audit_event)
 
         async def _query(repos: _RepositoryGroup) -> RepositoryPage[Any]:
             return await repos.audit.list_audit_events_snapshot(
@@ -586,7 +504,7 @@ class AdminService:
             )
 
         page = await self._with_repositories(_query)
-        return _page_payload(page, serializer=self._serialize_audit_event)
+        return page_payload(page, serializer=self._serializer().audit_event)
 
     async def list_allocations(
         self,
@@ -600,7 +518,7 @@ class AdminService:
     ) -> dict[str, Any]:
         if not self._has_db_session_factory():
             page = RepositoryPage(items=tuple(), total=0, limit=limit, offset=offset)
-            return _page_payload(page, serializer=self._serialize_allocation)
+            return page_payload(page, serializer=self._serializer().allocation)
 
         async def _query(repos: _RepositoryGroup) -> RepositoryPage[Any]:
             return await repos.allocation.list_allocations_snapshot(
@@ -613,7 +531,7 @@ class AdminService:
             )
 
         page = await self._with_repositories(_query)
-        return _page_payload(page, serializer=self._serialize_allocation)
+        return page_payload(page, serializer=self._serializer().allocation)
 
     async def list_outbox_pending(
         self,
@@ -633,24 +551,24 @@ class AdminService:
                 limit=limit,
                 offset=offset,
             )
-            return _page_payload(page, serializer=self._serialize_outbox_event)
+            return page_payload(page, serializer=self._serializer().outbox_event)
 
         page = RepositoryPage(items=tuple(), total=0, limit=limit, offset=offset)
-        return _page_payload(page, serializer=self._serialize_outbox_event)
+        return page_payload(page, serializer=self._serializer().outbox_event)
 
     async def portfolio_snapshot(self) -> dict[str, Any]:
         account = self._account_snapshot()
         registry = self._registry_snapshot()
         if not self._has_db_session_factory():
             return {
-                "balance_usdc": _decimal_text(account.balance_usdc),
-                "allowance_usdc": _decimal_text(account.allowance_usdc),
-                "available_usdc": _decimal_text(account.balance_usdc),
+                "balance_usdc": decimal_text(account.balance_usdc),
+                "allowance_usdc": decimal_text(account.allowance_usdc),
+                "available_usdc": decimal_text(account.balance_usdc),
                 "position_count": len(account.positions),
                 "open_order_count": len(account.open_orders),
                 "fill_count": len(account.fills),
                 "pause_count": len(account.paused_markets),
-                "last_reconcile_at": _jsonable(account.last_reconcile_at),
+                "last_reconcile_at": jsonable(account.last_reconcile_at),
                 "user_ws_connected": account.user_ws_connected,
                 "allow_new_entries": account.allow_new_entries,
                 "markets_tracked": len(registry.markets),
@@ -662,19 +580,19 @@ class AdminService:
 
         allocations = await self._with_repositories(_query)
         return {
-            "balance_usdc": _decimal_text(account.balance_usdc),
-            "allowance_usdc": _decimal_text(account.allowance_usdc),
-            "available_usdc": _decimal_text(account.balance_usdc),
+            "balance_usdc": decimal_text(account.balance_usdc),
+            "allowance_usdc": decimal_text(account.allowance_usdc),
+            "available_usdc": decimal_text(account.balance_usdc),
             "position_count": len(account.positions),
             "open_order_count": len(account.open_orders),
             "fill_count": len(account.fills),
             "pause_count": len(account.paused_markets),
-            "last_reconcile_at": _jsonable(account.last_reconcile_at),
+            "last_reconcile_at": jsonable(account.last_reconcile_at),
             "user_ws_connected": account.user_ws_connected,
             "allow_new_entries": account.allow_new_entries,
             "markets_tracked": len(registry.markets),
             "recent_allocations": [
-                self._serialize_allocation(allocation) for allocation in allocations.items
+                self._serializer().allocation(allocation) for allocation in allocations.items
             ],
         }
 
@@ -682,7 +600,7 @@ class AdminService:
         supervisor = getattr(self.runtime, "supervisor", None)
         if supervisor is not None and hasattr(supervisor, "snapshot"):
             snapshot = supervisor.snapshot()
-            payload = snapshot.as_dict() if hasattr(snapshot, "as_dict") else _jsonable(snapshot)
+            payload = snapshot.as_dict() if hasattr(snapshot, "as_dict") else jsonable(snapshot)
             return {
                 "phase": payload.get("phase", "starting"),
                 "automatic_trading_enabled": bool(payload.get("automatic_trading_enabled")),
@@ -706,7 +624,7 @@ class AdminService:
         supervisor = getattr(self.runtime, "supervisor", None)
         if supervisor is not None and hasattr(supervisor, "snapshot"):
             snapshot = supervisor.snapshot()
-            payload = snapshot.as_dict() if hasattr(snapshot, "as_dict") else _jsonable(snapshot)
+            payload = snapshot.as_dict() if hasattr(snapshot, "as_dict") else jsonable(snapshot)
             return {
                 "phase": payload.get("phase", "starting"),
                 "automatic_trading_enabled": bool(payload.get("automatic_trading_enabled")),
@@ -719,7 +637,7 @@ class AdminService:
         metrics_payload = None
         if metrics is not None and hasattr(metrics, "snapshot"):
             snapshot = metrics.snapshot()
-            metrics_payload = snapshot.as_dict() if hasattr(snapshot, "as_dict") else _jsonable(snapshot)
+            metrics_payload = snapshot.as_dict() if hasattr(snapshot, "as_dict") else jsonable(snapshot)
         runtime_status = self._runtime_status_snapshot()
         return {
             "phase": runtime_status["phase"],
@@ -742,12 +660,12 @@ class AdminService:
                 "reason": "reconcile_worker_unavailable",
                 "trace_id": trace_id or uuid4().hex,
             }
-        condition_id_filter = _normalize_condition_ids(condition_ids)
+        condition_id_filter = normalize_condition_ids(condition_ids)
         result = await reconcile_worker.reconcile_once(
             trace_id=trace_id,
             condition_ids=condition_id_filter or None,
         )
-        return self._serialize_reconcile_result(result)
+        return self._serializer().reconcile_result(result)
 
     async def replace_order(
         self,
@@ -789,31 +707,31 @@ class AdminService:
                 "status": "failed",
                 "trace_id": trace_id,
                 "reason": "market_not_found",
-                "order": self._serialize_order(source_order),
+                "order": self._serializer().order(source_order),
             }
-        if not _market_status_allowed_for_manual_order(market):
+        if not market_status_allowed_for_manual_order(market):
             return {
                 "status": "failed",
                 "trace_id": trace_id,
                 "reason": "market_not_operable",
-                "market": self._serialize_market(market),
-                "order": self._serialize_order(source_order),
+                "market": self._serializer().market(market),
+                "order": self._serializer().order(source_order),
             }
         if new_price <= Decimal("0") or new_price >= Decimal("1"):
             return {
                 "status": "failed",
                 "trace_id": trace_id,
                 "reason": "invalid_price",
-                "market": self._serialize_market(market),
-                "order": self._serialize_order(source_order),
+                "market": self._serializer().market(market),
+                "order": self._serializer().order(source_order),
             }
         if market.tick_size <= Decimal("0"):
             return {
                 "status": "failed",
                 "trace_id": trace_id,
                 "reason": "invalid_tick_size",
-                "market": self._serialize_market(market),
-                "order": self._serialize_order(source_order),
+                "market": self._serializer().market(market),
+                "order": self._serializer().order(source_order),
             }
         tick_remainder = (new_price % market.tick_size) if market.tick_size else Decimal("0")
         if tick_remainder != Decimal("0"):
@@ -821,19 +739,19 @@ class AdminService:
                 "status": "failed",
                 "trace_id": trace_id,
                 "reason": "price_not_aligned_to_tick_size",
-                "market": self._serialize_market(market),
-                "order": self._serialize_order(source_order),
-                "new_price": _decimal_text(new_price),
+                "market": self._serializer().market(market),
+                "order": self._serializer().order(source_order),
+                "new_price": decimal_text(new_price),
             }
 
-        requested_size_shares = size_shares or _order_open_shares(source_order)
+        requested_size_shares = size_shares or order_open_shares(source_order)
         if requested_size_shares is None or requested_size_shares <= Decimal("0"):
             return {
                 "status": "failed",
                 "trace_id": trace_id,
                 "reason": "order_size_unknown",
-                "market": self._serialize_market(market),
-                "order": self._serialize_order(source_order),
+                "market": self._serializer().market(market),
+                "order": self._serializer().order(source_order),
             }
 
         try:
@@ -843,15 +761,15 @@ class AdminService:
                 "status": "failed",
                 "trace_id": trace_id,
                 "reason": str(exc),
-                "market": self._serialize_market(market),
-                "order": self._serialize_order(source_order),
+                "market": self._serializer().market(market),
+                "order": self._serializer().order(source_order),
             }
 
         replace_intent = ReplaceOrderIntent(
             trace_id=trace_id,
             condition_id=source_order.condition_id,
             token_id=source_order.token_id,
-            order_id=_normalize_order_id(source_order),
+            order_id=normalize_order_id(source_order),
             new_price=new_price,
             size_shares=requested_size_shares,
             market_slug=source_order.market_slug or market.market_slug,
@@ -867,9 +785,9 @@ class AdminService:
                 "status": "failed",
                 "trace_id": trace_id,
                 "reason": "replace_order_failed",
-                "market": self._serialize_market(market),
-                "order": self._serialize_order(source_order),
-                "replace_review": self._serialize_review(replace_review),
+                "market": self._serializer().market(market),
+                "order": self._serializer().order(source_order),
+                "replace_review": self._serializer().review(replace_review),
             }
 
         self._apply_hot_replace_result(
@@ -883,17 +801,17 @@ class AdminService:
             "status": "ok",
             "trace_id": trace_id,
             "operator": operator,
-            "market": self._serialize_market(market),
-            "order": self._serialize_order(source_order),
-            "replace_review": self._serialize_review(replace_review),
-            "replace_order_submitted": self._serialize_order_result(replace_result),
+            "market": self._serializer().market(market),
+            "order": self._serializer().order(source_order),
+            "replace_review": self._serializer().review(replace_review),
+            "replace_order_submitted": self._serializer().order_result(replace_result),
         }
 
     def _runtime_status_snapshot(self) -> dict[str, Any]:
         supervisor = getattr(self.runtime, "supervisor", None)
         if supervisor is not None and hasattr(supervisor, "snapshot"):
             snapshot = supervisor.snapshot()
-            payload = snapshot.as_dict() if hasattr(snapshot, "as_dict") else _jsonable(snapshot)
+            payload = snapshot.as_dict() if hasattr(snapshot, "as_dict") else jsonable(snapshot)
             readiness = payload.get("readiness") or {}
             user_ws = payload.get("user_ws") or {}
             account = payload.get("account") or {}
@@ -904,7 +822,7 @@ class AdminService:
                 "user_ws_connected": bool(user_ws.get("connected", account.get("user_ws_connected", False))),
                 "allow_new_entries": bool(account.get("allow_new_entries", False)),
                 "last_reconcile_at": readiness.get("last_reconcile_at") or account.get("last_reconcile_at"),
-                "portfolio_budget_usdc": _decimal_text(getattr(self._settings(), "portfolio_budget_usdc", None)),
+                "portfolio_budget_usdc": decimal_text(getattr(self._settings(), "portfolio_budget_usdc", None)),
                 "queue_depth": payload.get("queue_depths"),
                 "persistence": payload.get("persistence"),
                 "blocking_reasons": tuple(readiness.get("blocking_reasons", ())),
@@ -935,10 +853,10 @@ class AdminService:
             "ready_to_trade": ready_to_trade and account.user_ws_connected and account.allow_new_entries,
             "user_ws_connected": account.user_ws_connected,
             "allow_new_entries": account.allow_new_entries,
-            "last_reconcile_at": _jsonable(account.last_reconcile_at),
-            "portfolio_budget_usdc": _decimal_text(getattr(self._settings(), "portfolio_budget_usdc", None)),
-            "queue_depth": _jsonable(event_bus) if event_bus is not None else None,
-            "persistence": _jsonable(persistence) if persistence is not None else None,
+            "last_reconcile_at": jsonable(account.last_reconcile_at),
+            "portfolio_budget_usdc": decimal_text(getattr(self._settings(), "portfolio_budget_usdc", None)),
+            "queue_depth": jsonable(event_bus) if event_bus is not None else None,
+            "persistence": jsonable(persistence) if persistence is not None else None,
         }
 
     def _config_readiness_snapshot(self) -> dict[str, Any]:
@@ -1081,7 +999,7 @@ class AdminService:
             snapshot = supervisor.snapshot()
             readiness = snapshot.readiness
             if readiness is not None:
-                return readiness.as_dict() if hasattr(readiness, "as_dict") else _jsonable(readiness)
+                return readiness.as_dict() if hasattr(readiness, "as_dict") else jsonable(readiness)
         config_readiness = self._config_readiness_snapshot()
         runtime_snapshot = self._runtime_status_snapshot()
         blocking_issues = self._runtime_blocking_issues(config_readiness, runtime_snapshot)
@@ -1098,7 +1016,7 @@ class AdminService:
             return {}
         if hasattr(settings, "sanitized_dump"):
             return settings.sanitized_dump()
-        return _jsonable(settings)
+        return jsonable(settings)
 
     def _identity_snapshot(self) -> dict[str, Any]:
         settings = self._settings()
@@ -1123,479 +1041,12 @@ class AdminService:
             ),
         }
 
-    def _portfolio_snapshot(self, account: AccountSnapshot) -> dict[str, Any]:
-        return {
-            "balance_usdc": _decimal_text(account.balance_usdc),
-            "allowance_usdc": _decimal_text(account.allowance_usdc),
-            "positions": len(account.positions),
-            "open_orders": len(account.open_orders),
-            "fills": len(account.fills),
-            "paused_markets": list(account.paused_markets),
-            "pause_reasons": [list(item) for item in account.pause_reasons],
-            "allow_new_entries": account.allow_new_entries,
-            "user_ws_connected": account.user_ws_connected,
-            "last_reconcile_at": _jsonable(account.last_reconcile_at),
-        }
-
-    def _serialize_account_snapshot(self, account: AccountSnapshot) -> dict[str, Any]:
-        return {
-            "balance_usdc": _decimal_text(account.balance_usdc),
-            "allowance_usdc": _decimal_text(account.allowance_usdc),
-            "positions": [_jsonable(position) for position in account.positions],
-            "open_orders": [_jsonable(order) for order in account.open_orders],
-            "fills": [_jsonable(fill) for fill in account.fills],
-            "user_ws_connected": account.user_ws_connected,
-            "allow_new_entries": account.allow_new_entries,
-            "paused_markets": list(account.paused_markets),
-            "pause_reasons": [list(item) for item in account.pause_reasons],
-            "last_reconcile_at": _jsonable(account.last_reconcile_at),
-        }
-
-    def _serialize_market_view(
-        self,
-        market: Market,
-        *,
-        account_snapshot: AccountSnapshot | None = None,
-        registry_snapshot: MarketRegistrySnapshot | None = None,
-    ) -> dict[str, Any]:
-        if account_snapshot is None:
-            account_snapshot = self._account_snapshot()
-        if registry_snapshot is None:
-            registry_snapshot = self._registry_snapshot()
-        token_views = [
-            self._serialize_token_view(
-                market,
-                outcome=outcome,
-                orderbook=self._market_ws_snapshot(outcome.token_id),
-                account_snapshot=account_snapshot,
-            )
-            for outcome in market.outcomes
-        ]
-        return {
-            "market": self._serialize_market(market),
-            "tracked": registry_snapshot.get_by_condition_id(market.condition_id) is not None,
-            "token_views": token_views,
-        }
-
-    def _serialize_token_view(
-        self,
-        market: Market,
-        *,
-        outcome: MarketOutcome,
-        orderbook: OrderbookSnapshot | None,
-        account_snapshot: AccountSnapshot,
-    ) -> dict[str, Any]:
-        position = account_snapshot.get_position(market.condition_id, outcome.token_id)
-        open_orders = account_snapshot.open_orders_for_market(market.condition_id, outcome.token_id)
-        return {
-            "token_id": outcome.token_id,
-            "outcome": outcome.outcome,
-            "orderbook": self._serialize_orderbook(orderbook),
-            "position": self._serialize_position(position) if position is not None else None,
-            "open_orders": [self._serialize_order(order) for order in open_orders],
-            "open_order_count": len(open_orders),
-            "best_ask": _decimal_text(orderbook.best_ask) if orderbook is not None else None,
-            "best_bid": _decimal_text(orderbook.best_bid) if orderbook is not None else None,
-            "spread": _decimal_text(orderbook.spread) if orderbook is not None else None,
-            "fee_preview": self._serialize_fee_preview(
-                build_taker_fee_preview(
-                    market=market,
-                    orderbook=orderbook,
-                )
-            ),
-        }
-
-    def _serialize_market(self, market: Market) -> dict[str, Any]:
-        return {
-            "condition_id": market.condition_id,
-            "market_slug": market.market_slug,
-            "event_slug": market.event_slug,
-            "event_id": market.event_id,
-            "event_title": market.event_title,
-            "token_ids": list(market.token_ids),
-            "outcomes": [
-                {
-                    "token_id": outcome.token_id,
-                    "outcome": outcome.outcome,
-                }
-                for outcome in market.outcomes
-            ],
-            "icon_url": market.icon_url,
-            "end_date": _jsonable(market.end_date),
-            "tick_size": _decimal_text(market.tick_size),
-            "min_order_size": _decimal_text(market.min_order_size),
-            "neg_risk": market.neg_risk,
-            "fees": {
-                "enabled": market.fees_enabled,
-                "maker_base_fee_bps": market.maker_base_fee_bps,
-                "taker_base_fee_bps": market.taker_base_fee_bps,
-                "fee_rate_bps": market.fee_rate_bps,
-                "fee_rate_updated_at": _jsonable(market.fee_rate_updated_at),
-            },
-            "category": market.category,
-            "tags": list(market.tags),
-            "matched_keywords": list(market.matched_keywords),
-            "trading_status": market.trading_status.value,
-            "reject_reason": market.reject_reason,
-        }
-
-    def _serialize_fee_preview(self, preview: TakerFeePreview | None) -> dict[str, Any] | None:
-        if preview is None:
-            return None
-        return {
-            "basis_size_shares": _decimal_text(preview.basis_size_shares),
-            "fee_rate_bps": preview.fee_rate_bps,
-            "buy": self._serialize_fee_quote(preview.buy),
-            "sell": self._serialize_fee_quote(preview.sell),
-        }
-
-    def _serialize_fee_quote(self, quote: FeeQuote | None) -> dict[str, Any] | None:
-        if quote is None:
-            return None
-        return {
-            "price": _decimal_text(quote.price),
-            "price_source": quote.price_source,
-            "fee_usdc": _decimal_text(quote.fee_usdc),
-            "fee_shares": _decimal_text(quote.fee_shares),
-            "charged_in": quote.charged_in,
-        }
-
-    def _serialize_market_orderbook(
-        self,
-        *,
-        token_id: str,
-        condition_id: str | None,
-        market_slug: str | None,
-        orderbook: OrderbookSnapshot,
-        source: str,
-    ) -> dict[str, Any]:
-        payload = self._serialize_orderbook(orderbook) or {}
-        payload["token_id"] = token_id
-        payload["condition_id"] = condition_id if condition_id is not None else payload.get("condition_id")
-        payload["market_slug"] = market_slug if market_slug is not None else payload.get("market_slug")
-        return {
-            "token_id": token_id,
-            "condition_id": condition_id,
-            "market_slug": market_slug,
-            "source": source,
-            "orderbook": payload,
-        }
-
-    def _serialize_market_midpoint(
-        self,
-        *,
-        token_id: str,
-        condition_id: str | None,
-        market_slug: str | None,
-        midpoint: Decimal,
-        orderbook: OrderbookSnapshot | None,
-        source: str,
-    ) -> dict[str, Any]:
-        return {
-            "token_id": token_id,
-            "condition_id": condition_id,
-            "market_slug": market_slug,
-            "source": source,
-            "midpoint": _decimal_text(midpoint),
-            "best_bid": None if orderbook is None else _decimal_text(orderbook.best_bid),
-            "best_ask": None if orderbook is None else _decimal_text(orderbook.best_ask),
-            "last_trade_price": None if orderbook is None else _decimal_text(orderbook.last_trade_price),
-            "spread": None if orderbook is None else _decimal_text(orderbook.spread),
-            "received_at": None if orderbook is None else _jsonable(orderbook.received_at),
-        }
-
-    def _serialize_market_prices_history(
-        self,
-        *,
-        token_id: str,
-        history: ClobPriceHistoryDTO,
-        interval: str | None,
-        fidelity: int | None,
-    ) -> dict[str, Any]:
-        return {
-            "token_id": token_id,
-            "interval": interval,
-            "fidelity": fidelity,
-            "history": [
-                {
-                    "timestamp": _jsonable(point.timestamp),
-                    "price": _decimal_text(point.price),
-                }
-                for point in history.history
-            ],
-        }
-
-    def _serialize_orderbook(self, orderbook: OrderbookSnapshot | None) -> dict[str, Any] | None:
-        if orderbook is None:
-            return None
-        return {
-            "token_id": orderbook.token_id,
-            "condition_id": orderbook.condition_id,
-            "market_slug": orderbook.market_slug,
-            "best_bid": _decimal_text(orderbook.best_bid),
-            "best_ask": _decimal_text(orderbook.best_ask),
-            "best_bid_size": _decimal_text(orderbook.best_bid_size),
-            "best_ask_size": _decimal_text(orderbook.best_ask_size),
-            "last_trade_price": _decimal_text(orderbook.last_trade_price),
-            "tick_size": _decimal_text(orderbook.tick_size),
-            "spread": _decimal_text(orderbook.spread),
-            "received_at": _jsonable(orderbook.received_at),
-            "bids": [{"price": _decimal_text(level.price), "size": _decimal_text(level.size)} for level in orderbook.bids],
-            "asks": [{"price": _decimal_text(level.price), "size": _decimal_text(level.size)} for level in orderbook.asks],
-        }
-
-    def _serialize_position(self, position: Position) -> dict[str, Any]:
-        return {
-            "condition_id": position.condition_id,
-            "token_id": position.token_id,
-            "outcome": self._resolve_outcome_name(
-                condition_id=position.condition_id,
-                token_id=position.token_id,
-                market_slug=position.market_slug,
-            ),
-            "market_slug": position.market_slug,
-            "shares": _decimal_text(position.shares),
-            "cost_usdc": _decimal_text(position.cost_usdc),
-            "open_buy_shares": _decimal_text(position.open_buy_shares),
-            "open_sell_shares": _decimal_text(position.open_sell_shares),
-            "pending_buy_shares": _decimal_text(position.pending_buy_shares),
-            "confirmed_shares": _decimal_text(position.confirmed_shares),
-            "last_order_id": position.last_order_id,
-            "last_trade_id": position.last_trade_id,
-            "confirmation_status": position.confirmation_status,
-            "updated_at": _jsonable(position.updated_at),
-        }
-
-    def _serialize_order(self, order: Order) -> dict[str, Any]:
-        return {
-            "trace_id": order.trace_id,
-            "condition_id": order.condition_id,
-            "token_id": order.token_id,
-            "outcome": self._resolve_outcome_name(
-                condition_id=order.condition_id,
-                token_id=order.token_id,
-                market_slug=order.market_slug,
-            ),
-            "market_slug": order.market_slug,
-            "side": order.side.value,
-            "order_type": order.order_type.value,
-            "price": _decimal_text(order.price),
-            "amount_usdc": _decimal_text(order.amount_usdc),
-            "size_shares": _decimal_text(order.size_shares),
-            "filled_shares": _decimal_text(order.filled_shares),
-            "remaining_shares": _decimal_text(order.remaining_shares),
-            "notional_usdc": _decimal_text(order.notional_usdc),
-            "order_id": order.order_id,
-            "trade_id": order.trade_id,
-            "status": order.status.value,
-            "idempotency_key": order.idempotency_key,
-            "reason": order.reason,
-            "post_only": order.post_only,
-            "created_at": _jsonable(order.created_at),
-            "updated_at": _jsonable(order.updated_at),
-        }
-
-    def _serialize_fill(self, fill: Fill) -> dict[str, Any]:
-        return {
-            "trace_id": fill.trace_id,
-            "event_type": str(fill.event_type),
-            "event_id": fill.event_id,
-            "market_slug": fill.market_slug,
-            "condition_id": fill.condition_id,
-            "token_id": fill.token_id,
-            "outcome": self._resolve_outcome_name(
-                condition_id=fill.condition_id,
-                token_id=fill.token_id,
-                market_slug=fill.market_slug,
-            ),
-            "reason": fill.reason,
-            "created_at": _jsonable(fill.created_at),
-            "order_id": fill.order_id,
-            "trade_id": fill.trade_id,
-            "side": fill.side,
-            "price": _decimal_text(fill.price),
-            "size": _decimal_text(fill.size),
-            "notional_usdc": _decimal_text(fill.notional_usdc),
-            "status": fill.status,
-            "confirmed_at": _jsonable(fill.confirmed_at),
-        }
-
-    def _serialize_audit_event(self, event: AuditEvent) -> dict[str, Any]:
-        return {
-            "trace_id": event.trace_id,
-            "event_id": event.event_id,
-            "event_title": event.event_title,
-            "market_slug": event.market_slug,
-            "condition_id": event.condition_id,
-            "token_id": event.token_id,
-            "outcome": event.outcome,
-            "side": event.side,
-            "order_type": event.order_type,
-            "price": _jsonable(event.price),
-            "size": _jsonable(event.size),
-            "notional_usdc": _jsonable(event.notional_usdc),
-            "order_id": event.order_id,
-            "trade_id": event.trade_id,
-            "tx_hash": event.tx_hash,
-            "status": event.status,
-            "reason": event.reason,
-            "raw_response": event.raw_response,
-            "created_at": _jsonable(event.created_at),
-            "updated_at": _jsonable(event.updated_at),
-        }
-
-    def _serialize_outbox_event(self, event: OutboxEvent) -> dict[str, Any]:
-        return {
-            "trace_id": event.trace_id,
-            "event_type": event.event_type,
-            "idempotency_key": event.idempotency_key,
-            "event_id": event.event_id,
-            "market_slug": event.market_slug,
-            "condition_id": event.condition_id,
-            "token_id": event.token_id,
-            "reason": event.reason,
-            "created_at": _jsonable(event.created_at),
-            "priority": event.priority,
-            "retry_count": event.retry_count,
-            "last_error": event.last_error,
-            "raw_response_summary": event.raw_response_summary,
-            "payload": _jsonable(event.payload),
-        }
-
-    def _serialize_allocation(self, allocation: Allocation) -> dict[str, Any]:
-        return {
-            "condition_id": allocation.condition_id,
-            "market_slug": allocation.market_slug,
-            "token_id": allocation.token_id,
-            "outcome": self._resolve_outcome_name(
-                condition_id=allocation.condition_id,
-                token_id=allocation.token_id,
-                market_slug=allocation.market_slug,
-            ),
-            "target_budget_usdc": _decimal_text(allocation.target_budget_usdc),
-            "buy_budget_usdc": _decimal_text(allocation.buy_budget_usdc),
-            "current_exposure_usdc": _decimal_text(allocation.current_exposure_usdc),
-            "released_budget_usdc": _decimal_text(allocation.released_budget_usdc),
-            "reason": allocation.reason,
-            "release_reason": allocation.release_reason,
-            "idempotency_key": allocation.idempotency_key,
-        }
-
-    def _resolve_outcome_name(
-        self,
-        *,
-        condition_id: str | None,
-        token_id: str | None,
-        market_slug: str | None = None,
-    ) -> str | None:
-        if token_id is None:
-            return None
-        registry = self._registry_snapshot()
-        market = None
-        if condition_id is not None:
-            market = registry.get_by_condition_id(condition_id)
-        if market is None:
-            market = registry.get_by_token_id(token_id)
-        if market is None and market_slug is not None:
-            market = registry.get_by_slug(market_slug)
-        if market is None:
-            return None
-        outcome = market.get_outcome_by_token_id(token_id)
-        return None if outcome is None else outcome.outcome
-
-    def _serialize_review(self, review: TradingReviewResult) -> dict[str, Any]:
-        return {
-            "operation": review.operation,
-            "submitted": review.submitted,
-            "risk_decision": None
-            if review.risk_decision is None
-            else {
-                "passed": review.risk_decision.passed,
-                "reason": review.risk_decision.reason,
-                "retryable": review.risk_decision.retryable,
-            },
-            "order_result": self._serialize_order_result(review.order_result),
-            "submission_error": review.submission_error,
-        }
-
-    def _serialize_order_result(self, result: OrderResult | None) -> dict[str, Any] | None:
-        if result is None:
-            return None
-        return {
-            "trace_id": result.trace_id,
-            "condition_id": result.condition_id,
-            "token_id": result.token_id,
-            "outcome": self._resolve_outcome_name(
-                condition_id=result.condition_id,
-                token_id=result.token_id,
-                market_slug=result.market_slug,
-            ),
-            "market_slug": result.market_slug,
-            "status": result.status.value,
-            "order_id": result.order_id,
-            "trade_id": result.trade_id,
-            "side": None if result.side is None else result.side.value,
-            "order_type": None if result.order_type is None else result.order_type.value,
-            "price": _decimal_text(result.price),
-            "requested_amount_usdc": _decimal_text(result.requested_amount_usdc),
-            "requested_size_shares": _decimal_text(result.requested_size_shares),
-            "matched_shares": _decimal_text(result.matched_shares),
-            "remaining_shares": _decimal_text(result.remaining_shares),
-            "spent_usdc": _decimal_text(result.spent_usdc),
-            "notional_usdc": _decimal_text(result.notional_usdc),
-            "reason": result.reason,
-            "retryable": result.retryable,
-            "raw_response_summary": result.raw_response_summary,
-            "timestamps": _jsonable(result.timestamps),
-        }
-
-    def _serialize_reconcile_result(self, result: Any) -> dict[str, Any]:
-        plan: ReconcilePlan = result.plan
-        return {
-            "trace_id": result.trace_id,
-            "status": "ok",
-            "plan": {
-                "trace_id": plan.trace_id,
-                "generated_at": _jsonable(plan.generated_at),
-                "total_actions": plan.total_actions,
-                "paused_markets": plan.paused_markets,
-                "diff_count": plan.diff_count,
-                "has_changes": plan.has_changes,
-                "market_plans": [
-                    {
-                        "trace_id": market_plan.trace_id,
-                        "market": self._serialize_market(market_plan.market),
-                        "actions": [self._serialize_reconcile_action(action) for action in market_plan.actions],
-                        "pause_trading": market_plan.pause_trading,
-                        "pause_reason": market_plan.pause_reason,
-                    }
-                    for market_plan in plan.market_plans
-                ],
-            },
-            "applied_actions": [self._serialize_reconcile_action(action) for action in result.applied_actions],
-            "failed_actions": [
-                {
-                    "action": self._serialize_reconcile_action(action),
-                    "reason": reason,
-                }
-                for action, reason in result.failed_actions
-            ],
-        }
-
-    def _serialize_reconcile_action(self, action: ReconcileAction) -> dict[str, Any]:
-        return {
-            "action_type": action.action_type.value,
-            "trace_id": action.trace_id,
-            "condition_id": action.condition_id,
-            "token_id": action.token_id,
-            "market_slug": action.market_slug,
-            "reason": action.reason,
-            "source_order_id": action.source_order_id,
-            "source_order_side": None if action.source_order_side is None else action.source_order_side.value,
-            "target_size_shares": _decimal_text(action.target_size_shares),
-            "target_notional_usdc": _decimal_text(action.target_notional_usdc),
-            "pause_reason": action.pause_reason,
-        }
+    def _serializer(self) -> AdminSerializer:
+        return AdminSerializer(
+            account_snapshot_provider=self._account_snapshot,
+            registry_snapshot_provider=self._registry_snapshot,
+            market_ws_snapshot=self._market_ws_snapshot,
+        )
 
     def _account_snapshot(self) -> AccountSnapshot:
         account_state = getattr(self.runtime, "account_state_store", None)
@@ -1645,15 +1096,15 @@ class AdminService:
         return {
             "round_id": int(getattr(state, "round_id", 0)),
             "cursor_active": getattr(state, "after_cursor", None) is not None,
-            "round_started_at": _jsonable(getattr(state, "round_started_at", None)),
-            "last_round_completed_at": _jsonable(getattr(state, "last_round_completed_at", None)),
+            "round_started_at": jsonable(getattr(state, "round_started_at", None)),
+            "last_round_completed_at": jsonable(getattr(state, "last_round_completed_at", None)),
             "pages_scanned_in_round": int(getattr(state, "pages_scanned_in_round", 0)),
             "markets_seen_in_round": int(getattr(state, "markets_seen_in_round", 0)),
             "last_completed_round_pages": int(getattr(state, "last_completed_round_pages", 0)),
             "last_completed_round_markets": int(getattr(state, "last_completed_round_markets", 0)),
             "last_page_size": int(getattr(state, "last_page_size", 0)),
-            "last_tick_started_at": _jsonable(getattr(state, "last_tick_started_at", None)),
-            "last_tick_completed_at": _jsonable(getattr(state, "last_tick_completed_at", None)),
+            "last_tick_started_at": jsonable(getattr(state, "last_tick_started_at", None)),
+            "last_tick_completed_at": jsonable(getattr(state, "last_tick_completed_at", None)),
             "last_tick_requests": int(getattr(state, "last_tick_requests", 0)),
             "last_tick_markets": int(getattr(state, "last_tick_markets", 0)),
             "last_error": getattr(state, "last_error", None),
@@ -1753,7 +1204,7 @@ class AdminService:
             order
             for order in snapshot.open_orders
             if order.open
-            and order_id in {_normalize_order_id(order), order.order_id, order.idempotency_key}
+            and order_id in {normalize_order_id(order), order.order_id, order.idempotency_key}
             and (market_slug is None or order.market_slug == market_slug)
             and (condition_id is None or order.condition_id == condition_id)
             and (token_id is None or order.token_id == token_id)
@@ -1766,7 +1217,7 @@ class AdminService:
         account_state = getattr(self.runtime, "account_state_store", None)
         if account_state is None:
             return
-        order_id = _normalize_order_id(order)
+        order_id = normalize_order_id(order)
         account_state.remove_order(order_id)
 
     def _apply_hot_replace_result(
@@ -1782,10 +1233,10 @@ class AdminService:
         if account_state is None:
             return
         self._remove_hot_order(source_order)
-        order_status = _order_result_to_order_status(result)
+        order_status = order_result_to_order_status(result)
         replacement_size_shares = (
             result.requested_size_shares
-            or _order_open_shares(source_order)
+            or order_open_shares(source_order)
             or source_order.size_shares
         )
         replacement_remaining = result.remaining_shares
@@ -1851,7 +1302,7 @@ class AdminService:
             market_slug=source_order.market_slug or market.market_slug,
             last_order_id=result.order_id or result.trace_id,
             last_trade_id=result.trade_id,
-            confirmation_status=_order_status_to_text(result.status),
+            confirmation_status=order_status_to_text(result.status),
             updated_at=result.timestamps.ack_at,
         )
 
@@ -1872,7 +1323,7 @@ class AdminService:
         snapshot = account_state.snapshot()
         position = snapshot.get_position(condition_id, token_id)
         open_buy_shares = sum(
-            _order_open_shares(order) or Decimal("0")
+            order_open_shares(order) or Decimal("0")
             for order in snapshot.open_buy_orders_for_market(condition_id, token_id)
         )
         open_sell_shares = snapshot.open_sell_shares_for_market(condition_id, token_id)
@@ -1914,16 +1365,3 @@ class _RepositoryGroup:
     position: PositionRepository
     allocation: AllocationRepository
     outbox: OutboxEventRepository
-
-
-def _order_status_to_text(status: OrderResultStatus) -> str:
-    return {
-        OrderResultStatus.FULL_FILL: "full_fill",
-        OrderResultStatus.PARTIAL_FILL: "partial_fill",
-        OrderResultStatus.NO_FILL: "no_fill",
-        OrderResultStatus.LIVE: "live",
-        OrderResultStatus.REJECTED: "rejected",
-        OrderResultStatus.FAILED: "failed",
-        OrderResultStatus.CANCELLED: "cancelled",
-        OrderResultStatus.UNKNOWN_TIMEOUT: "unknown_timeout",
-    }.get(status, "unknown")

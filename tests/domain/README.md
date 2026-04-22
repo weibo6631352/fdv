@@ -11,7 +11,7 @@
 - `domain_import_boundaries.py`：Domain 不持有外部 market payload parser。
 - `registry.py`：运行时 market 索引快照和 fee schedule 更新。
 
-策略化的资金分配策略不属于 domain 测试范围；例如当前策略的等权分配测试放在
+策略化的资金分配策略不属于 domain 测试范围；例如当前业务扩展的等权分配测试放在
 `tests/strategies/current/`。
 
 ## 必须保持的边界

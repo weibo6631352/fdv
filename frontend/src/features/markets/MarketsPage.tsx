@@ -18,7 +18,7 @@ import {
   getString,
 } from '../../shared/utils/format'
 import { formatTradingStatusLabel } from '../../shared/utils/labels'
-import { resolveStrategyExtension } from '../../strategy/registry'
+import { resolveExtensionPresentation } from '../../extensions/registry'
 
 const tradingStatusTone = (status: string): 'neutral' | 'success' | 'warning' | 'danger' => {
   if (status === 'active') {
@@ -170,8 +170,8 @@ export const MarketsPage = () => {
     refetchInterval: 20_000,
   })
 
-  const strategyExtension = useMemo(
-    () => resolveStrategyExtension(getString(runtimeQuery.data?.settings?.extension_module)),
+  const extensionPresentation = useMemo(
+    () => resolveExtensionPresentation(getString(runtimeQuery.data?.settings?.extension_module)),
     [runtimeQuery.data],
   )
 
@@ -294,11 +294,11 @@ export const MarketsPage = () => {
       ),
     },
     {
-      key: 'strategy',
-      header: '策略标记',
+      key: 'extension',
+      header: '扩展标记',
       cell: (row) => (
         <div className="badge-row">
-          {strategyExtension.renderMarketBadges?.(row).map((badge) => (
+          {extensionPresentation.renderMarketBadges?.(row).map((badge) => (
             <StatusPill key={badge.label} label={badge.label} tone={badge.tone} />
           )) ?? '—'}
         </div>
@@ -335,8 +335,8 @@ export const MarketsPage = () => {
       <header className="page-header">
         <div>
           <p className="eyebrow">市场</p>
-          <h1>市场监控与策略解释</h1>
-          <p>先从列表定位目标市场，再查看盘口、走势和策略解释。</p>
+          <h1>市场监控与扩展解释</h1>
+          <p>先从列表定位目标市场，再查看盘口、走势和扩展解释。</p>
         </div>
       </header>
 
@@ -436,7 +436,7 @@ export const MarketsPage = () => {
                 tone={tradingStatusTone(selectedMarket.market.trading_status)}
               />
               {selectedMarket.tracked ? <StatusPill label="已跟踪" tone="success" /> : null}
-              {strategyExtension.renderMarketBadges?.(selectedMarket).map((badge) => (
+              {extensionPresentation.renderMarketBadges?.(selectedMarket).map((badge) => (
                 <StatusPill key={badge.label} label={badge.label} tone={badge.tone} />
               ))}
             </div>
@@ -658,7 +658,7 @@ export const MarketsPage = () => {
         )}
       </SectionCard>
 
-      {selectedMarket ? strategyExtension.renderMarketDetail?.(selectedMarket) : null}
+      {selectedMarket ? extensionPresentation.renderMarketDetail?.(selectedMarket) : null}
 
       <SectionCard title="原始市场快照" subtitle="排障时再展开查看。">
         <JsonPanel

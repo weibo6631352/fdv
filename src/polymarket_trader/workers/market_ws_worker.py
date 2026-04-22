@@ -3,205 +3,36 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any, Awaitable, Callable, Mapping
 from uuid import uuid4
 
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from polymarket_trader.domain.market import Market
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from polymarket_trader.infra.polymarket import market_ws_adapter
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
-
-_FEE_RATE_DENOMINATOR = Decimal("1000")
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _decimal(value: Any | None) -> Decimal | None:
-    if value is None:
-        return None
-    if isinstance(value, Decimal):
-        return value
-    text = str(value).strip()
-    if not text:
-        return None
-    return Decimal(text)
-
-
-def _first(mapping: Mapping[str, Any], *keys: str) -> Any | None:
-    for key in keys:
-        value = mapping.get(key)
-        if value is not None:
-            return value
-    return None
-
-
-def _mapping(mapping: Mapping[str, Any], *keys: str) -> Mapping[str, Any] | None:
-    for key in keys:
-        value = mapping.get(key)
-        if isinstance(value, Mapping):
-            return value
-    return None
-
-
-def _bool(value: Any | None) -> bool | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return value
-    text = str(value).strip().lower()
-    if text in {"true", "1", "yes", "y", "on"}:
-        return True
-    if text in {"false", "0", "no", "n", "off"}:
-        return False
-    return None
-
-
-def _bps(value: Any | None) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    try:
-        numeric = Decimal(text)
-    except InvalidOperation:
-        return None
-    if numeric == numeric.to_integral_value():
-        return int(numeric)
-    if abs(numeric) < Decimal("1"):
-        return int((numeric * Decimal("10000")).to_integral_value())
-    return int(numeric.to_integral_value())
-
-
-def _fee_rate_units(value: Any | None) -> int | None:
-    if value is None or isinstance(value, bool):
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    try:
-        numeric = Decimal(text)
-    except InvalidOperation:
-        return None
-    if numeric < Decimal("0"):
-        return None
-    if numeric < Decimal("1"):
-        return int((numeric * _FEE_RATE_DENOMINATOR).to_integral_value())
-    if numeric == numeric.to_integral_value():
-        return int(numeric)
-    return int((numeric * _FEE_RATE_DENOMINATOR).to_integral_value())
-
-
-def _to_datetime(value: Any | None) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
-    text = str(value).strip()
-    if not text:
-        return None
-    try:
-        numeric = Decimal(text)
-    except InvalidOperation:
-        numeric = None
-    if numeric is not None:
-        timestamp = float(numeric)
-        if timestamp > 10_000_000_000:
-            timestamp /= 1000.0
-        return datetime.fromtimestamp(timestamp, tz=timezone.utc)
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
-def _extract_token_id(message: Mapping[str, Any]) -> str | None:
-    value = _first(
-        message,
-        "token_id",
-        "tokenId",
-        "asset_id",
-        "assetId",
-        "market_token_id",
-        "winning_asset_id",
-    )
-    return None if value is None else str(value)
-
-
-def _extract_sequence(message: Mapping[str, Any]) -> int | None:
-    value = _first(message, "sequence", "seq", "version")
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _parse_levels(value: Any) -> tuple[PriceLevel, ...]:
-    if not isinstance(value, list):
-        return ()
-    levels: list[PriceLevel] = []
-    for item in value:
-        if isinstance(item, Mapping):
-            price = _decimal(_first(item, "price", "p"))
-            size = _decimal(_first(item, "size", "quantity", "qty", "amount"))
-        elif isinstance(item, (list, tuple)) and len(item) >= 2:
-            price = _decimal(item[0])
-            size = _decimal(item[1])
-        else:
-            continue
-        if price is None or size is None:
-            continue
-        levels.append(PriceLevel(price=price, size=size))
-    return tuple(levels)
-
-
-def _message_type(message: Mapping[str, Any]) -> str:
-    value = _first(message, "event_type", "message_type", "channel_event", "event", "type", "action")
-    return "" if value is None else str(value).strip().lower()
-
-
-def _extract_token_candidates(message: Mapping[str, Any]) -> tuple[str, ...]:
-    candidates: list[str] = []
-    seen: set[str] = set()
-    direct = _extract_token_id(message)
-    if direct is not None and direct not in seen:
-        candidates.append(direct)
-        seen.add(direct)
-    for key in ("assets_ids", "clob_token_ids"):
-        value = message.get(key)
-        if not isinstance(value, (list, tuple)):
-            continue
-        for item in value:
-            text = str(item).strip()
-            if text and text not in seen:
-                candidates.append(text)
-                seen.add(text)
-    return tuple(candidates)
-
-
-def _best_price(levels: tuple[PriceLevel, ...]) -> Decimal | None:
-    if not levels:
-        return None
-    return max(level.price for level in levels)
-
-
-def _worst_ask(levels: tuple[PriceLevel, ...]) -> Decimal | None:
-    if not levels:
-        return None
-    return min(level.price for level in levels)
+_decimal = market_ws_adapter.decimal_value
+_first = market_ws_adapter.first_value
+_mapping = market_ws_adapter.nested_mapping
+_bool = market_ws_adapter.bool_value
+_bps = market_ws_adapter.bps_value
+_fee_rate_units = market_ws_adapter.fee_rate_units
+_to_datetime = market_ws_adapter.datetime_value
+_extract_token_id = market_ws_adapter.extract_token_id
+_extract_sequence = market_ws_adapter.extract_sequence
+_parse_levels = market_ws_adapter.parse_levels
+_message_type = market_ws_adapter.message_type
+_extract_token_candidates = market_ws_adapter.extract_token_candidates
+_best_price = market_ws_adapter.best_price
+_worst_ask = market_ws_adapter.worst_ask
 
 
 @dataclass(slots=True)

@@ -46,7 +46,7 @@ event -> StrategyService -> PortfolioAllocator -> RiskManager -> TradingService 
 
 - `OrderExecutor` 是唯一允许创建、签名、提交、取消和替换订单的模块。
 - `RiskManager` 是任何下单前的强制门禁；新增下单入口必须显式经过它。
-- 策略模块输出框架定义的决策对象，不直接调用交易客户端。
+- 业务扩展模块输出框架定义的决策对象，不直接调用交易客户端。
 - Admin API 不是自动下单入口，也不是交易客户端直连入口。
 - Persistence / outbox / 审计只能异步承接副作用，不能反向阻塞交易主链路。
 
@@ -108,6 +108,6 @@ event -> StrategyService -> PortfolioAllocator -> RiskManager -> TradingService 
 
 - 在 route 里写交易逻辑。
 - 在 worker 里复制 discovery / strategy 业务判断。
-- 在 framework 层加入当前策略专属字段或阈值。
+- 在 framework 层加入当前业务扩展专属字段或阈值。
 - 为了减少改动，在 Domain 或 SDK 中保留长期同义命名。
 - 让数据库、持久化、日志或报表路径决定交易热路径是否能继续运行。

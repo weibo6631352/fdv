@@ -10,6 +10,7 @@ from uuid import uuid4
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, Fill, OutboxPriority
 from polymarket_trader.domain.order import Order, OrderSide, OrderStatus, OrderType
 from polymarket_trader.domain.position import Position
+from polymarket_trader.infra.polymarket import user_ws_adapter
 from polymarket_trader.runtime.account_state import AccountSnapshot, AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
 
@@ -887,71 +888,7 @@ def _iter_position_snapshots(payload: Mapping[str, Any]) -> Iterable[Position]:
         )
 
 
-def _iter_order_snapshots(payload: Mapping[str, Any]) -> Iterable[Order]:
-    candidates: Iterable[Any]
-    if _is_mapping_sequence(payload.get("orders")):
-        candidates = payload["orders"]
-    elif _is_mapping_sequence(payload.get("open_orders")):
-        candidates = payload["open_orders"]
-    elif isinstance(payload.get("order"), Mapping):
-        candidates = (payload["order"],)
-    else:
-        candidates = (payload,)
-
-    for item in candidates:
-        if not isinstance(item, Mapping):
-            continue
-        condition_id = _extract_condition_id(item)
-        token_id = _extract_token_id(item)
-        if condition_id is None or token_id is None:
-            continue
-        order_type = _normalize_order_type(item.get("order_type"), default=OrderType.GTC)
-        side_text = _normalize_status(item.get("side"))
-        if side_text == "buy":
-            side = OrderSide.BUY
-        elif side_text == "sell":
-            side = OrderSide.SELL
-        elif item.get("amount_usdc") is not None or item.get("amount") is not None:
-            side = OrderSide.BUY
-        else:
-            side = OrderSide.SELL
-        price = _to_decimal(item.get("price"), default=Decimal("0")) or Decimal("0")
-        amount_usdc = _to_decimal(item.get("amount_usdc") or item.get("amount"))
-        size_shares = _to_decimal(item.get("size_shares") or item.get("size") or item.get("original_size"))
-        filled_shares = _to_decimal(
-            item.get("filled_shares") or item.get("size_matched") or item.get("matched_amount"),
-            default=Decimal("0"),
-        ) or Decimal("0")
-        notional_usdc = _to_decimal(item.get("notional_usdc"))
-        if notional_usdc is None and price is not None and size_shares is not None:
-            notional_usdc = price * size_shares
-        remaining_shares = _to_decimal(item.get("remaining_shares") or item.get("remaining_size"))
-        if remaining_shares is None and size_shares is not None:
-            remaining_shares = max(Decimal("0"), size_shares - filled_shares)
-        yield Order(
-            trace_id=_extract_trace_id(item),
-            condition_id=condition_id,
-            token_id=token_id,
-            market_slug=_extract_market_slug(item),
-            side=side,
-            order_type=order_type,
-            price=price,
-            amount_usdc=amount_usdc,
-            size_shares=size_shares,
-            filled_shares=filled_shares,
-            notional_usdc=notional_usdc,
-            order_id=_text(item.get("order_id") or item.get("id")),
-            trade_id=_text(item.get("trade_id")),
-            status=_normalize_user_order_status(item),
-            idempotency_key=_text(item.get("idempotency_key")),
-            reason=_text(item.get("reason")) or "",
-            post_only=bool(item.get("post_only", False)),
-            created_at=_to_datetime(item.get("created_at") or item.get("timestamp")),
-            updated_at=_to_datetime(
-                item.get("updated_at") or item.get("last_update") or item.get("timestamp")
-            ),
-            remaining_shares=remaining_shares,
-        )
+_iter_order_snapshots = user_ws_adapter.iter_order_snapshots
 
 
 def _iter_fill_snapshots(payload: Mapping[str, Any]) -> Iterable[Fill]:

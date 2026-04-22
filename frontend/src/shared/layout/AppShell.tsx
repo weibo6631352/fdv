@@ -3,7 +3,7 @@ import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { NavLink } from 'react-router-dom'
 import { adminApi } from '../../core/api/resources'
-import { resolveStrategyExtension } from '../../strategy/registry'
+import { resolveExtensionPresentation } from '../../extensions/registry'
 import { EntityAvatar } from '../ui/EntityAvatar'
 import { formatAddressShort, formatCompact, getString } from '../utils/format'
 import { formatPhaseLabel, formatSignatureTypeLabel } from '../utils/labels'
@@ -62,8 +62,8 @@ export const AppShell = ({ children }: AppShellProps) => {
     () => getString(runtimeQuery.data?.settings?.extension_module) ?? '未配置',
     [runtimeQuery.data],
   )
-  const strategyDisplayName = useMemo(
-    () => resolveStrategyExtension(extensionModule).displayName,
+  const extensionDisplayName = useMemo(
+    () => resolveExtensionPresentation(extensionModule).displayName,
     [extensionModule],
   )
 
@@ -91,7 +91,7 @@ export const AppShell = ({ children }: AppShellProps) => {
             <StatusPill label={ready ? '允许自动交易' : '自动交易未就绪'} tone={statusTone(ready, phase)} />
             <StatusPill label={`当前阶段：${formatPhaseLabel(phase)}`} tone="neutral" />
           </div>
-          <p className="brand-block__hint">当前策略：{strategyDisplayName}</p>
+          <p className="brand-block__hint">当前扩展：{extensionDisplayName}</p>
         </div>
 
         <nav className="nav-list" aria-label="主导航">
@@ -109,7 +109,7 @@ export const AppShell = ({ children }: AppShellProps) => {
 
         <div className="sidebar-footer">
           <p>所有写操作都先经过应用服务。</p>
-          <p>通用模块与策略解释分层展示。</p>
+          <p>通用模块与扩展解释分层展示。</p>
         </div>
       </aside>
 
@@ -132,7 +132,7 @@ export const AppShell = ({ children }: AppShellProps) => {
             </div>
             <div className="top-metric-list" aria-label="运行概览">
               <div className="top-metric">
-                <span>策略跟踪</span>
+                <span>扩展跟踪</span>
                 <strong>{trackedMarketCount}</strong>
               </div>
               <div className="top-metric">

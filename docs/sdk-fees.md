@@ -132,4 +132,4 @@ if preview is not None and preview.buy is not None:
 
 - 把 `fee_preview` 当成持久化市场事实
 - 把它写回策略配置或数据库
-- 默认把手续费直接并入当前策略的 entry/exit/risk 逻辑
+- 默认把手续费直接并入当前扩展的 entry/exit/risk 逻辑

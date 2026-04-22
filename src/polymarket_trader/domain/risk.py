@@ -32,11 +32,6 @@ class RiskDecision:
     retryable: bool = False
     checks: tuple[RiskCheck, ...] = field(default_factory=tuple)
 
-
-# 结果结构只保留一套契约，RiskCheckResult 是 RiskDecision 的别名，方便新旧调用方共用。
-RiskCheckResult = RiskDecision
-
-
 class RiskManager:
     """Mandatory gate before any order intent reaches the executor."""
 
@@ -69,7 +64,7 @@ class RiskManager:
         max_total_usdc: Decimal | None = None,
         max_open_orders: int | None = None,
         min_order_size: Decimal | None = None,
-    ) -> RiskCheckResult:
+    ) -> RiskDecision:
         # 这里只读本地快照和热状态；P0 路径不允许为了下单临时打 REST 或查数据库。
         open_orders = tuple(open_orders)
         if portfolio_total_invested_usdc is None and allocation_plan is not None:
@@ -405,7 +400,7 @@ class RiskManager:
             )
         )
 
-        return RiskCheckResult(
+        return RiskDecision(
             trace_id=intent.trace_id,
             passed=True,
             reason="passed",
@@ -425,7 +420,7 @@ class RiskManager:
         suggested_action: str,
         retryable: bool,
         value: object | None = None,
-    ) -> RiskCheckResult:
+    ) -> RiskDecision:
         checks.append(
             RiskCheck(
                 name=name,
@@ -437,7 +432,7 @@ class RiskManager:
                 retryable=retryable,
             )
         )
-        return RiskCheckResult(
+        return RiskDecision(
             trace_id=trace_id,
             passed=False,
             reason=reason,

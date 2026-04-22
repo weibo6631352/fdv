@@ -64,7 +64,6 @@ The current business implementation should become an ordinary extension package:
 src/strategies/current/
   manifest.py
   config.py
-  discovery.py
   universe.py
   outcomes.py
   allocation.py

@@ -8,12 +8,12 @@
 - `src/core/api/`：HTTP client、DTO、资源访问函数。
 - `src/shared/`：布局、通用组件、格式化工具。
 - `src/features/`：总览、市场、订单、持仓、审计、操作。
-- `src/strategy/`：策略扩展注册表和具体策略扩展实现。
+- `src/extensions/`：扩展展示注册表和具体扩展展示实现。
 
 约束：
 
-- 通用页面不能直接依赖某个具体策略目录。
-- 策略相关展示必须通过 `src/strategy/registry.ts` 挂接。
+- 通用页面不能直接依赖某个具体业务扩展目录。
+- 扩展相关展示必须通过 `src/extensions/registry.ts` 挂接。
 - 前端不直接连接 Polymarket，只访问后端 Admin API。
 
 ## 开发命令
@@ -61,8 +61,8 @@ npm --prefix frontend run build
 
 ## 二次开发入口
 
-新增一个策略对应的前端展示时：
+新增一个业务扩展对应的前端展示时：
 
-1. 在 `src/strategy/` 下新增该策略扩展模块。
-2. 在 `src/strategy/registry.ts` 注册。
+1. 在 `src/extensions/` 下新增该扩展展示模块。
+2. 在 `src/extensions/registry.ts` 注册。
 3. 通用页面通过扩展接口自动读取 badge、dashboard panel 和 market detail 扩展区块。

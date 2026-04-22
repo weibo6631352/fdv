@@ -6,7 +6,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Callable
+from typing import Any, Callable, Protocol
 from uuid import uuid4
 
 from polymarket_trader.app.reconcile_service import (
@@ -33,7 +33,6 @@ from polymarket_trader.domain.order import (
 )
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.domain.position import Position
-from polymarket_trader.infra.polymarket import ClobClient, DataClient, GammaClient, PolymarketTradingClient
 from polymarket_trader.runtime.account_state import AccountSnapshot, AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry, MarketRegistrySnapshot
@@ -41,6 +40,34 @@ from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 
 RegistrySnapshotProvider = Callable[[], MarketRegistrySnapshot]
 AccountSnapshotProvider = Callable[[], AccountSnapshot]
+
+
+class MarketAuthorityClient(Protocol):
+    async def list_markets(self, *, event_id: str | None = None, market_slug: str | None = None) -> tuple[Any, ...]: ...
+
+
+class OrderAuthorityClient(Protocol):
+    has_auth_client: bool
+
+    async def get_orderbook(self, token_id: str, *, market_slug: str | None = None) -> Any: ...
+
+    async def get_fee_rate(self, token_id: str) -> int | None: ...
+
+    async def list_open_orders(self) -> tuple[Any, ...]: ...
+
+    async def list_fills(self) -> tuple[Any, ...]: ...
+
+    async def get_balance_allowance(self) -> Any: ...
+
+
+class DataAuthorityClient(Protocol):
+    has_auth_client: bool
+
+    async def list_positions(self) -> tuple[Any, ...]: ...
+
+
+class TradingAuthorityClient(Protocol):
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -139,10 +166,10 @@ class ReconcileWorker:
         trading_service: TradingService | None = None,
         registry: MarketRegistry | None = None,
         market_ws_worker: MarketWsWorker | None = None,
-        gamma_client: GammaClient | None = None,
-        clob_client: ClobClient | None = None,
-        data_client: DataClient | None = None,
-        trading_client: PolymarketTradingClient | None = None,
+        gamma_client: MarketAuthorityClient | None = None,
+        clob_client: OrderAuthorityClient | None = None,
+        data_client: DataAuthorityClient | None = None,
+        trading_client: TradingAuthorityClient | None = None,
     ) -> None:
         self._event_bus = event_bus
         if reconcile_service is None:

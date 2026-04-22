@@ -21,7 +21,7 @@ from polymarket_trader.domain.order import (
 )
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.domain.position import Position
-from polymarket_trader.domain.risk import RiskCheckResult, RiskManager
+from polymarket_trader.domain.risk import RiskDecision, RiskManager
 
 
 class TradingService:
@@ -273,7 +273,7 @@ class TradingService:
 class TradingReviewResult:
     intent: ManagedOrderIntent
     operation: str
-    risk_decision: RiskCheckResult | None
+    risk_decision: RiskDecision | None
     submitted: bool
     order_result: OrderResult | None = None
     submission_error: str | None = None

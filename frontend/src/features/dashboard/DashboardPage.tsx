@@ -21,7 +21,7 @@ import {
   formatWorkerStateLabel,
 } from '../../shared/utils/labels'
 import { hasPositiveShares } from '../../shared/utils/markets'
-import { resolveStrategyExtension } from '../../strategy/registry'
+import { resolveExtensionPresentation } from '../../extensions/registry'
 
 const boolTone = (value: boolean): 'success' | 'danger' => (value ? 'success' : 'danger')
 
@@ -95,7 +95,7 @@ export const DashboardPage = () => {
   })
 
   const extensionModule = getString(runtimeQuery.data?.settings?.extension_module)
-  const strategyExtension = useMemo(() => resolveStrategyExtension(extensionModule), [extensionModule])
+  const extensionPresentation = useMemo(() => resolveExtensionPresentation(extensionModule), [extensionModule])
 
   const blockingIssues = readyQuery.data?.blocking_issues ?? []
   const warnings = readyQuery.data?.warnings ?? []
@@ -125,7 +125,7 @@ export const DashboardPage = () => {
         <div>
           <p className="eyebrow">总览</p>
           <h1>系统运行总览</h1>
-          <p>先看账户、市场覆盖和阻塞项，再进入线程、策略和原始快照。</p>
+          <p>先看账户、市场覆盖和阻塞项，再进入线程、扩展和原始快照。</p>
         </div>
       </header>
 
@@ -148,7 +148,7 @@ export const DashboardPage = () => {
         <div className="stat-card">
           <span>全量扫描面</span>
           <strong>{fullScanMarketCount}</strong>
-          <small>策略跟踪 {trackedMarketCount} · 运行中线程 {runningWorkerCount}</small>
+          <small>扩展跟踪 {trackedMarketCount} · 运行中线程 {runningWorkerCount}</small>
         </div>
       </section>
 
@@ -262,7 +262,7 @@ export const DashboardPage = () => {
       </SectionCard>
 
       <div className="content-grid content-grid--two">
-        <SectionCard title="策略跟踪市场" subtitle="这里只展示当前策略实际纳入并持续跟踪的市场。">
+        <SectionCard title="扩展跟踪市场" subtitle="这里只展示当前扩展实际纳入并持续跟踪的市场。">
           {trackedPreview.length > 0 ? (
             <>
               <ul className="market-list">
@@ -301,13 +301,13 @@ export const DashboardPage = () => {
                 })}
               </ul>
               {trackedMarkets.length > trackedPreview.length ? (
-                <p className="muted">还有 {trackedMarkets.length - trackedPreview.length} 个策略跟踪市场未展开。</p>
+                <p className="muted">还有 {trackedMarkets.length - trackedPreview.length} 个扩展跟踪市场未展开。</p>
               ) : null}
             </>
           ) : (
             <p className="muted">
               {fullScanMarketCount > 0
-                ? `上轮全量扫描 ${fullScanMarketCount} 个活跃市场，当前策略还没有纳入市场。`
+                ? `上轮全量扫描 ${fullScanMarketCount} 个活跃市场，当前扩展还没有纳入市场。`
                 : '当前还没有完成一轮全量扫描。'}
             </p>
           )}
@@ -379,7 +379,7 @@ export const DashboardPage = () => {
         )}
       </SectionCard>
 
-      {strategyExtension.renderDashboard?.({
+      {extensionPresentation.renderDashboard?.({
         ready: readyQuery.data,
         runtime: runtimeQuery.data,
         portfolio: portfolioQuery.data,
