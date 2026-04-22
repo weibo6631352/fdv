@@ -28,7 +28,7 @@ an extension.
 - Modify `src/strategies/current/`: import the new API, implement current FDV behavior as a business extension, and move equal-weight allocation policy here.
 - Modify `src/polymarket_trader/app/strategy_host/`: rename loader concepts from strategy to extension while keeping the directory until call sites are migrated.
 - Modify `src/polymarket_trader/app/market_service.py`, `strategy_service.py`, `reconcile_service.py`, and workers: call extension hooks instead of fixed strategy-specific protocols.
-- Modify `src/polymarket_trader/config.py` and docs: replace `strategy_module` naming with `extension_module` and make runtime wiring explicit.
+- Modify `src/polymarket_trader/config.py` and docs: replace old runtime module naming with `extension_module` and make runtime wiring explicit.
 - Rename generic market payload parsing from `domain/classifier.py` into app/infra naming so domain no longer owns external payload parsing.
 - Split allocation policy: generic allocation DTOs remain framework-owned, equal-weight allocation moves into the current extension.
 - Delete the legacy strategy SDK package after imports and tests migrate.
@@ -504,7 +504,7 @@ git commit -m "refactor: migrate strategy SDK to extension API"
 - Modify: `src/polymarket_trader/app/strategy_host/loader.py`
 - Modify: `src/polymarket_trader/app/strategy_host/__init__.py`
 - Modify: `src/polymarket_trader/app/strategy_host/replay.py`
-- Modify: docs and tests referencing `strategy_module` runtime configuration
+- Modify: docs and tests referencing old runtime module configuration
 
 - [ ] **Step 1: Write settings test**
 
@@ -520,7 +520,7 @@ def test_settings_use_extension_module_naming() -> None:
     settings = Settings(extension_module="strategies.current")
 
     assert settings.extension_module == "strategies.current"
-    assert "strategy_module" not in settings.sanitized_dump()
+    assert settings.sanitized_dump()["extension_module"] == "strategies.current"
 ```
 
 - [ ] **Step 2: Run settings test to verify it fails**
@@ -534,8 +534,7 @@ Expected: FAIL because `Settings` does not define `extension_module`.
 In `src/polymarket_trader/config.py`, replace:
 
 ```python
-strategy_module: str = "strategies.current"
-strategy_config_path: str | None = None
+legacy module/config fields
 ```
 
 with:
@@ -1073,7 +1072,7 @@ def test_strategy_service_accepts_extension_hooks_name() -> None:
 
 Run: `pytest tests/app/test_strategy_service.py::test_strategy_service_accepts_extension_hooks_name -q`
 
-Expected: FAIL because `StrategyService` still expects `strategy_module`.
+Expected: FAIL because `StrategyService` still expects the old constructor keyword.
 
 - [ ] **Step 3: Rename service constructor dependencies**
 
@@ -1092,7 +1091,7 @@ self._extension_hooks = extension_hooks
 Replace calls like:
 
 ```python
-self._strategy_module.decide_entry(...)
+self._extension_hooks.decide_entry(...)
 ```
 
 with:
@@ -1127,7 +1126,7 @@ to `MarketService`, `StrategyService`, and `ReconcileService`.
 
 - [ ] **Step 6: Update fake strategies in tests**
 
-Rename test parameters from `strategy_module=` to `extension_hooks=` when constructing services directly.
+Rename service-construction tests to use `extension_hooks=` when constructing services directly.
 Fake classes can keep their method names because they implement the hook protocol.
 
 - [ ] **Step 7: Run focused tests**
@@ -1208,10 +1207,10 @@ Expected: PASS after previous tasks. If it fails, each offender is a concrete cl
 
 For each offender, replace current-business naming with extension-neutral naming. Examples:
 
-- `strategy_module` -> `extension_hooks` or `extension_module`
-- `strategy_selected` payload key -> `extension_selected`
-- `strategy_reason` payload key -> `extension_reason`
-- `strategy factory` error text -> `extension factory`
+- old module keyword -> `extension_hooks` or `extension_module`
+- old selected payload key -> `extension_selected`
+- old reason payload key -> `extension_reason`
+- old factory error text -> `extension factory`
 
 - [ ] **Step 4: Update docs**
 

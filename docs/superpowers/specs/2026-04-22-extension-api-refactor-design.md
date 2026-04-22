@@ -224,7 +224,7 @@ Move or rename the current business leftovers:
 
 - Replace the legacy strategy SDK package with `src/polymarket_trader/extension_api/`, with compatibility avoided unless there
   is an explicit external contract.
-- `Settings.strategy_module = "strategies.current"` -> explicit extension module configuration with no
+- Old runtime module defaults -> explicit extension module configuration with no
   business default embedded in framework policy. Example deployments may still configure `strategies.current`.
 - `domain/classifier.py` -> generic market payload parsing under app/infra naming, such as
   `MarketPayloadParser`. It should parse required trading fields but not imply business classification.
