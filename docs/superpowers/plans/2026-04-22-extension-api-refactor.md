@@ -10,6 +10,18 @@
 
 ---
 
+## Test Migration Rule
+
+If an existing test only preserves the old single-strategy architecture, old package names, or old public API
+surface, delete it or rewrite it as a new extension-boundary test. Do not add compatibility exports, aliases,
+or framework code only to satisfy obsolete tests.
+
+Keep tests that protect real framework guarantees: risk gating, order execution path, reconcile behavior,
+runtime state, external payload parsing, database persistence, concurrency, and current strategy behavior as
+an extension.
+
+---
+
 ## File Structure Map
 
 - Create `src/polymarket_trader/extension_api/`: public extension contracts, contexts, decisions, hooks, commands, ports, config loading, and errors.
@@ -1284,4 +1296,3 @@ git commit -m "docs: clarify extension API implementation details"
 ```
 
 If no clarification is needed, leave the spec unchanged.
-
