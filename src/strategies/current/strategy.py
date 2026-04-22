@@ -1,17 +1,17 @@
 """当前默认策略的装配入口。
 
 这个文件把 discovery、universe、trading、recovery、tracking 这些子模块
-组装成一个完整的 ``StrategyModule`` 实现。
+组装成一个完整的 ``BusinessExtension`` 实现。
 """
 
 from __future__ import annotations
 
 from polymarket_trader.extension_api import (
     AccountSnapshotView,
-    BusinessExtension as StrategyModule,
+    BusinessExtension,
     DiscoveryQuery,
     EntrySizing,
-    ExtensionSpec as StrategySpec,
+    ExtensionSpec,
     RecoveryDecision,
     StrategyContext,
     StrategyDecision,
@@ -63,7 +63,7 @@ class CurrentStrategy:
 
         self._config = config
         self._ports = ports or StrategyPorts()
-        self._spec = StrategySpec(
+        self._spec = ExtensionSpec(
             name="current",
             version="1",
             description="Current runtime strategy implementation",
@@ -80,7 +80,7 @@ class CurrentStrategy:
         )
 
     @property
-    def spec(self) -> StrategySpec:
+    def spec(self) -> ExtensionSpec:
         """返回策略元信息。
 
         框架会用它展示策略名、版本、能力列表以及配置类型。
@@ -184,7 +184,7 @@ def build_strategy(
     *,
     ports: StrategyPorts | None = None,
     config_path: str | None = None,
-) -> StrategyModule:
+) -> BusinessExtension:
     """构造当前策略实例。
 
     参数：
@@ -194,7 +194,7 @@ def build_strategy(
             可选外部配置文件路径。未提供时使用默认配置。
 
     返回：
-        一个符合 ``StrategyModule`` 协议的当前策略实例。
+        一个符合 ``BusinessExtension`` 协议的当前策略实例。
     """
 
     return CurrentStrategy(

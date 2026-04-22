@@ -6,7 +6,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 from polymarket_trader.app.reconcile_service import ReconcileActionType, ReconcileService
-from polymarket_trader.app.trading_service import TradingService
+from polymarket_trader.app.trading_service import TradingReviewResult, TradingService
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.order import (
     CancelOrderIntent,
@@ -21,6 +21,7 @@ from polymarket_trader.domain.order import (
 )
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
+from polymarket_trader.domain.risk import RiskDecision
 from polymarket_trader.infra.outbox import LocalOutbox, build_domain_event_outbox_sink
 from polymarket_trader.extension_api import (
     EntrySizing,
@@ -92,6 +93,35 @@ class _StubExecutor:
             notional_usdc=intent.new_price * intent.size_shares,
             order_id="sell-2",
             reason="sell_replaced",
+        )
+
+
+class _RejectingTradingService:
+    async def review_intent(self, intent: SellOrderIntent, **kwargs: object) -> TradingReviewResult:
+        return TradingReviewResult(
+            intent=intent,
+            operation="sell",
+            risk_decision=RiskDecision(
+                passed=False,
+                reason="risk_rejected",
+                trace_id=intent.trace_id,
+                suggested_action="reject",
+            ),
+            submitted=False,
+            order_result=OrderResult(
+                trace_id=intent.trace_id,
+                condition_id=intent.condition_id,
+                token_id=intent.token_id,
+                market_slug=intent.market_slug,
+                status=OrderResultStatus.REJECTED,
+                intent=intent,
+                side=intent.side,
+                order_type=intent.order_type,
+                price=intent.price,
+                requested_size_shares=intent.size_shares,
+                notional_usdc=intent.notional_usdc,
+                reason="risk_rejected",
+            ),
         )
 
 
@@ -336,6 +366,59 @@ def test_reconcile_worker_cancels_open_buy_and_backfills_missing_sell() -> None:
         action_types = {action.action_type for action in result.plan.market_plans[0].actions}
         assert ReconcileActionType.CANCEL_ORDER in action_types
         assert ReconcileActionType.SUBMIT_ORDER in action_types
+
+    asyncio.run(run())
+
+
+def test_reconcile_worker_does_not_submit_after_trading_service_rejects() -> None:
+    async def run() -> None:
+        registry = MarketRegistry()
+        market = build_binary_market(
+            condition_id="condition",
+            market_slug="token-threshold-market",
+            no_token_id="token",
+            yes_token_id="yes-token",
+            tick_size=Decimal("0.01"),
+            min_order_size=Decimal("1"),
+            event_title="Will token reach a threshold?",
+            market_question="Will this project hit the target threshold?",
+            category="Crypto",
+            trading_status=TradingStatus.ELIGIBLE,
+        )
+        registry.upsert(market)
+
+        account_state_store = AccountStateStore()
+        account_state_store.upsert_position(
+            Position(
+                condition_id="condition",
+                token_id="token",
+                market_slug=market.market_slug,
+                shares=Decimal("5"),
+                cost_usdc=Decimal("3"),
+            )
+        )
+
+        executor = _StubExecutor()
+        worker = ReconcileWorker(
+            reconcile_service=_reconcile_service(),
+            registry_snapshot_provider=registry.snapshot,
+            account_state_store=account_state_store,
+            trading_service=_RejectingTradingService(),
+            executor=executor,
+        )
+
+        result = await worker.reconcile_once(trace_id="trace-reconcile-rejected")
+
+        assert result.plan.has_changes
+        action_types = {action.action_type for action in result.plan.market_plans[0].actions}
+        assert action_types == {ReconcileActionType.SUBMIT_ORDER}
+        assert executor.submitted_intents == []
+
+        snapshot = account_state_store.snapshot()
+        assert snapshot.open_sell_orders_for_market(market.condition_id, _no_token_id(market)) == ()
+        position = snapshot.get_position(market.condition_id, _no_token_id(market))
+        assert position is not None
+        assert position.open_sell_shares == Decimal("0")
 
     asyncio.run(run())
 

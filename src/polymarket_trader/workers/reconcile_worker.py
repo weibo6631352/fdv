@@ -386,13 +386,18 @@ class ReconcileWorker:
         cancel_intent = action.intent
         if not isinstance(cancel_intent, CancelOrderIntent):
             raise TypeError("cancel action is missing cancel intent")
+        if self._trading_service is None:
+            raise RuntimeError("trading_service_required")
 
-        result = None
-        executor = self._executor
-        if executor is not None and hasattr(executor, "cancel"):
-            result = executor.cancel(cancel_intent)
-            if hasattr(result, "__await__"):
-                await result
+        review = await self._trading_service.cancel(cancel_intent)
+        result = review.order_result
+        cancelled = (
+            review.submitted
+            and isinstance(result, OrderResult)
+            and result.status == OrderResultStatus.CANCELLED
+        )
+        if not cancelled:
+            return
 
         if self._account_state_store is not None and action.source_order_id is not None:
             self._account_state_store.remove_order(action.source_order_id)
@@ -409,9 +414,6 @@ class ReconcileWorker:
                     updated_position = position.with_open_sell_shares(remaining)
                 self._account_state_store.upsert_position(updated_position)
 
-        if result is not None and isinstance(result, OrderResult) and result.status == OrderResultStatus.CANCELLED:
-            return
-
     async def _apply_submit_order(
         self,
         action: ReconcileAction,
@@ -421,33 +423,28 @@ class ReconcileWorker:
         trade_intent = action.intent
         if not isinstance(trade_intent, (BuyOrderIntent, SellOrderIntent)):
             raise TypeError("submit action is missing trade intent")
+        if self._trading_service is None:
+            raise RuntimeError("trading_service_required")
 
-        submitted = False
-        if self._trading_service is not None:
-            review = await self._trading_service.review_intent(
-                trade_intent,
-                market=market,
-                position=account_snapshot.get_position(action.condition_id, action.token_id),
-                open_orders=account_snapshot.open_orders_for_market(action.condition_id, action.token_id),
-                classification_passed=True,
-                market_active=market.trading_status == TradingStatus.ELIGIBLE,
-                market_open=market.trading_status == TradingStatus.ELIGIBLE,
-                clob_enabled=True,
-                resolved=market.trading_status == TradingStatus.RESOLVED,
-                cancelled=False,
-                archived=market.trading_status == TradingStatus.CLOSED,
-                balance_usdc=account_snapshot.balance_usdc,
-                allowance_usdc=account_snapshot.allowance_usdc,
-                max_open_orders=None,
-                min_order_size=market.min_order_size,
-                operation=trade_intent.side.value.lower(),
-            )
-            submitted = review.submitted
-        if not submitted and self._executor is not None and hasattr(self._executor, "submit"):
-            result = self._executor.submit(trade_intent)
-            if hasattr(result, "__await__"):
-                result = await result
-            submitted = _submission_succeeded(result)
+        review = await self._trading_service.review_intent(
+            trade_intent,
+            market=market,
+            position=account_snapshot.get_position(action.condition_id, action.token_id),
+            open_orders=account_snapshot.open_orders_for_market(action.condition_id, action.token_id),
+            classification_passed=True,
+            market_active=market.trading_status == TradingStatus.ELIGIBLE,
+            market_open=market.trading_status == TradingStatus.ELIGIBLE,
+            clob_enabled=True,
+            resolved=market.trading_status == TradingStatus.RESOLVED,
+            cancelled=False,
+            archived=market.trading_status == TradingStatus.CLOSED,
+            balance_usdc=account_snapshot.balance_usdc,
+            allowance_usdc=account_snapshot.allowance_usdc,
+            max_open_orders=None,
+            min_order_size=market.min_order_size,
+            operation=trade_intent.side.value.lower(),
+        )
+        submitted = review.submitted and _submission_succeeded(review.order_result)
 
         if self._account_state_store is not None and submitted:
             order_id = (
@@ -521,18 +518,12 @@ class ReconcileWorker:
         replace_intent = action.intent
         if not isinstance(replace_intent, ReplaceOrderIntent):
             raise TypeError("replace action is missing replace intent")
+        if self._trading_service is None:
+            raise RuntimeError("trading_service_required")
 
-        result = None
-        submitted = False
-        if self._trading_service is not None:
-            review = await self._trading_service.replace(replace_intent)
-            result = review.order_result
-            submitted = review.submitted and _submission_succeeded(result)
-        if not submitted and self._executor is not None and hasattr(self._executor, "replace"):
-            result = self._executor.replace(replace_intent)
-            if hasattr(result, "__await__"):
-                result = await result
-            submitted = _submission_succeeded(result)
+        review = await self._trading_service.replace(replace_intent)
+        result = review.order_result
+        submitted = review.submitted and _submission_succeeded(result)
 
         if self._account_state_store is None or not submitted:
             return
