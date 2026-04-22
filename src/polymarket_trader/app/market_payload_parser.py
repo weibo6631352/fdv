@@ -125,7 +125,7 @@ class MarketParseResult:
         trading_status: TradingStatus = TradingStatus.ELIGIBLE,
     ) -> Market:
         if not self.accepted:
-            raise ValueError("rejected classification cannot be converted to Market")
+            raise ValueError("rejected parse result cannot be converted to Market")
         if (
             self.condition_id is None
             or self.market_slug is None
@@ -133,7 +133,7 @@ class MarketParseResult:
             or self.tick_size is None
             or self.min_order_size is None
         ):
-            raise ValueError("accepted classification is missing required market fields")
+            raise ValueError("accepted parse result is missing required market fields")
         return Market(
             condition_id=self.condition_id,
             market_slug=self.market_slug,
@@ -156,44 +156,6 @@ class MarketParseResult:
             tags=self.tags,
             matched_keywords=self.matched_keywords,
             trading_status=trading_status,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class TargetMarketAccepted:
-    classification: MarketParseResult
-    trace_id: str
-    event_id: str
-    created_at: datetime = field(default_factory=datetime.utcnow)
-
-    @property
-    def event_type(self) -> DomainEventType:
-        return DomainEventType.MARKET_FILTERED_IN
-
-    def to_domain_event(self) -> DomainEvent:
-        return self.classification.to_event(
-            trace_id=self.trace_id,
-            event_id=self.event_id,
-            created_at=self.created_at,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class TargetMarketRejected:
-    classification: MarketParseResult
-    trace_id: str
-    event_id: str
-    created_at: datetime = field(default_factory=datetime.utcnow)
-
-    @property
-    def event_type(self) -> DomainEventType:
-        return DomainEventType.MARKET_FILTERED_OUT
-
-    def to_domain_event(self) -> DomainEvent:
-        return self.classification.to_event(
-            trace_id=self.trace_id,
-            event_id=self.event_id,
-            created_at=self.created_at,
         )
 
 
