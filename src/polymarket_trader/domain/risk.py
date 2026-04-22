@@ -67,63 +67,27 @@ class RiskManager:
     ) -> RiskDecision:
         # 这里只读本地快照和热状态；P0 路径不允许为了下单临时打 REST 或查数据库。
         open_orders = tuple(open_orders)
-        if portfolio_total_invested_usdc is None and allocation_plan is not None:
-            # allocation plan 里通常已经包含当前待审查 intent 的预算；这里要扣掉它，避免总仓检查重复计数。
-            portfolio_total_invested_usdc = allocation_plan.allocated_budget_usdc - _intent_notional_usdc(
-                intent
-            )
-        if portfolio_total_invested_usdc is None:
-            portfolio_total_invested_usdc = Decimal("0")
-        if portfolio_total_invested_usdc < Decimal("0"):
-            portfolio_total_invested_usdc = Decimal("0")
-        if open_orders_count is None:
-            open_orders_count = len(open_orders)
-
         checks: list[RiskCheck] = []
-
         notional_usdc = _intent_notional_usdc(intent)
-        if notional_usdc <= Decimal("0"):
-            return self._fail(
-                trace_id=intent.trace_id,
-                checks=checks,
-                name="order_size_gate",
-                reason="missing_order_size",
-                field="intent.amount_usdc",
-                suggested_action="reject",
-                retryable=False,
-            )
-
-        checks.append(
-            RiskCheck(
-                name="order_size_gate",
-                passed=True,
-                field=(
-                    "intent.amount_usdc"
-                    if intent.amount_usdc is not None
-                    else "intent.size_shares"
-                ),
-                value=notional_usdc,
-            )
+        portfolio_total_invested_usdc = _normalize_portfolio_total(
+            intent=intent,
+            allocation_plan=allocation_plan,
+            portfolio_total_invested_usdc=portfolio_total_invested_usdc,
         )
+        open_orders_count = len(open_orders) if open_orders_count is None else open_orders_count
 
-        if classification_passed is False:
-            return self._fail(
-                trace_id=intent.trace_id,
-                checks=checks,
-                name="classification_gate",
-                reason=classification_reason or "market_out_of_universe",
-                field="classification",
-                suggested_action="reject",
-                retryable=False,
-            )
-        checks.append(
-            RiskCheck(
-                name="classification_gate",
-                passed=True,
-                field="classification",
-                value=classification_passed if classification_passed is not None else True,
-            )
+        decision = self._check_order_size(intent, checks, notional_usdc)
+        if decision is not None:
+            return decision
+
+        decision = self._check_classification(
+            intent,
+            checks,
+            classification_passed=classification_passed,
+            classification_reason=classification_reason,
         )
+        if decision is not None:
+            return decision
 
         (
             market_active,
@@ -142,7 +106,166 @@ class RiskManager:
             archived=archived,
         )
 
-        # 这些是强制门禁：市场状态不对时，下单只会把错误状态继续放大，必须在本地直接拦住。
+        decision = self._check_market_state(
+            intent,
+            checks,
+            market=market,
+            market_active=market_active,
+            market_open=market_open,
+            clob_enabled=clob_enabled,
+            resolved=resolved,
+            cancelled=cancelled,
+            archived=archived,
+        )
+        if decision is not None:
+            return decision
+
+        decision = self._check_price_and_tick(intent, checks, market=market, orderbook=orderbook)
+        if decision is not None:
+            return decision
+
+        market_min_order_size = _effective_min_order_size(market=market, min_order_size=min_order_size)
+        decision = self._check_min_order_size(
+            intent,
+            checks,
+            notional_usdc=notional_usdc,
+            market_min_order_size=market_min_order_size,
+        )
+        if decision is not None:
+            return decision
+
+        market_exposure_usdc = current_exposure_usdc(
+            position,
+            _filter_open_orders_for_subject(open_orders, intent),
+        )
+        decision = self._check_exposure_limits(
+            intent,
+            checks,
+            notional_usdc=notional_usdc,
+            market_exposure_usdc=market_exposure_usdc,
+            portfolio_total_invested_usdc=portfolio_total_invested_usdc,
+            max_order_usdc=max_order_usdc,
+            max_market_usdc=max_market_usdc,
+            max_total_usdc=max_total_usdc,
+        )
+        if decision is not None:
+            return decision
+
+        decision = self._check_operational_limits(
+            intent,
+            checks,
+            open_orders_count=open_orders_count,
+            max_open_orders=max_open_orders,
+            retry_count=retry_count,
+            order_retry_limit=order_retry_limit,
+        )
+        if decision is not None:
+            return decision
+
+        decision = self._check_account_gates(
+            intent,
+            checks,
+            notional_usdc=notional_usdc,
+            geoblocked=geoblocked,
+            balance_usdc=balance_usdc,
+            allowance_usdc=allowance_usdc,
+        )
+        if decision is not None:
+            return decision
+
+        decision = self._check_liquidity(
+            intent,
+            checks,
+            orderbook=orderbook,
+            notional_usdc=notional_usdc,
+        )
+        if decision is not None:
+            return decision
+
+        decision = self._check_open_buy_orders(intent, checks, open_orders)
+        if decision is not None:
+            return decision
+
+        return RiskDecision(
+            trace_id=intent.trace_id,
+            passed=True,
+            reason="passed",
+            suggested_action="submit",
+            retryable=False,
+            checks=tuple(checks),
+        )
+
+    def _check_order_size(
+        self,
+        intent: OrderIntent,
+        checks: list[RiskCheck],
+        notional_usdc: Decimal,
+    ) -> RiskDecision | None:
+        if notional_usdc <= Decimal("0"):
+            return self._fail(
+                trace_id=intent.trace_id,
+                checks=checks,
+                name="order_size_gate",
+                reason="missing_order_size",
+                field="intent.amount_usdc",
+                suggested_action="reject",
+                retryable=False,
+            )
+        checks.append(
+            RiskCheck(
+                name="order_size_gate",
+                passed=True,
+                field=(
+                    "intent.amount_usdc"
+                    if intent.amount_usdc is not None
+                    else "intent.size_shares"
+                ),
+                value=notional_usdc,
+            )
+        )
+        return None
+
+    def _check_classification(
+        self,
+        intent: OrderIntent,
+        checks: list[RiskCheck],
+        *,
+        classification_passed: bool | None,
+        classification_reason: str | None,
+    ) -> RiskDecision | None:
+        if classification_passed is False:
+            return self._fail(
+                trace_id=intent.trace_id,
+                checks=checks,
+                name="classification_gate",
+                reason=classification_reason or "market_out_of_universe",
+                field="classification",
+                suggested_action="reject",
+                retryable=False,
+            )
+        checks.append(
+            RiskCheck(
+                name="classification_gate",
+                passed=True,
+                field="classification",
+                value=classification_passed if classification_passed is not None else True,
+            )
+        )
+        return None
+
+    def _check_market_state(
+        self,
+        intent: OrderIntent,
+        checks: list[RiskCheck],
+        *,
+        market: Market | None,
+        market_active: bool,
+        market_open: bool,
+        clob_enabled: bool,
+        resolved: bool,
+        cancelled: bool,
+        archived: bool,
+    ) -> RiskDecision | None:
         for name, passed, reason, field_name, suggested_action in (
             (
                 "market_active_gate",
@@ -182,7 +305,6 @@ class RiskManager:
                 )
 
         if market is not None and market.trading_status != TradingStatus.ELIGIBLE:
-            # 分类和状态都必须在本地快照里满足；CANDIDATE/PAUSED/CLOSED 继续下单只会制造无效风控流量。
             return self._fail(
                 trace_id=intent.trace_id,
                 checks=checks,
@@ -193,7 +315,16 @@ class RiskManager:
                 suggested_action="reject",
                 retryable=False,
             )
+        return None
 
+    def _check_price_and_tick(
+        self,
+        intent: OrderIntent,
+        checks: list[RiskCheck],
+        *,
+        market: Market | None,
+        orderbook: OrderbookSnapshot | None,
+    ) -> RiskDecision | None:
         if intent.price <= Decimal("0"):
             return self._fail(
                 trace_id=intent.trace_id,
@@ -227,16 +358,16 @@ class RiskManager:
                 value={"price": intent.price, "tick_size": tick_size},
             )
         )
+        return None
 
-        if market is not None:
-            market_min_order_size = market.min_order_size
-        else:
-            market_min_order_size = min_order_size
-        if market_min_order_size is None:
-            market_min_order_size = Decimal("0")
-        if min_order_size is not None and market_min_order_size < min_order_size:
-            market_min_order_size = min_order_size
-
+    def _check_min_order_size(
+        self,
+        intent: OrderIntent,
+        checks: list[RiskCheck],
+        *,
+        notional_usdc: Decimal,
+        market_min_order_size: Decimal,
+    ) -> RiskDecision | None:
         if notional_usdc < market_min_order_size:
             return self._fail(
                 trace_id=intent.trace_id,
@@ -248,11 +379,20 @@ class RiskManager:
                 suggested_action="reject",
                 retryable=False,
             )
+        return None
 
-        market_exposure_usdc = current_exposure_usdc(
-            position,
-            _filter_open_orders_for_subject(open_orders, intent),
-        )
+    def _check_exposure_limits(
+        self,
+        intent: OrderIntent,
+        checks: list[RiskCheck],
+        *,
+        notional_usdc: Decimal,
+        market_exposure_usdc: Decimal,
+        portfolio_total_invested_usdc: Decimal,
+        max_order_usdc: Decimal | None,
+        max_market_usdc: Decimal | None,
+        max_total_usdc: Decimal | None,
+    ) -> RiskDecision | None:
         if max_order_usdc is not None and notional_usdc > max_order_usdc:
             return self._fail(
                 trace_id=intent.trace_id,
@@ -300,7 +440,18 @@ class RiskManager:
                 suggested_action="reduce_size",
                 retryable=False,
             )
+        return None
 
+    def _check_operational_limits(
+        self,
+        intent: OrderIntent,
+        checks: list[RiskCheck],
+        *,
+        open_orders_count: int,
+        max_open_orders: int | None,
+        retry_count: int,
+        order_retry_limit: int | None,
+    ) -> RiskDecision | None:
         if max_open_orders is not None and open_orders_count >= max_open_orders:
             return self._fail(
                 trace_id=intent.trace_id,
@@ -324,9 +475,19 @@ class RiskManager:
                 suggested_action="wait",
                 retryable=False,
             )
+        return None
 
+    def _check_account_gates(
+        self,
+        intent: OrderIntent,
+        checks: list[RiskCheck],
+        *,
+        notional_usdc: Decimal,
+        geoblocked: bool,
+        balance_usdc: Decimal | None,
+        allowance_usdc: Decimal | None,
+    ) -> RiskDecision | None:
         if geoblocked:
-            # 地理限制、allowance 和余额都来自本地已同步状态；这些信息不需要，也不应该在 P0 路径临时去查慢源。
             return self._fail(
                 trace_id=intent.trace_id,
                 checks=checks,
@@ -359,24 +520,40 @@ class RiskManager:
                 suggested_action="approve_or_reduce",
                 retryable=False,
             )
+        return None
 
-        if orderbook is not None:
-            depth_usdc = _orderbook_depth_usdc(orderbook, price_cap=intent.price)
-            if depth_usdc < notional_usdc:
-                return self._fail(
-                    trace_id=intent.trace_id,
-                    checks=checks,
-                    name="liquidity_gate",
-                    reason="liquidity_insufficient",
-                    field="orderbook.depth_usdc",
-                    value={"depth_usdc": depth_usdc, "notional_usdc": notional_usdc},
-                    suggested_action="wait",
-                    retryable=True,
-                )
+    def _check_liquidity(
+        self,
+        intent: OrderIntent,
+        checks: list[RiskCheck],
+        *,
+        orderbook: OrderbookSnapshot | None,
+        notional_usdc: Decimal,
+    ) -> RiskDecision | None:
+        if orderbook is None:
+            return None
+        depth_usdc = _orderbook_depth_usdc(orderbook, price_cap=intent.price)
+        if depth_usdc < notional_usdc:
+            return self._fail(
+                trace_id=intent.trace_id,
+                checks=checks,
+                name="liquidity_gate",
+                reason="liquidity_insufficient",
+                field="orderbook.depth_usdc",
+                value={"depth_usdc": depth_usdc, "notional_usdc": notional_usdc},
+                suggested_action="wait",
+                retryable=True,
+            )
+        return None
 
+    def _check_open_buy_orders(
+        self,
+        intent: OrderIntent,
+        checks: list[RiskCheck],
+        open_orders: tuple[Order, ...],
+    ) -> RiskDecision | None:
         open_buy_orders = _open_buy_orders_for_subject(open_orders, intent)
         if open_buy_orders:
-            # open BUY 长时间挂着说明买入侧状态已经偏离了预期，继续叠单会让仓位和审计都更难解释，必须先 cancel。
             return self._fail(
                 trace_id=intent.trace_id,
                 checks=checks,
@@ -390,7 +567,6 @@ class RiskManager:
                 suggested_action="cancel_open_buy",
                 retryable=False,
             )
-
         checks.append(
             RiskCheck(
                 name="open_buy_gate",
@@ -399,15 +575,7 @@ class RiskManager:
                 value=0,
             )
         )
-
-        return RiskDecision(
-            trace_id=intent.trace_id,
-            passed=True,
-            reason="passed",
-            suggested_action="submit",
-            retryable=False,
-            checks=tuple(checks),
-        )
+        return None
 
     def _fail(
         self,
@@ -441,6 +609,23 @@ class RiskManager:
             retryable=retryable,
             checks=tuple(checks),
         )
+
+
+def _normalize_portfolio_total(
+    *,
+    intent: OrderIntent,
+    allocation_plan: AllocationPlan | None,
+    portfolio_total_invested_usdc: Decimal | None,
+) -> Decimal:
+    if portfolio_total_invested_usdc is None and allocation_plan is not None:
+        portfolio_total_invested_usdc = allocation_plan.allocated_budget_usdc - _intent_notional_usdc(
+            intent
+        )
+    if portfolio_total_invested_usdc is None:
+        portfolio_total_invested_usdc = Decimal("0")
+    if portfolio_total_invested_usdc < Decimal("0"):
+        return Decimal("0")
+    return portfolio_total_invested_usdc
 
 
 def _intent_notional_usdc(intent: OrderIntent) -> Decimal:
@@ -477,6 +662,21 @@ def _resolve_market_flags(
     cancelled = False if cancelled is None else cancelled
     archived = False if archived is None else archived
     return market_active, market_open, clob_enabled, resolved, cancelled, archived
+
+
+def _effective_min_order_size(
+    *,
+    market: Market | None,
+    min_order_size: Decimal | None,
+) -> Decimal:
+    market_min_order_size = market.min_order_size if market is not None else min_order_size
+    if market_min_order_size is None:
+        market_min_order_size = Decimal("0")
+    if min_order_size is not None and market_min_order_size < min_order_size:
+        return min_order_size
+    return market_min_order_size
+
+
 def _effective_tick_size(
     *,
     market: Market | None,
