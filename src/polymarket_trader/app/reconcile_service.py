@@ -19,7 +19,11 @@ from polymarket_trader.domain.order import (
 from polymarket_trader.domain.position import Position
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistrySnapshot
-from strategy_sdk import MarketTokenView, StrategyContext, StrategyModule
+from polymarket_trader.extension_api import (
+    BusinessExtension as StrategyModule,
+    MarketTokenView,
+    StrategyContext,
+)
 
 
 class ReconcileActionType(StrEnum):

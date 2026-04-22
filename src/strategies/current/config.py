@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from strategy_sdk import load_strategy_config
+from polymarket_trader.extension_api import load_extension_config
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,4 +68,4 @@ def load_current_strategy_config(config_path: str | None) -> CurrentStrategyConf
         解析后的 ``CurrentStrategyConfig``。
     """
 
-    return load_strategy_config(CurrentStrategyConfig, config_path) or default_strategy_config()
+    return load_extension_config(CurrentStrategyConfig, config_path) or default_strategy_config()

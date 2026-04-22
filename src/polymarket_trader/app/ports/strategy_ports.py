@@ -8,7 +8,7 @@ from polymarket_trader.domain.order import Order
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistry
-from strategy_sdk import StrategyPorts
+from polymarket_trader.extension_api import StrategyPorts
 
 OrderbookReader = Callable[[str], OrderbookSnapshot | None]
 AccountSnapshotProvider = Callable[[], AccountSnapshot]
@@ -128,7 +128,6 @@ def build_strategy_ports(
     return StrategyPorts(
         market=market_port,
         account=AccountStatePort(snapshot_provider=snapshot_provider),
-        registry=RegistryStatePort(registry=registry),
         runtime=RuntimeStatePort(snapshot_provider=snapshot_provider),
         history=OrderHistoryPort(snapshot_provider=snapshot_provider),
         telemetry=NullTelemetryPort(),

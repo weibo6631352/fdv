@@ -5,10 +5,10 @@ import asyncio
 from polymarket_trader.app.market_service import MarketService
 from polymarket_trader.domain.events import DomainEventType
 from polymarket_trader.infra.outbox import LocalOutbox, build_domain_event_outbox_sink
+from polymarket_trader.extension_api import ExtensionSpec as StrategySpec, UniverseDecision
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
 from polymarket_trader.workers.market_discovery_worker import MarketDiscoveryWorker
-from strategy_sdk.models import StrategySpec, UniverseDecision
 
 
 class _RejectingStrategy:

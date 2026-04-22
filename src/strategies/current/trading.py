@@ -16,7 +16,7 @@ from polymarket_trader.domain.allocation import (
     current_exposure_usdc,
 )
 from polymarket_trader.domain.market import TradingStatus
-from strategy_sdk import EntryCandidate, EntrySizing, StrategyContext, StrategyDecision
+from polymarket_trader.extension_api import EntryCandidate, EntrySizing, StrategyContext, StrategyDecision
 
 from strategies.current.config import CurrentStrategyConfig
 from strategies.current.outcomes import is_primary_token

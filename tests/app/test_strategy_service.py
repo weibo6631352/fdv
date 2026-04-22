@@ -7,15 +7,15 @@ from polymarket_trader.app.strategy_service import StrategyService
 from polymarket_trader.domain.allocation import Allocation, AllocationPlan
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
-from polymarket_trader.runtime.registry import MarketRegistry
-from strategy_sdk.models import (
+from polymarket_trader.extension_api import (
     EntrySizing,
+    ExtensionSpec as StrategySpec,
     RecoveryDecision,
     StrategyContext,
     StrategyDecision,
-    StrategySpec,
     UniverseDecision,
 )
+from polymarket_trader.runtime.registry import MarketRegistry
 from tests.helpers.markets import build_binary_market
 
 

@@ -11,7 +11,7 @@ from polymarket_trader.domain.market import Market
 from polymarket_trader.observability.trace import ensure_trace_id
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistry
-from strategy_sdk import StrategyModule, UniverseDecision
+from polymarket_trader.extension_api import BusinessExtension as StrategyModule, UniverseDecision
 
 AccountSnapshotProvider = Callable[[], AccountSnapshot]
 

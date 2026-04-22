@@ -3,7 +3,12 @@ from __future__ import annotations
 from importlib import import_module
 from types import ModuleType
 
-from strategy_sdk import StrategyLoadError, StrategyManifest, StrategyModule, StrategyPorts
+from polymarket_trader.extension_api import (
+    BusinessExtension as StrategyModule,
+    ExtensionLoadError,
+    ExtensionManifest as StrategyManifest,
+    StrategyPorts,
+)
 
 
 def load_strategy(
@@ -15,7 +20,7 @@ def load_strategy(
     manifest = load_strategy_manifest(module_path)
     strategy = manifest.factory(ports=ports, config_path=config_path)
     if not isinstance(strategy, StrategyModule):
-        raise StrategyLoadError(
+        raise ExtensionLoadError(
             f"strategy factory '{manifest.module_path}' did not return a StrategyModule-compatible object"
         )
     return strategy
@@ -29,12 +34,12 @@ def load_strategy_manifest(module_path: str) -> StrategyManifest:
     try:
         manifest_module = import_module(f"{module_path}.manifest")
     except ModuleNotFoundError as exc:
-        raise StrategyLoadError(
+        raise ExtensionLoadError(
             f"strategy module '{module_path}' does not expose a manifest"
         ) from exc
     manifest = _extract_manifest(manifest_module)
     if manifest is None:
-        raise StrategyLoadError(f"strategy module '{module_path}' does not expose a valid manifest")
+        raise ExtensionLoadError(f"strategy module '{module_path}' does not expose a valid manifest")
     return manifest
 
 

@@ -6,8 +6,8 @@ from decimal import Decimal
 from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
+from polymarket_trader.extension_api import EntryCandidate, EntrySizing, StrategyAction, StrategyContext
 from polymarket_trader.runtime.account_state import AccountSnapshot
-from strategy_sdk.models import EntryCandidate, EntrySizing, StrategyAction, StrategyContext
 from strategies.current.strategy import build_strategy as build_current_strategy
 from tests.helpers.markets import build_binary_market
 

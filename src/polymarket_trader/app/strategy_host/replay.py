@@ -14,7 +14,7 @@ from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.registry import MarketRegistry
-from strategy_sdk import load_mapping_file
+from polymarket_trader.extension_api import load_mapping_file
 
 
 def run_entry_replay(

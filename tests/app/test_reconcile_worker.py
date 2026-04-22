@@ -22,16 +22,16 @@ from polymarket_trader.domain.order import (
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
 from polymarket_trader.infra.outbox import LocalOutbox, build_domain_event_outbox_sink
-from polymarket_trader.runtime.account_state import AccountStateStore
-from polymarket_trader.runtime.event_bus import EventBus
-from polymarket_trader.runtime.registry import MarketRegistry
-from strategy_sdk.models import (
+from polymarket_trader.extension_api import (
+    ExtensionSpec as StrategySpec,
     RecoveryDecision,
     StrategyContext,
     StrategyDecision,
-    StrategySpec,
     UniverseDecision,
 )
+from polymarket_trader.runtime.account_state import AccountStateStore
+from polymarket_trader.runtime.event_bus import EventBus
+from polymarket_trader.runtime.registry import MarketRegistry
 from strategies.current.strategy import build_strategy
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 from polymarket_trader.workers.reconcile_worker import ReconcileWorker

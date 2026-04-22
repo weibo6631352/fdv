@@ -50,7 +50,11 @@ from polymarket_trader.runtime import RuntimePhase, Scheduler, Supervisor, Worke
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
-from strategy_sdk import DiscoveryEndpoint, DiscoveryQuery, StrategyModule
+from polymarket_trader.extension_api import (
+    BusinessExtension as StrategyModule,
+    DiscoveryEndpoint,
+    DiscoveryQuery,
+)
 from polymarket_trader.workers.market_discovery_worker import MarketDiscoveryWorker
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 from polymarket_trader.workers.persistence_worker import PersistenceWorker

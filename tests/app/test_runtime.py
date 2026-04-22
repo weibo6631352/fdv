@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.config import Settings
+from polymarket_trader.extension_api import DiscoveryEndpoint, DiscoveryQuery
 from polymarket_trader.main import (
     FullMarketDiscoveryState,
     _coalesce_reconcile_scope,
@@ -18,7 +19,6 @@ from polymarket_trader.main import (
     build_runtime,
 )
 from polymarket_trader.runtime.event_bus import EventBus
-from strategy_sdk.models import DiscoveryEndpoint, DiscoveryQuery
 from tests.helpers.markets import build_binary_market
 
 

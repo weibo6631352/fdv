@@ -26,7 +26,7 @@ from polymarket_trader.domain.position import Position
 from polymarket_trader.domain.state_machine import MarketLifecycle
 from polymarket_trader.runtime.account_state import AccountSnapshot, AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
-from strategy_sdk import MarketTokenView, StrategyContext
+from polymarket_trader.extension_api import MarketTokenView, StrategyContext
 
 PositionsProvider = Callable[[], Iterable[Position]]
 OpenOrdersProvider = Callable[[], Iterable[Order]]

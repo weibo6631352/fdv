@@ -6,16 +6,16 @@
 
 from __future__ import annotations
 
-from strategy_sdk import (
+from polymarket_trader.extension_api import (
     AccountSnapshotView,
+    BusinessExtension as StrategyModule,
     DiscoveryQuery,
     EntrySizing,
+    ExtensionSpec as StrategySpec,
     RecoveryDecision,
     StrategyContext,
     StrategyDecision,
-    StrategyModule,
     StrategyPorts,
-    StrategySpec,
     UniverseDecision,
 )
 
@@ -78,6 +78,7 @@ class CurrentStrategy:
                 "tracking",
             ),
         )
+
     @property
     def spec(self) -> StrategySpec:
         """返回策略元信息。
@@ -86,6 +87,12 @@ class CurrentStrategy:
         """
 
         return self._spec
+
+    @property
+    def hooks(self) -> "CurrentStrategy":
+        """暴露策略 hook 集合。"""
+
+        return self
 
     @property
     def ports(self) -> StrategyPorts:

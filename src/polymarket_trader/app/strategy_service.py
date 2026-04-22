@@ -21,13 +21,13 @@ from polymarket_trader.domain.position import Position
 from polymarket_trader.observability.trace import ensure_trace_id
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistry
-from strategy_sdk import (
+from polymarket_trader.extension_api import (
+    BusinessExtension as StrategyModule,
     EntryCandidate,
     MarketTokenView,
     StrategyAction,
     StrategyContext,
     StrategyDecision,
-    StrategyModule,
 )
 
 OrderbookReader = Callable[[str], OrderbookSnapshot | None]

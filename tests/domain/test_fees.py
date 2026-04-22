@@ -6,7 +6,7 @@ from decimal import Decimal
 from polymarket_trader.domain.fees import build_taker_fee_preview, calculate_trade_fee
 from polymarket_trader.domain.market import Market
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
-from strategy_sdk import (
+from polymarket_trader.domain.fees import (
     build_taker_fee_preview as exported_build_taker_fee_preview,
     calculate_trade_fee as exported_calculate_trade_fee,
 )
@@ -123,6 +123,6 @@ def test_build_taker_fee_preview_returns_zero_quotes_when_fees_disabled() -> Non
     assert preview.sell.fee_usdc == Decimal("0.00000")
 
 
-def test_strategy_sdk_exports_fee_helpers() -> None:
+def test_domain_exports_fee_helpers() -> None:
     assert exported_calculate_trade_fee is calculate_trade_fee
     assert exported_build_taker_fee_preview is build_taker_fee_preview

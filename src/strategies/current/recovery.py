@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.domain.order import OrderSide
-from strategy_sdk import RecoveryDecision, StrategyContext, StrategyDecision
+from polymarket_trader.extension_api import RecoveryDecision, StrategyContext, StrategyDecision
 
 from strategies.current.config import CurrentStrategyConfig
 from strategies.current.outcomes import primary_token_id

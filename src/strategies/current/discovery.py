@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from strategy_sdk import DiscoveryEndpoint, DiscoveryQuery
+from polymarket_trader.extension_api import DiscoveryEndpoint, DiscoveryQuery
 
 from strategies.current.config import CurrentStrategyConfig
 

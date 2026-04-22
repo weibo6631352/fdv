@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from polymarket_trader.domain.market import Market
-from strategy_sdk import UniverseDecision
+from polymarket_trader.extension_api import UniverseDecision
 
 from strategies.current.config import CurrentStrategyConfig
 
