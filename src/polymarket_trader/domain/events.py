@@ -278,11 +278,8 @@ class AuditEvent:
             merged.update(dict(payload))
         merged.update(fields)
 
-        legacy_event_type = merged.pop("event_type", None)
         event_title = event_title or merged.pop("event_title", None)
         if event_title is None:
-            if legacy_event_type is not None:
-                raise ValueError("AuditEvent uses event_title, not event_type")
             raise ValueError("AuditEvent requires event_title")
         if trace_id is None:
             trace_id = merged.pop("trace_id", None)

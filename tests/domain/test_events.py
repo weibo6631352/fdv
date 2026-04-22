@@ -57,8 +57,8 @@ def test_outbox_event_accepts_iso_timestamp_string() -> None:
     assert event.created_at == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
-def test_audit_event_rejects_legacy_event_type_name() -> None:
-    with pytest.raises(ValueError, match="event_title"):
+def test_audit_event_requires_event_title_without_special_legacy_field_handling() -> None:
+    with pytest.raises(ValueError, match="requires event_title"):
         AuditEvent(event_type="order_submitted", trace_id="trace")
 
 
