@@ -689,13 +689,16 @@ def run_admin_api_exposes_hot_state_and_readiness_routes() -> None:
 
         assert orders["total"] == 2
         assert orders["items"][0]["order_id"] == "buy-1"
+        assert orders["items"][0]["event_slug"] == "sample-event-a"
         assert orders["items"][1]["side"] == "SELL"
 
         assert hot_positions["total"] == 1
         assert hot_positions["items"][0]["shares"] == "5"
+        assert hot_positions["items"][0]["event_slug"] == "sample-event-a"
 
         assert fills["total"] == 1
         assert fills["items"][0]["trade_id"] == "trade-1"
+        assert fills["items"][0]["event_slug"] == "sample-event-a"
 
         assert portfolio["allow_new_entries"] is True
         assert portfolio["markets_tracked"] == 1
@@ -955,6 +958,7 @@ def run_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypat
             idempotency_key="outbox-1",
             event_id="outbox-event-1",
             market_slug="sample-market-a",
+            event_slug="sample-event-a",
             condition_id="condition-sample",
             token_id="no-token-sample",
             reason="submit",
@@ -970,11 +974,20 @@ def run_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypat
             trace_id="trace-audit",
             event_id="audit-1",
             market_slug="sample-market-a",
+            event_slug="sample-event-a",
             condition_id="condition-sample",
             token_id="no-token-sample",
             order_id="buy-1",
             status="cancelled",
             reason="manual_cancel",
+        ),
+        AuditEvent(
+            event_title="market_discovered",
+            trace_id="trace-audit-no-slug",
+            event_id="audit-no-slug",
+            market_slug="sample-market-a",
+            condition_id="condition-sample",
+            reason="missing_event_slug",
         ),
     )
     allocations = (
@@ -1050,6 +1063,10 @@ def run_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypat
             "/audit-events",
             params={"trace_id": "trace-audit", "event_title": "order_cancelled"},
         ).json()
+        audit_without_slug_payload = client.get(
+            "/audit-events",
+            params={"trace_id": "trace-audit-no-slug"},
+        ).json()
         allocations_payload = client.get(
             "/allocations",
             params={"condition_id": "condition-sample"},
@@ -1066,14 +1083,18 @@ def run_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypat
         assert audit_payload["total"] == 1
         assert audit_payload["items"][0]["event_id"] == "audit-1"
         assert audit_payload["items"][0]["event_title"] == "order_cancelled"
+        assert audit_payload["items"][0]["event_slug"] == "sample-event-a"
+        assert audit_without_slug_payload["items"][0]["event_slug"] is None
 
         assert allocations_payload["total"] == 1
         assert allocations_payload["items"][0]["idempotency_key"] == "alloc-1"
         assert allocations_payload["items"][0]["target_budget_usdc"] == "50"
+        assert allocations_payload["items"][0]["event_slug"] == "sample-event-a"
 
         assert outbox_payload["total"] == 1
         assert outbox_payload["items"][0]["idempotency_key"] == "outbox-1"
         assert outbox_payload["items"][0]["priority"] == 1
+        assert outbox_payload["items"][0]["event_slug"] == "sample-event-a"
 
         assert filtered_orders["total"] == 1
         assert filtered_orders["items"][0]["order_id"] == "buy-1"
@@ -1106,3 +1127,4 @@ def run_admin_api_outbox_pending_prefers_live_runtime_queue() -> None:
     assert payload["total"] == 1
     assert payload["items"][0]["event_id"] == "live-outbox-event-1"
     assert payload["items"][0]["idempotency_key"] == "live-outbox-1"
+    assert payload["items"][0]["event_slug"] is None

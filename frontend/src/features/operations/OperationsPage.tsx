@@ -55,7 +55,7 @@ export const OperationsPage = () => {
       cell: (row) => (
         <div className="table-primary">
           {row.market_slug ? (
-            <MarketExternalLink className="market-list__title" marketSlug={row.market_slug}>
+            <MarketExternalLink className="market-list__title" eventSlug={row.event_slug}>
               {row.market_slug}
             </MarketExternalLink>
           ) : (

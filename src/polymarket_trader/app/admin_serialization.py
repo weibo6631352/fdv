@@ -266,6 +266,11 @@ class AdminSerializer:
                 market_slug=position.market_slug,
             ),
             "market_slug": position.market_slug,
+            "event_slug": self.market_event_slug(
+                condition_id=position.condition_id,
+                token_id=position.token_id,
+                market_slug=position.market_slug,
+            ),
             "shares": decimal_text(position.shares),
             "cost_usdc": decimal_text(position.cost_usdc),
             "open_buy_shares": decimal_text(position.open_buy_shares),
@@ -289,6 +294,11 @@ class AdminSerializer:
                 market_slug=order.market_slug,
             ),
             "market_slug": order.market_slug,
+            "event_slug": self.market_event_slug(
+                condition_id=order.condition_id,
+                token_id=order.token_id,
+                market_slug=order.market_slug,
+            ),
             "side": order.side.value,
             "order_type": order.order_type.value,
             "price": decimal_text(order.price),
@@ -313,6 +323,11 @@ class AdminSerializer:
             "event_type": str(fill.event_type),
             "event_id": fill.event_id,
             "market_slug": fill.market_slug,
+            "event_slug": self.market_event_slug(
+                condition_id=fill.condition_id,
+                token_id=fill.token_id,
+                market_slug=fill.market_slug,
+            ),
             "condition_id": fill.condition_id,
             "token_id": fill.token_id,
             "outcome": self.resolve_outcome_name(
@@ -338,6 +353,7 @@ class AdminSerializer:
             "event_id": event.event_id,
             "event_title": event.event_title,
             "market_slug": event.market_slug,
+            "event_slug": event.event_slug,
             "condition_id": event.condition_id,
             "token_id": event.token_id,
             "outcome": event.outcome,
@@ -363,6 +379,7 @@ class AdminSerializer:
             "idempotency_key": event.idempotency_key,
             "event_id": event.event_id,
             "market_slug": event.market_slug,
+            "event_slug": event.event_slug,
             "condition_id": event.condition_id,
             "token_id": event.token_id,
             "reason": event.reason,
@@ -379,6 +396,11 @@ class AdminSerializer:
             "condition_id": allocation.condition_id,
             "market_slug": allocation.market_slug,
             "token_id": allocation.token_id,
+            "event_slug": self.market_event_slug(
+                condition_id=allocation.condition_id,
+                token_id=allocation.token_id,
+                market_slug=allocation.market_slug,
+            ),
             "outcome": self.resolve_outcome_name(
                 condition_id=allocation.condition_id,
                 token_id=allocation.token_id,
@@ -414,6 +436,23 @@ class AdminSerializer:
             return None
         outcome = market.get_outcome_by_token_id(token_id)
         return None if outcome is None else outcome.outcome
+
+    def market_event_slug(
+        self,
+        *,
+        condition_id: str | None,
+        token_id: str | None,
+        market_slug: str | None,
+    ) -> str | None:
+        registry = self.registry_snapshot_provider()
+        market = None
+        if condition_id is not None:
+            market = registry.get_by_condition_id(condition_id)
+        if market is None and token_id is not None:
+            market = registry.get_by_token_id(token_id)
+        if market is None and market_slug is not None:
+            market = registry.get_by_slug(market_slug)
+        return None if market is None else market.event_slug
 
     def review(self, review: TradingReviewResult) -> dict[str, Any]:
         return {

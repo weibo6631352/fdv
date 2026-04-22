@@ -187,6 +187,7 @@ export interface PositionRecord {
   condition_id: string
   token_id: string
   market_slug: string | null
+  event_slug: string | null
   shares: string | null
   cost_usdc: string | null
   open_buy_shares: string | null
@@ -204,6 +205,7 @@ export interface OrderRecord {
   condition_id: string
   token_id: string
   market_slug: string | null
+  event_slug: string | null
   side: string
   order_type: string
   price: string | null
@@ -227,6 +229,7 @@ export interface FillRecord {
   event_type: string
   event_id: string | null
   market_slug: string | null
+  event_slug: string | null
   condition_id: string
   token_id: string
   reason: string | null
@@ -246,6 +249,7 @@ export interface AuditEventRecord {
   event_id: string | null
   event_title: string
   market_slug: string | null
+  event_slug: string | null
   condition_id: string | null
   token_id: string | null
   outcome: string | null
@@ -270,6 +274,7 @@ export interface OutboxEventRecord {
   idempotency_key: string | null
   event_id: string | null
   market_slug: string | null
+  event_slug: string | null
   condition_id: string | null
   token_id: string | null
   reason: string | null
@@ -284,6 +289,7 @@ export interface OutboxEventRecord {
 export interface AllocationRecord {
   condition_id: string
   market_slug: string | null
+  event_slug: string | null
   token_id: string | null
   target_budget_usdc: string | null
   buy_budget_usdc: string | null

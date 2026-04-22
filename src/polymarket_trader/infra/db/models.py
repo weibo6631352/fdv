@@ -1034,6 +1034,7 @@ class AuditEventModel(Base, TimestampMixin):
     trace_id: Mapped[str] = mapped_column(String(64), index=True)
     event_title: Mapped[str] = mapped_column(String(128), index=True)
     market_slug: Mapped[str | None] = mapped_column(String(255), index=True)
+    event_slug: Mapped[str | None] = mapped_column(String(255), index=True)
     condition_id: Mapped[str | None] = mapped_column(String(128), index=True)
     token_id: Mapped[str | None] = mapped_column(String(128), index=True)
     outcome: Mapped[str | None] = mapped_column(String(64), index=True)
@@ -1073,6 +1074,7 @@ class AuditEventModel(Base, TimestampMixin):
             trace_id=audit_event.trace_id,
             event_title=audit_event.event_title,
             market_slug=audit_event.market_slug,
+            event_slug=audit_event.event_slug,
             condition_id=audit_event.condition_id,
             token_id=audit_event.token_id,
             outcome=audit_event.outcome,
@@ -1093,6 +1095,7 @@ class AuditEventModel(Base, TimestampMixin):
     def to_domain(self) -> AuditEvent:
         return AuditEvent(
             event_title=self.event_title,
+            event_slug=self.event_slug,
             payload=dict(self.payload),
             trace_id=self.trace_id,
             created_at=self.created_at,
@@ -1110,6 +1113,7 @@ class OutboxEventModel(Base, TimestampMixin):
     event_type: Mapped[str] = mapped_column(String(128), index=True)
     idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     market_slug: Mapped[str | None] = mapped_column(String(255), index=True)
+    event_slug: Mapped[str | None] = mapped_column(String(255), index=True)
     condition_id: Mapped[str | None] = mapped_column(String(128), index=True)
     token_id: Mapped[str | None] = mapped_column(String(128), index=True)
     reason: Mapped[str | None] = mapped_column(Text)
@@ -1143,6 +1147,7 @@ class OutboxEventModel(Base, TimestampMixin):
             event_type=event.event_type,
             idempotency_key=event.idempotency_key,
             market_slug=event.market_slug,
+            event_slug=event.event_slug,
             condition_id=event.condition_id,
             token_id=event.token_id,
             reason=event.reason,
@@ -1160,6 +1165,7 @@ class OutboxEventModel(Base, TimestampMixin):
             idempotency_key=self.idempotency_key,
             event_id=self.event_id,
             market_slug=self.market_slug,
+            event_slug=self.event_slug,
             condition_id=self.condition_id,
             token_id=self.token_id,
             reason=self.reason,

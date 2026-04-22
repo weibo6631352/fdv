@@ -277,14 +277,12 @@ export const DashboardPage = () => {
                           <MarketExternalLink
                             className="market-list__title"
                             eventSlug={item.market.event_slug}
-                            marketSlug={item.market.market_slug}
                           >
                             {title}
                           </MarketExternalLink>
                           <MarketExternalLink
                             className="link-subtle"
                             eventSlug={item.market.event_slug}
-                            marketSlug={item.market.market_slug}
                           >
                             {item.market.market_slug}
                           </MarketExternalLink>
@@ -328,14 +326,12 @@ export const DashboardPage = () => {
                           <MarketExternalLink
                             className="market-list__title"
                             eventSlug={item.market.event_slug}
-                            marketSlug={item.market.market_slug}
                           >
                             {title}
                           </MarketExternalLink>
                           <MarketExternalLink
                             className="link-subtle"
                             eventSlug={item.market.event_slug}
-                            marketSlug={item.market.market_slug}
                           >
                             {item.market.market_slug}
                           </MarketExternalLink>
@@ -395,7 +391,7 @@ export const DashboardPage = () => {
                 <div key={allocation.idempotency_key ?? allocation.condition_id}>
                   <dt>
                     {allocation.market_slug ? (
-                      <MarketExternalLink className="market-list__title" marketSlug={allocation.market_slug}>
+                      <MarketExternalLink className="market-list__title" eventSlug={allocation.event_slug}>
                         {allocation.market_slug}
                       </MarketExternalLink>
                     ) : (

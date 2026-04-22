@@ -44,7 +44,7 @@ export const AuditPage = () => {
         <div className="table-primary">
           <strong>{row.event_title}</strong>
           {row.market_slug ? (
-            <MarketExternalLink className="link-subtle" marketSlug={row.market_slug}>
+            <MarketExternalLink className="link-subtle" eventSlug={row.event_slug}>
               {row.market_slug}
             </MarketExternalLink>
           ) : (
@@ -67,7 +67,7 @@ export const AuditPage = () => {
         <div className="table-primary">
           <strong>{row.event_type}</strong>
           {row.market_slug ? (
-            <MarketExternalLink className="link-subtle" marketSlug={row.market_slug}>
+            <MarketExternalLink className="link-subtle" eventSlug={row.event_slug}>
               {row.market_slug}
             </MarketExternalLink>
           ) : (

@@ -28,6 +28,20 @@ def test_audit_event_from_record_restores_serialized_timestamps() -> None:
     assert event.payload["updated_at"] == "2026-04-15 07:39:39.600000+00:00"
 
 
+def test_audit_event_from_record_restores_explicit_event_slug() -> None:
+    event = audit_event_from_record(
+        {
+            "trace_id": "trace-1",
+            "event_title": "market_discovered",
+            "market_slug": "sample-market-a",
+            "event_slug": "sample-event-a",
+        }
+    )
+
+    assert event is not None
+    assert event.event_slug == "sample-event-a"
+
+
 def test_market_from_record_prefers_fee_schedule_rate_from_raw_payload() -> None:
     market = market_from_record(
         {
@@ -147,6 +161,41 @@ def test_market_persistence_worker_materializes_explicit_market_snapshot() -> No
 
     assert record["parse_status"] == "accepted"
     assert record["market_data"]["condition_id"] == "condition-1"
+
+
+def test_market_persistence_worker_materializes_event_slug_for_audit_and_outbox() -> None:
+    builder = PersistenceRecordBuilder()
+    event = OutboxEvent(
+        trace_id="trace-1",
+        event_type=DomainEventType.MARKET_DISCOVERED.value,
+        idempotency_key="idempotency-key",
+        event_id="event-1",
+        condition_id="condition-1",
+        market_slug="sample-market-a",
+        event_slug="sample-event-a",
+        payload={
+            "accepted": True,
+            "parse_status": "accepted",
+            "market": {
+                "condition_id": "condition-1",
+                "market_slug": "sample-market-a",
+                "event_slug": "sample-event-a",
+                "token_ids": ["yes-token", "no-token"],
+                "outcomes": [
+                    {"token_id": "yes-token", "outcome": "YES"},
+                    {"token_id": "no-token", "outcome": "NO"},
+                ],
+                "tick_size": "0.01",
+                "min_order_size": "1",
+            },
+        },
+    )
+
+    records = dict(builder.route_event(event))
+
+    assert records["audit"]["event_slug"] == "sample-event-a"
+    assert records["outbox"]["event_slug"] == "sample-event-a"
+    assert records["market"]["event_slug"] == "sample-event-a"
 
 
 def test_market_from_record_restores_parse_reason_reject_reason() -> None:

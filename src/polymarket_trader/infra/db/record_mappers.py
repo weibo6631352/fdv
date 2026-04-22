@@ -240,6 +240,7 @@ def audit_event_from_record(record: Mapping[str, Any]) -> AuditEvent | None:
         event_title=event_title,
         trace_id=trace_id,
         created_at=created_at,
+        event_slug=_text(record.get("event_slug")),
         payload=payload,
     )
 
@@ -488,6 +489,7 @@ def outbox_event_from_record(record: Mapping[str, Any]) -> OutboxEvent | None:
         idempotency_key=idempotency_key,
         event_id=_text(record.get("event_id")) or "",
         market_slug=_text(record.get("market_slug")),
+        event_slug=_text(record.get("event_slug")),
         condition_id=_text(record.get("condition_id")),
         token_id=_text(record.get("token_id")),
         reason=_text(record.get("reason")),

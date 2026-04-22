@@ -10,5 +10,5 @@
     "esModuleInterop": true,
     "outDir": "../.frontend-test-build"
   },
-  "include": ["tests/**/*.ts", "src/shared/utils/marketViews.ts"]
+  "include": ["tests/**/*.ts", "src/shared/utils/marketViews.ts", "src/shared/utils/markets.ts"]
 }

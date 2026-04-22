@@ -3,7 +3,6 @@ import { buildPolymarketEventUrl } from '../utils/markets'
 
 interface MarketExternalLinkProps {
   eventSlug?: string | null
-  marketSlug?: string | null
   className?: string
   onClick?: MouseEventHandler<HTMLElement>
   children: ReactNode
@@ -11,12 +10,11 @@ interface MarketExternalLinkProps {
 
 export const MarketExternalLink = ({
   eventSlug,
-  marketSlug,
   className,
   onClick,
   children,
 }: MarketExternalLinkProps) => {
-  const url = buildPolymarketEventUrl(eventSlug, marketSlug)
+  const url = buildPolymarketEventUrl(eventSlug)
   if (!url) {
     return (
       <span className={className} onClick={onClick}>

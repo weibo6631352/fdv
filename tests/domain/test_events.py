@@ -57,6 +57,27 @@ def test_outbox_event_accepts_iso_timestamp_string() -> None:
     assert event.created_at == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
+def test_market_events_carry_event_slug_as_first_class_field() -> None:
+    audit = AuditEvent(
+        event_title="market_discovered",
+        trace_id="trace",
+        market_slug="sample-market-a",
+        event_slug="sample-event-a",
+    )
+    outbox = OutboxEvent(
+        trace_id="trace",
+        event_type="market_discovered",
+        idempotency_key="idem-1",
+        market_slug="sample-market-a",
+        event_slug="sample-event-a",
+    )
+
+    assert audit.event_slug == "sample-event-a"
+    assert audit.to_dict()["event_slug"] == "sample-event-a"
+    assert audit.to_payload()["event_slug"] == "sample-event-a"
+    assert outbox.event_slug == "sample-event-a"
+
+
 def test_audit_event_requires_event_title_without_special_case_field_handling() -> None:
     with pytest.raises(ValueError, match="requires event_title"):
         AuditEvent(event_type="order_submitted", trace_id="trace")

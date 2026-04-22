@@ -1,8 +1,5 @@
-export const buildPolymarketEventUrl = (
-  eventSlug: string | null | undefined,
-  marketSlug: string | null | undefined,
-): string | null => {
-  const slug = eventSlug?.trim() || marketSlug?.trim()
+export const buildPolymarketEventUrl = (eventSlug: string | null | undefined): string | null => {
+  const slug = eventSlug?.trim()
   if (!slug) {
     return null
   }

@@ -269,7 +269,6 @@ export const MarketsPage = () => {
             <MarketExternalLink
               className="market-list__title"
               eventSlug={row.market.event_slug}
-              marketSlug={row.market.market_slug}
               onClick={(event) => {
                 event.stopPropagation()
               }}
@@ -279,7 +278,6 @@ export const MarketsPage = () => {
             <MarketExternalLink
               className="link-subtle"
               eventSlug={row.market.event_slug}
-              marketSlug={row.market.market_slug}
             >
               {row.market.market_slug}
             </MarketExternalLink>
@@ -468,14 +466,12 @@ export const MarketsPage = () => {
                   <MarketExternalLink
                     className="market-list__title"
                     eventSlug={detailQuery.data?.market.event_slug ?? selectedMarket.market.event_slug}
-                    marketSlug={detailQuery.data?.market.market_slug ?? selectedMarket.market.market_slug}
                   >
                     {detailQuery.data?.market.event_title ?? selectedMarket.market.event_title ?? '—'}
                   </MarketExternalLink>
                   <MarketExternalLink
                     className="link-subtle"
                     eventSlug={detailQuery.data?.market.event_slug ?? selectedMarket.market.event_slug}
-                    marketSlug={detailQuery.data?.market.market_slug ?? selectedMarket.market.market_slug}
                   >
                     {selectedMarket.market.market_slug}
                   </MarketExternalLink>
@@ -489,7 +485,6 @@ export const MarketsPage = () => {
                   <MarketExternalLink
                     className="market-list__title"
                     eventSlug={detailQuery.data?.market.event_slug ?? selectedMarket.market.event_slug}
-                    marketSlug={detailQuery.data?.market.market_slug ?? selectedMarket.market.market_slug}
                   >
                     {detailQuery.data?.market.event_title ?? selectedMarket.market.event_title ?? '—'}
                   </MarketExternalLink>
@@ -501,7 +496,6 @@ export const MarketsPage = () => {
                   <MarketExternalLink
                     className="market-list__title"
                     eventSlug={detailQuery.data?.market.event_slug ?? selectedMarket.market.event_slug}
-                    marketSlug={detailQuery.data?.market.market_slug ?? selectedMarket.market.market_slug}
                   >
                     {selectedMarket.market.market_slug}
                   </MarketExternalLink>

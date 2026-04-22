@@ -51,6 +51,7 @@ def _to_outbox_event(priority: int, event: Any) -> OutboxEvent | None:
         idempotency_key=str(event_id),
         event_id=str(event_id),
         market_slug=_text(getattr(event, "market_slug", None)),
+        event_slug=_text(getattr(event, "event_slug", None)),
         condition_id=_text(getattr(event, "condition_id", None)),
         token_id=_text(getattr(event, "token_id", None)),
         reason=_text(getattr(event, "reason", None)),

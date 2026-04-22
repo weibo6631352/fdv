@@ -194,6 +194,7 @@ class MarketDiscoveryWorker:
             event_type=outcome.event.event_type,
             event_id=outcome.event.event_id,
             market_slug=outcome.event.market_slug,
+            event_slug=outcome.event.event_slug,
             condition_id=outcome.event.condition_id,
             reason=outcome.event.reason,
             created_at=outcome.event.created_at,
@@ -214,6 +215,8 @@ class MarketDiscoveryWorker:
                     else None
                 ),
                 "discovery_kind": outcome.discovery_kind,
+                "market": outcome.event.payload.get("market"),
+                "tracked_market": outcome.event.payload.get("tracked_market"),
                 "subscription_request": outcome.subscription_request,
                 "raw_market": raw_event.payload,
                 "discovered_at": raw_event.discovered_at.isoformat(),

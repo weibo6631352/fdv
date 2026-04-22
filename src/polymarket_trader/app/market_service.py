@@ -189,6 +189,7 @@ class MarketService:
                 else DomainEventType.MARKET_FILTERED_OUT
             )
         )
+        event_slug = market.event_slug if market is not None else parse_result.event_slug
         payload = {
             "source": source,
             "discovery_kind": discovery_kind,
@@ -212,6 +213,7 @@ class MarketService:
             event_type=event_type,
             event_id=uuid4().hex,
             market_slug=parse_result.market_slug,
+            event_slug=event_slug,
             condition_id=parse_result.condition_id,
             reason=self._event_reason(parse_result, universe_decision),
             created_at=discovered_at,

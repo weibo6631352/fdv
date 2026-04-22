@@ -185,6 +185,13 @@ def _immutable_payload(payload: Mapping[str, Any] | None) -> Mapping[str, Any]:
     return MappingProxyType({"value": sanitized})
 
 
+def _text_or_none(value: Any | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 @dataclass(frozen=True, slots=True)
 class EventEnvelope:
     # 域内事件只保留稳定字段；外部协议细节进 payload/raw_response，避免契约扩散。
@@ -192,6 +199,7 @@ class EventEnvelope:
     event_type: DomainEventType | str
     event_id: str
     market_slug: str | None = None
+    event_slug: str | None = None
     condition_id: str | None = None
     token_id: str | None = None
     reason: str = ""
@@ -247,6 +255,7 @@ class AuditEvent:
     event_id: str
     event_title: str
     market_slug: str | None = None
+    event_slug: str | None = None
     condition_id: str | None = None
     token_id: str | None = None
     outcome: str | None = None
@@ -298,12 +307,14 @@ class AuditEvent:
 
         payload_data = dict(payload) if payload else {}
         payload_data.update(merged)
+        event_slug = _text_or_none(merged.pop("event_slug", None))
 
         event_fields = {
             "trace_id": trace_id,
             "event_id": merged.pop("event_id", None) or uuid4().hex,
             "event_title": str(event_title),
             "market_slug": merged.pop("market_slug", None),
+            "event_slug": event_slug,
             "condition_id": merged.pop("condition_id", None),
             "token_id": merged.pop("token_id", None),
             "outcome": merged.pop("outcome", None),
@@ -332,6 +343,7 @@ class AuditEvent:
             "event_id": self.event_id,
             "event_title": self.event_title,
             "market_slug": self.market_slug,
+            "event_slug": self.event_slug,
             "condition_id": self.condition_id,
             "token_id": self.token_id,
             "outcome": self.outcome,
@@ -372,6 +384,7 @@ class OutboxEvent:
     idempotency_key: str
     event_id: str = field(default_factory=lambda: uuid4().hex)
     market_slug: str | None = None
+    event_slug: str | None = None
     condition_id: str | None = None
     token_id: str | None = None
     reason: str | None = None
@@ -425,6 +438,7 @@ class OutboxEvent:
             idempotency_key=self.idempotency_key,
             event_id=self.event_id,
             market_slug=self.market_slug,
+            event_slug=self.event_slug,
             condition_id=self.condition_id,
             token_id=self.token_id,
             reason=self.reason,
