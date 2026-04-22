@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Callable, Iterable, Mapping
@@ -8,35 +7,41 @@ from uuid import uuid4
 
 from polymarket_trader.app.strategy_service import StrategyEntryPlan, StrategyService
 from polymarket_trader.app.trading_service import TradingReviewResult, TradingService
-from polymarket_trader.app.order_projection import (
-    AccountStateProjector,
-    has_unexpected_resting_order,
-    released_budget,
-)
+from polymarket_trader.app.order_projection import AccountStateProjector
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
-from polymarket_trader.domain.market import Market, MarketOutcome
+from polymarket_trader.domain.market import Market
 from polymarket_trader.domain.order import (
     CancelOrderIntent,
     ManagedOrderIntent,
     Order,
     OrderResult,
     OrderResultStatus,
-    OrderSide,
     ReplaceOrderIntent,
-    SellOrderIntent,
 )
 from polymarket_trader.domain.position import Position
 from polymarket_trader.domain.state_machine import MarketLifecycle
 from polymarket_trader.domain.account import AccountSnapshot
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
-from polymarket_trader.extension_api import MarketTokenView, ExtensionContext
+from polymarket_trader.workers.strategy_event_payloads import (
+    STRATEGY_WORKER_ORIGIN,
+    coerce_order_result_from_event,
+    is_self_emitted,
+    market_from_result,
+    serialize_allocation,
+    serialize_allocation_plan,
+    serialize_intent,
+    serialize_review,
+    serialize_snapshot,
+    snapshot_allowance,
+    snapshot_balance,
+    snapshot_position,
+)
+from polymarket_trader.workers.strategy_order_result_processor import StrategyOrderResultProcessor
+from polymarket_trader.workers.strategy_worker_result import StrategyWorkerResult
 
 PositionsProvider = Callable[[], Iterable[Position]]
 OpenOrdersProvider = Callable[[], Iterable[Order]]
-
-_SELF_ORIGIN = "strategy_worker"
-
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -82,6 +87,12 @@ class StrategyWorker:
         self._max_open_orders = max_open_orders
         self._order_retry_limit = order_retry_limit
         self._market_lifecycle: dict[str, MarketLifecycle] = {}
+        self._order_result_processor = StrategyOrderResultProcessor(
+            host=self,
+            strategy_service=self._strategy_service,
+            trading_service=self._trading_service,
+            account_state_store=self._account_state_store,
+        )
 
     async def run(self) -> None:
         if self._event_bus is None:
@@ -96,7 +107,7 @@ class StrategyWorker:
         return await self.process_event(event)
 
     async def process_event(self, event: DomainEvent) -> "StrategyWorkerResult | None":
-        if _is_self_emitted(event):
+        if is_self_emitted(event):
             return None
 
         event_name = str(event.event_type)
@@ -104,7 +115,7 @@ class StrategyWorker:
         if event_name == DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value:
             return await self._handle_orderbook_snapshot_updated(event, snapshot)
 
-        order_result = _coerce_order_result_from_event(event)
+        order_result = coerce_order_result_from_event(event)
         if order_result is not None:
             return await self._handle_order_result(
                 source_event=event,
@@ -129,7 +140,7 @@ class StrategyWorker:
             account_snapshot=snapshot,
             portfolio_budget_usdc=self._portfolio_budget_usdc,
             available_usdc=(
-                self._available_usdc if self._available_usdc is not None else _snapshot_balance(snapshot)
+                self._available_usdc if self._available_usdc is not None else snapshot_balance(snapshot)
             ),
             max_order_usdc=self._max_order_usdc,
             max_market_usdc=self._max_market_usdc,
@@ -170,9 +181,9 @@ class StrategyWorker:
                 reason="entry_paused",
                 payload={
                     "entry_event_id": event.event_id,
-                    "origin": _SELF_ORIGIN,
+                    "origin": STRATEGY_WORKER_ORIGIN,
                     "reason": "entry_paused",
-                    "account_snapshot": _serialize_snapshot(snapshot),
+                    "account_snapshot": serialize_snapshot(snapshot),
                 },
             )
             self._transition_market(plan.market, MarketLifecycle.PAUSED if plan.market else None)
@@ -206,9 +217,9 @@ class StrategyWorker:
             open_orders=focus_open_orders,
             allocation_plan=plan.allocation_plan,
             classification_passed=True,
-            balance_usdc=self._balance_usdc if self._balance_usdc is not None else _snapshot_balance(snapshot),
+            balance_usdc=self._balance_usdc if self._balance_usdc is not None else snapshot_balance(snapshot),
             allowance_usdc=(
-                self._allowance_usdc if self._allowance_usdc is not None else _snapshot_allowance(snapshot)
+                self._allowance_usdc if self._allowance_usdc is not None else snapshot_allowance(snapshot)
             ),
             max_order_usdc=self._max_order_usdc,
             max_market_usdc=self._max_market_usdc,
@@ -228,11 +239,11 @@ class StrategyWorker:
             reason="" if review.risk_decision is None else review.risk_decision.reason,
             payload={
                 "entry_event_id": event.event_id,
-                "origin": _SELF_ORIGIN,
-                "allocation_plan": _serialize_allocation_plan(plan),
-                "allocation": _serialize_allocation(plan),
-                "intent": _serialize_intent(plan.intent),
-                "review": _serialize_review(review),
+                "origin": STRATEGY_WORKER_ORIGIN,
+                "allocation_plan": serialize_allocation_plan(plan),
+                "allocation": serialize_allocation(plan),
+                "intent": serialize_intent(plan.intent),
+                "review": serialize_review(review),
             },
         )
         result = await self._handle_order_result(
@@ -263,282 +274,12 @@ class StrategyWorker:
         execution: TradingReviewResult | None = None,
         plan: StrategyEntryPlan | None = None,
     ) -> "StrategyWorkerResult":
-        if order_result is None:
-            order_result = _coerce_order_result_from_event(source_event)
-        if order_result is None:
-            return StrategyWorkerResult(
-                entry_event=source_event,
-                plan=plan,
-                review=execution,
-                emitted_event=source_event,
-                state_after=self._state_for_market(plan.market if plan is not None else None),
-            )
-
-        state_before = self._state_for_market_by_key(order_result.condition_id)
-        result_event_type = _result_event_type(order_result)
-        result_event = await self._publish(
-            result_event_type,
-            trace_id=order_result.trace_id,
-            market_slug=order_result.market_slug,
-            condition_id=order_result.condition_id,
-            token_id=order_result.token_id,
-            reason=order_result.reason,
-            payload={
-                "origin": _SELF_ORIGIN,
-                "source_event_id": source_event.event_id,
-                "operation": execution.operation if execution is not None else "result",
-                "order_result": _serialize_order_result(order_result),
-                "execution": None if execution is None else _serialize_review(execution),
-            },
-        )
-        self._transition_from_order_result(order_result)
-        follow_up_intents: list[ManagedOrderIntent] = []
-        follow_up_results: list[TradingReviewResult] = []
-        active_snapshot = snapshot
-
-        if order_result.side == OrderSide.BUY and order_result.status in {
-            OrderResultStatus.FULL_FILL,
-            OrderResultStatus.PARTIAL_FILL,
-            OrderResultStatus.NO_FILL,
-        }:
-            projector = self._account_projector()
-            if projector is not None:
-                projector.apply_buy_result(order_result, snapshot=snapshot)
-            active_snapshot = (
-                self._account_state_store.snapshot()
-                if self._account_state_store is not None
-                else snapshot
-            )
-        elif (
-            execution is not None
-            and isinstance(execution.intent, SellOrderIntent)
-            and order_result.side == OrderSide.SELL
-        ):
-            projector = self._account_projector()
-            if projector is not None:
-                projector.apply_sell_result(
-                    order_result,
-                    snapshot=snapshot,
-                    intent=execution.intent,
-                )
-            active_snapshot = (
-                self._account_state_store.snapshot()
-                if self._account_state_store is not None
-                else snapshot
-            )
-
-        if order_result.side is not None and order_result.side.value == "BUY":
-            if order_result.status in {OrderResultStatus.FULL_FILL, OrderResultStatus.PARTIAL_FILL}:
-                released_budget_usdc = released_budget(order_result)
-                await self._publish(
-                    DomainEventType.ORDER_STATE_UPDATED,
-                    trace_id=order_result.trace_id,
-                    market_slug=order_result.market_slug,
-                    condition_id=order_result.condition_id,
-                    token_id=order_result.token_id,
-                    reason="budget_released",
-                    payload={
-                        "origin": _SELF_ORIGIN,
-                        "state": "entry_result_updated",
-                        "released_budget_usdc": str(released_budget_usdc),
-                        "order_result": _serialize_order_result(order_result),
-                    },
-                )
-            elif order_result.status == OrderResultStatus.NO_FILL:
-                released_budget_usdc = released_budget(order_result)
-                await self._publish(
-                    DomainEventType.ORDER_STATE_UPDATED,
-                    trace_id=order_result.trace_id,
-                    market_slug=order_result.market_slug,
-                    condition_id=order_result.condition_id,
-                    token_id=order_result.token_id,
-                    reason="budget_released",
-                    payload={
-                        "origin": _SELF_ORIGIN,
-                        "state": "no_fill_released",
-                        "released_budget_usdc": str(released_budget_usdc),
-                        "order_result": _serialize_order_result(order_result),
-                    },
-                )
-                self._transition_market_by_result(order_result, MarketLifecycle.ENTRY_READY)
-            elif has_unexpected_resting_order(order_result):
-                await self._publish(
-                    DomainEventType.ORDER_STATE_UPDATED,
-                    trace_id=order_result.trace_id,
-                    market_slug=order_result.market_slug,
-                    condition_id=order_result.condition_id,
-                    token_id=order_result.token_id,
-                    reason=order_result.reason or "unexpected_resting_order",
-                    payload={
-                        "origin": _SELF_ORIGIN,
-                        "state": "unexpected_resting_order",
-                        "order_result": _serialize_order_result(order_result),
-                    },
-                )
-                cancel_intent = CancelOrderIntent(
-                    trace_id=order_result.trace_id,
-                    condition_id=order_result.condition_id,
-                    token_id=order_result.token_id,
-                    order_id=order_result.order_id or f"{order_result.trace_id}:{order_result.condition_id}:{order_result.token_id}",
-                    market_slug=order_result.market_slug,
-                    idempotency_key=f"{order_result.trace_id}:{order_result.condition_id}:{order_result.token_id}:cancel",
-                    reason="unexpected_resting_order",
-                )
-                follow_up_intents.append(cancel_intent)
-                cancel_review = await self._trading_service.cancel(cancel_intent)
-                follow_up_results.append(cancel_review)
-                await self._publish(
-                    DomainEventType.ORDER_CANCEL_REQUESTED,
-                    trace_id=cancel_intent.trace_id,
-                    market_slug=cancel_intent.market_slug,
-                    condition_id=cancel_intent.condition_id,
-                    token_id=cancel_intent.token_id,
-                    reason=cancel_intent.reason,
-                    payload={
-                        "origin": _SELF_ORIGIN,
-                        "cancel_intent": _serialize_control_intent(cancel_intent),
-                        "order_result": _serialize_order_result(order_result),
-                    },
-                )
-                if (
-                    cancel_review.order_result is not None
-                    and cancel_review.order_result.status == OrderResultStatus.CANCELLED
-                ):
-                    await self._publish(
-                        DomainEventType.ORDER_CANCELLED,
-                        trace_id=cancel_intent.trace_id,
-                        market_slug=cancel_intent.market_slug,
-                        condition_id=cancel_intent.condition_id,
-                        token_id=cancel_intent.token_id,
-                        reason=cancel_review.order_result.reason,
-                        payload={
-                            "origin": _SELF_ORIGIN,
-                            "cancel_review": _serialize_review(cancel_review),
-                            "order_result": _serialize_order_result(cancel_review.order_result),
-                        },
-                    )
-                    self._transition_from_order_result(cancel_review.order_result)
-                self._pause_market(order_result.condition_id, reason="unexpected_resting_order")
-            elif order_result.status in {OrderResultStatus.REJECTED, OrderResultStatus.FAILED, OrderResultStatus.UNKNOWN_TIMEOUT}:
-                await self._publish(
-                    DomainEventType.ORDER_STATE_UPDATED,
-                    trace_id=order_result.trace_id,
-                    market_slug=order_result.market_slug,
-                    condition_id=order_result.condition_id,
-                    token_id=order_result.token_id,
-                    reason=order_result.reason,
-                    payload={
-                        "origin": _SELF_ORIGIN,
-                        "state": "rejected",
-                        "order_result": _serialize_order_result(order_result),
-                    },
-                )
-                self._transition_market_by_result(order_result, MarketLifecycle.ENTRY_REJECTED)
-
-        resolved_market = self._strategy_service.resolve_market(
-            condition_id=order_result.condition_id,
-            token_id=order_result.token_id,
-        )
-        follow_up_decisions = self._strategy_service.decide_follow_up(
-            ExtensionContext(
-                trace_id=order_result.trace_id,
-                market=resolved_market,
-                token_id=order_result.token_id,
-                market_token_views=tuple(
-                    MarketTokenView(
-                        token_id=outcome.token_id,
-                        outcome=outcome.outcome,
-                    )
-                    for outcome in (
-                        ()
-                        if resolved_market is None
-                        else resolved_market.outcomes
-                    )
-                ),
-                account_snapshot=active_snapshot,
-                position=_snapshot_position(
-                    active_snapshot,
-                    order_result.condition_id,
-                    order_result.token_id,
-                ),
-                open_orders=(
-                    active_snapshot.open_orders_for_market(
-                        order_result.condition_id,
-                        order_result.token_id,
-                    )
-                    if active_snapshot is not None
-                    else ()
-                ),
-                order_result=order_result,
-            )
-        )
-        for decision in follow_up_decisions:
-            intent = self._strategy_service.build_intent_from_decision(
-                trace_id=order_result.trace_id,
-                condition_id=order_result.condition_id,
-                market_slug=order_result.market_slug,
-                default_token_id=order_result.token_id,
-                decision=decision,
-            )
-            if intent is None:
-                continue
-            follow_up_intents.append(intent)
-            follow_up_review = await self._execute_managed_intent(
-                intent,
-                snapshot=active_snapshot,
-            )
-            follow_up_results.append(follow_up_review)
-            follow_up_event = await self._publish(
-                DomainEventType.ORDER_SUBMITTED,
-                trace_id=intent.trace_id,
-                market_slug=intent.market_slug,
-                condition_id=intent.condition_id,
-                token_id=intent.token_id,
-                reason="" if follow_up_review.order_result is None else follow_up_review.order_result.reason,
-                payload={
-                    "origin": _SELF_ORIGIN,
-                    "phase": "follow_up",
-                    "source_order_result": _serialize_order_result(order_result),
-                    "intent": _serialize_intent(intent),
-                    "review": _serialize_review(follow_up_review),
-                },
-            )
-            if follow_up_review.order_result is not None:
-                self._transition_from_order_result(follow_up_review.order_result)
-                if isinstance(intent, SellOrderIntent):
-                    projector = self._account_projector()
-                    if projector is not None:
-                        projector.apply_sell_result(
-                            follow_up_review.order_result,
-                            snapshot=active_snapshot,
-                            intent=intent,
-                        )
-                projector = self._account_projector()
-                if projector is not None:
-                    projector.apply_result_flags(
-                        follow_up_review.order_result,
-                        snapshot=active_snapshot,
-                    )
-                active_snapshot = (
-                    self._account_state_store.snapshot()
-                    if self._account_state_store is not None
-                    else active_snapshot
-                )
-            result_event = follow_up_event
-
-        projector = self._account_projector()
-        if projector is not None:
-            projector.apply_result_flags(order_result, snapshot=snapshot)
-        return StrategyWorkerResult(
-            entry_event=source_event,
+        return await self._order_result_processor.handle(
+            source_event=source_event,
+            order_result=order_result,
+            snapshot=snapshot,
+            execution=execution,
             plan=plan,
-            review=execution,
-            emitted_event=result_event,
-            emitted_events=(result_event,),
-            follow_up_intents=tuple(follow_up_intents),
-            follow_up_reviews=tuple(follow_up_results),
-            state_before=state_before,
-            state_after=self._state_for_market_by_key(order_result.condition_id),
         )
 
     async def _handle_position_updated(
@@ -554,7 +295,7 @@ class StrategyWorker:
                 emitted_event=event,
                 state_after=None,
             )
-        market = self._market_from_snapshot_position(snapshot, event.condition_id, event.token_id)
+        market = self._market_fromsnapshot_position(snapshot, event.condition_id, event.token_id)
         if market is not None:
             self._transition_market(market, MarketLifecycle.POSITION_OPEN)
         return StrategyWorkerResult(
@@ -576,7 +317,7 @@ class StrategyWorker:
         reason: str = "",
         payload: Mapping[str, object] | None = None,
     ) -> DomainEvent:
-        payload_dict = {"origin": _SELF_ORIGIN}
+        payload_dict = {"origin": STRATEGY_WORKER_ORIGIN}
         if payload is not None:
             payload_dict.update(dict(payload))
         event = DomainEvent(
@@ -623,7 +364,7 @@ class StrategyWorker:
         self._market_lifecycle[market.condition_id] = lifecycle
 
     def _transition_market_by_result(self, order_result: OrderResult, lifecycle: MarketLifecycle) -> None:
-        market = _market_from_result(order_result)
+        market = market_from_result(order_result)
         self._transition_market(market, lifecycle)
 
     def _transition_from_order_result(self, order_result: OrderResult) -> None:
@@ -662,7 +403,7 @@ class StrategyWorker:
             return None
         return self._market_lifecycle.get(condition_id)
 
-    def _market_from_snapshot_position(
+    def _market_fromsnapshot_position(
         self,
         snapshot: AccountSnapshot,
         condition_id: str | None,
@@ -694,16 +435,16 @@ class StrategyWorker:
             intent,
             market=market,
             orderbook=self._strategy_service.lookup_orderbook(intent.token_id),
-            position=_snapshot_position(snapshot, intent.condition_id, intent.token_id),
+            position=snapshot_position(snapshot, intent.condition_id, intent.token_id),
             open_orders=(
                 snapshot.open_orders_for_market(intent.condition_id, intent.token_id)
                 if snapshot is not None
                 else ()
             ),
             classification_passed=True,
-            balance_usdc=self._balance_usdc if self._balance_usdc is not None else _snapshot_balance(snapshot),
+            balance_usdc=self._balance_usdc if self._balance_usdc is not None else snapshot_balance(snapshot),
             allowance_usdc=(
-                self._allowance_usdc if self._allowance_usdc is not None else _snapshot_allowance(snapshot)
+                self._allowance_usdc if self._allowance_usdc is not None else snapshot_allowance(snapshot)
             ),
             max_order_usdc=self._max_order_usdc,
             max_market_usdc=self._max_market_usdc,
@@ -717,19 +458,6 @@ class StrategyWorker:
         if self._account_state_store is None:
             return None
         return AccountStateProjector(self._account_state_store)
-
-
-@dataclass(frozen=True, slots=True)
-class StrategyWorkerResult:
-    entry_event: DomainEvent
-    plan: StrategyEntryPlan | None
-    review: TradingReviewResult | None
-    emitted_event: DomainEvent
-    emitted_events: tuple[DomainEvent, ...] = ()
-    follow_up_intents: tuple[ManagedOrderIntent, ...] = ()
-    follow_up_reviews: tuple[TradingReviewResult, ...] = ()
-    state_before: MarketLifecycle | None = None
-    state_after: MarketLifecycle | None = None
 
 
 def _match_position(
@@ -753,310 +481,3 @@ def _match_open_orders(
         for order in open_orders
         if order.condition_id == condition_id and order.token_id == token_id
     )
-
-
-def _serialize_snapshot(snapshot: AccountSnapshot | None) -> dict[str, object] | None:
-    if snapshot is None:
-        return None
-    return {
-        "balance_usdc": str(snapshot.balance_usdc),
-        "allowance_usdc": str(snapshot.allowance_usdc),
-        "user_ws_connected": snapshot.user_ws_connected,
-        "allow_new_entries": snapshot.allow_new_entries,
-        "paused_markets": list(snapshot.paused_markets),
-        "last_reconcile_at": (
-            None if snapshot.last_reconcile_at is None else snapshot.last_reconcile_at.isoformat()
-        ),
-        "positions": [
-            {
-                "condition_id": position.condition_id,
-                "token_id": position.token_id,
-                "shares": str(position.shares),
-                "cost_usdc": str(position.cost_usdc),
-                "open_buy_shares": str(position.open_buy_shares),
-                "open_sell_shares": str(position.open_sell_shares),
-                "pending_buy_shares": str(position.pending_buy_shares),
-            }
-            for position in snapshot.positions
-        ],
-        "open_orders": [
-            {
-                "condition_id": order.condition_id,
-                "token_id": order.token_id,
-                "side": order.side.value,
-                "status": order.status.value,
-                "order_id": order.order_id,
-                "idempotency_key": order.idempotency_key,
-                "remaining_shares": (
-                    None if order.remaining_shares is None else str(order.remaining_shares)
-                ),
-            }
-            for order in snapshot.open_orders
-        ],
-    }
-
-
-def _serialize_allocation_plan(plan: StrategyEntryPlan) -> dict[str, object]:
-    return {
-        "trace_id": plan.allocation_plan.trace_id,
-        "total_budget_usdc": str(plan.allocation_plan.total_budget_usdc),
-        "allocated_budget_usdc": str(plan.allocation_plan.allocated_budget_usdc),
-        "released_budget_usdc": str(plan.allocation_plan.released_budget_usdc),
-        "eligible_market_count": plan.eligible_market_count,
-        "reason": plan.allocation_plan.reason,
-    }
-
-
-def _serialize_allocation(plan: StrategyEntryPlan) -> dict[str, object] | None:
-    if plan.allocation is None:
-        return None
-    return {
-        "condition_id": plan.allocation.condition_id,
-        "target_budget_usdc": str(plan.allocation.target_budget_usdc),
-        "buy_budget_usdc": str(plan.allocation.buy_budget_usdc),
-        "current_exposure_usdc": str(plan.allocation.current_exposure_usdc),
-        "released_budget_usdc": str(plan.allocation.released_budget_usdc),
-        "reason": plan.allocation.reason,
-        "release_reason": plan.allocation.release_reason,
-    }
-
-
-def _serialize_intent(intent: ManagedOrderIntent) -> dict[str, object]:
-    return {
-        "trace_id": intent.trace_id,
-        "condition_id": intent.condition_id,
-        "token_id": intent.token_id,
-        "side": intent.side.value if hasattr(intent, "side") else None,
-        "order_type": intent.order_type.value if hasattr(intent, "order_type") else None,
-        "price": str(intent.price) if hasattr(intent, "price") and intent.price is not None else None,
-        "amount_usdc": (
-            None if getattr(intent, "amount_usdc", None) is None else str(intent.amount_usdc)
-        ),
-        "size_shares": (
-            None if getattr(intent, "size_shares", None) is None else str(intent.size_shares)
-        ),
-        "order_id": getattr(intent, "order_id", None),
-        "reason": getattr(intent, "reason", ""),
-        "market_slug": intent.market_slug,
-    }
-
-
-def _serialize_review(review: TradingReviewResult) -> dict[str, object]:
-    return {
-        "operation": review.operation,
-        "submitted": review.submitted,
-        "submission_error": review.submission_error,
-        "risk_decision": None
-        if review.risk_decision is None
-        else {
-            "passed": review.risk_decision.passed,
-            "reason": review.risk_decision.reason,
-            "failed_field": review.risk_decision.failed_field,
-            "suggested_action": review.risk_decision.suggested_action,
-            "retryable": review.risk_decision.retryable,
-        },
-        "order_result": _serialize_order_result(review.order_result)
-        if review.order_result is not None
-        else None,
-    }
-
-
-def _serialize_control_intent(intent: CancelOrderIntent) -> dict[str, object]:
-    return {
-        "trace_id": intent.trace_id,
-        "condition_id": intent.condition_id,
-        "token_id": intent.token_id,
-        "order_id": intent.order_id,
-        "market_slug": intent.market_slug,
-        "reason": intent.reason,
-    }
-
-
-def _serialize_order_result(order_result: OrderResult | None) -> dict[str, object] | None:
-    if order_result is None:
-        return None
-    return {
-        "trace_id": order_result.trace_id,
-        "condition_id": order_result.condition_id,
-        "token_id": order_result.token_id,
-        "status": order_result.status.value,
-        "market_slug": order_result.market_slug,
-        "order_id": order_result.order_id,
-        "trade_id": order_result.trade_id,
-        "side": None if order_result.side is None else order_result.side.value,
-        "order_type": None if order_result.order_type is None else order_result.order_type.value,
-        "price": None if order_result.price is None else str(order_result.price),
-        "requested_amount_usdc": None
-        if order_result.requested_amount_usdc is None
-        else str(order_result.requested_amount_usdc),
-        "requested_size_shares": None
-        if order_result.requested_size_shares is None
-        else str(order_result.requested_size_shares),
-        "matched_shares": str(order_result.matched_shares),
-        "remaining_shares": str(order_result.remaining_shares),
-        "spent_usdc": str(order_result.spent_usdc),
-        "notional_usdc": str(order_result.notional_usdc),
-        "reason": order_result.reason,
-        "retryable": order_result.retryable,
-        "raw_response_summary": order_result.raw_response_summary,
-    }
-
-
-def _coerce_order_result_from_event(event: DomainEvent) -> OrderResult | None:
-    payload = dict(event.payload)
-    order_result_payload = payload.get("order_result")
-    if isinstance(order_result_payload, Mapping):
-        payload = {**payload, **dict(order_result_payload)}
-    status_value = payload.get("status") or payload.get("order_status")
-    if status_value is None and event.event_type not in {
-        DomainEventType.ORDER_MATCHED,
-        DomainEventType.ORDER_PARTIALLY_FILLED,
-        DomainEventType.ORDER_NO_FILL,
-        DomainEventType.ORDER_REJECTED,
-        DomainEventType.ORDER_CANCELLED,
-        DomainEventType.ORDER_STATE_UPDATED,
-        DomainEventType.FILL_RECORDED,
-        DomainEventType.FOLLOW_UP_ORDER_SUBMITTED,
-    }:
-        return None
-    status = _coerce_status(status_value, event.event_type)
-    return OrderResult(
-        trace_id=str(payload.get("trace_id", event.trace_id)),
-        condition_id=str(payload.get("condition_id", event.condition_id or "")),
-        token_id=str(payload.get("token_id", event.token_id or "")),
-        status=status,
-        market_slug=payload.get("market_slug", event.market_slug),
-        order_id=payload.get("order_id"),
-        trade_id=payload.get("trade_id"),
-        side=_coerce_side(payload.get("side")),
-        order_type=_coerce_order_type(payload.get("order_type")),
-        price=_decimal(payload.get("price")),
-        requested_amount_usdc=_decimal(payload.get("requested_amount_usdc")),
-        requested_size_shares=_decimal(payload.get("requested_size_shares")),
-        matched_shares=_decimal(payload.get("matched_shares")) or Decimal("0"),
-        remaining_shares=_decimal(payload.get("remaining_shares")) or Decimal("0"),
-        spent_usdc=_decimal(payload.get("spent_usdc")) or Decimal("0"),
-        notional_usdc=_decimal(payload.get("notional_usdc")) or Decimal("0"),
-        reason=str(payload.get("reason", event.reason or "")),
-        retryable=bool(payload.get("retryable", False)),
-        raw_response_summary=payload.get("raw_response_summary"),
-    )
-
-
-def _coerce_status(
-    status_value: object | None,
-    event_type: DomainEventType | str,
-) -> OrderResultStatus:
-    if isinstance(status_value, OrderResultStatus):
-        return status_value
-    if isinstance(status_value, str):
-        try:
-            return OrderResultStatus(status_value)
-        except ValueError:
-            pass
-    event_name = str(event_type)
-    if event_name == DomainEventType.ORDER_MATCHED.value:
-        return OrderResultStatus.FULL_FILL
-    if event_name == DomainEventType.ORDER_PARTIALLY_FILLED.value:
-        return OrderResultStatus.PARTIAL_FILL
-    if event_name == DomainEventType.ORDER_NO_FILL.value:
-        return OrderResultStatus.NO_FILL
-    if event_name == DomainEventType.ORDER_CANCELLED.value:
-        return OrderResultStatus.CANCELLED
-    if event_name == DomainEventType.ORDER_REJECTED.value:
-        return OrderResultStatus.REJECTED
-    if event_name == DomainEventType.UNEXPECTED_RESTING_ORDER_DETECTED.value:
-        return OrderResultStatus.LIVE
-    return OrderResultStatus.UNKNOWN_TIMEOUT
-
-
-def _coerce_side(value: object | None):
-    if value is None:
-        return None
-    try:
-        from polymarket_trader.domain.order import OrderSide
-
-        if isinstance(value, OrderSide):
-            return value
-        return OrderSide(str(value))
-    except Exception:
-        return None
-
-
-def _coerce_order_type(value: object | None):
-    if value is None:
-        return None
-    try:
-        from polymarket_trader.domain.order import OrderType
-
-        if isinstance(value, OrderType):
-            return value
-        return OrderType(str(value))
-    except Exception:
-        return None
-
-
-def _decimal(value: object | None) -> Decimal | None:
-    if value is None:
-        return None
-    if isinstance(value, Decimal):
-        return value
-    try:
-        return Decimal(str(value))
-    except Exception:
-        return None
-
-
-def _snapshot_balance(snapshot: AccountSnapshot | None) -> Decimal:
-    if snapshot is None:
-        return Decimal("0")
-    return snapshot.balance_usdc
-
-
-def _snapshot_allowance(snapshot: AccountSnapshot | None) -> Decimal:
-    if snapshot is None:
-        return Decimal("0")
-    return snapshot.allowance_usdc
-
-
-def _snapshot_position(
-    snapshot: AccountSnapshot | None,
-    condition_id: str,
-    token_id: str,
-) -> Position | None:
-    if snapshot is None:
-        return None
-    return snapshot.get_position(condition_id, token_id)
-
-
-def _market_from_result(order_result: OrderResult) -> Market | None:
-    return Market(
-        condition_id=order_result.condition_id,
-        market_slug=order_result.market_slug or order_result.token_id,
-        outcomes=(
-            MarketOutcome(
-                token_id=order_result.token_id,
-                outcome="EXECUTED_OUTCOME",
-            ),
-        ),
-    )
-
-
-def _result_event_type(order_result: OrderResult) -> DomainEventType:
-    if order_result.status == OrderResultStatus.FULL_FILL:
-        return DomainEventType.ORDER_MATCHED
-    if order_result.status == OrderResultStatus.PARTIAL_FILL:
-        return DomainEventType.ORDER_PARTIALLY_FILLED
-    if order_result.status == OrderResultStatus.NO_FILL:
-        return DomainEventType.ORDER_NO_FILL
-    if order_result.status == OrderResultStatus.REJECTED:
-        return DomainEventType.ORDER_REJECTED
-    if order_result.status == OrderResultStatus.CANCELLED:
-        return DomainEventType.ORDER_CANCELLED
-    if order_result.status == OrderResultStatus.LIVE:
-        return DomainEventType.ORDER_STATE_UPDATED
-    return DomainEventType.ERROR
-
-
-def _is_self_emitted(event: DomainEvent) -> bool:
-    return event.payload.get("origin") == _SELF_ORIGIN
