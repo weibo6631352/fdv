@@ -21,8 +21,6 @@ RUNTIME_VENV_DIR="$RUNTIME_DIR/venv"
 RUNTIME_MARKER_FILE="$RUNTIME_DIR/runtime-mode.txt"
 BACKEND_PID_FILE="$RUNTIME_DIR/backend.pid"
 FRONTEND_PID_FILE="$RUNTIME_DIR/frontend.pid"
-BACKEND_LOG="$RUNTIME_DIR/backend.log"
-FRONTEND_LOG="$RUNTIME_DIR/frontend.log"
 DATABASE_INIT_LOG="$RUNTIME_DIR/database-init.log"
 RUNTIME_INSTALL_LOG="$RUNTIME_DIR/runtime-install.log"
 BACKEND_HOST="${FDV_BACKEND_HOST:-127.0.0.1}"
@@ -179,17 +177,15 @@ wait_for_http() {
     sleep 0.5
   done
 
-  log "$name 启动失败，日志见 $RUNTIME_DIR"
+  log "$name 启动失败"
   return 1
 }
 
 start_background_process() {
   local command_text="$1"
   local pid_file="$2"
-  local log_file="$3"
 
-  : > "$log_file"
-  setsid bash -lc "cd '$APP_DIR' && $command_text" </dev/null >>"$log_file" 2>&1 &
+  setsid bash -lc "cd '$APP_DIR' && $command_text" </dev/null >/dev/null 2>&1 &
   echo "$!" > "$pid_file"
 }
 
@@ -486,8 +482,7 @@ ensure_backend() {
   log "启动后端服务"
   start_background_process \
     "'$PYTHON_BIN' -m uvicorn polymarket_trader.api.app:create_app --factory --host '$BACKEND_HOST' --port '$BACKEND_PORT'" \
-    "$BACKEND_PID_FILE" \
-    "$BACKEND_LOG"
+    "$BACKEND_PID_FILE"
 
   wait_for_http "后端服务" "$BACKEND_HEALTH_URL" 30
   log "后端已启动: $BACKEND_HEALTH_URL"
@@ -502,8 +497,7 @@ ensure_frontend() {
   log "启动前端静态服务"
   start_background_process \
     "'$PYTHON_BIN' '$APP_DIR/support/fdv_static_server.py' --host '$FRONTEND_HOST' --port '$FRONTEND_PORT' --static-dir '$APP_DIR/frontend/dist' --backend-base-url '$BACKEND_BASE_URL'" \
-    "$FRONTEND_PID_FILE" \
-    "$FRONTEND_LOG"
+    "$FRONTEND_PID_FILE"
 
   wait_for_http "前端服务" "$FRONTEND_URL" 30
   log "前端已启动: $FRONTEND_URL"

@@ -67,19 +67,19 @@ def test_build_runtime_binds_market_event_outbox_sink() -> None:
 
         event = DomainEvent(
             trace_id="trace-market",
-            event_type=DomainEventType.MARKET_UPDATED,
+            event_type=DomainEventType.MARKET_DISCOVERED,
             event_id="event-market",
             market_slug="sample-market-a",
             condition_id="condition-sample",
             token_id="no-token-sample",
-            reason="market_snapshot",
+            reason="market_discovered",
             payload={"market": {"condition_id": "condition-sample"}},
         )
         await runtime.event_bus.publish(OutboxPriority.P2, event)
 
         queued = await asyncio.wait_for(runtime.outbox.get(), timeout=0.1)
         assert queued.event_id == event.event_id
-        assert queued.event_type == DomainEventType.MARKET_UPDATED.value
+        assert queued.event_type == DomainEventType.MARKET_DISCOVERED.value
         assert queued.payload["market"]["condition_id"] == "condition-sample"
 
     asyncio.run(run())

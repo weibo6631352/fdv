@@ -45,3 +45,13 @@ main "$@"
         "stop_existing_services",
         "ensure_backend",
     ]
+
+
+def test_start_all_does_not_write_frontend_or_backend_process_logs() -> None:
+    script = START_ALL.read_text(encoding="utf-8")
+
+    assert "BACKEND_LOG=" not in script
+    assert "FRONTEND_LOG=" not in script
+    assert '>>"$log_file" 2>&1' not in script
+    assert '"$BACKEND_LOG"' not in script
+    assert '"$FRONTEND_LOG"' not in script

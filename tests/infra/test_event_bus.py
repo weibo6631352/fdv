@@ -89,8 +89,8 @@ def test_event_bus_mirrors_supported_domain_events_and_trims_user_payloads() -> 
         market_event = _event(
             trace_id="trace-market",
             event_id="event-market",
-            event_type=DomainEventType.MARKET_UPDATED,
-            reason="market_snapshot",
+            event_type=DomainEventType.MARKET_DISCOVERED,
+            reason="market_discovered",
         )
         order_event = DomainEvent(
             trace_id="trace-order",
@@ -134,7 +134,7 @@ def test_event_bus_mirrors_supported_domain_events_and_trims_user_payloads() -> 
         assert "snapshot" not in order_queued.payload
 
         assert market_queued.event_id == "event-market"
-        assert market_queued.event_type == DomainEventType.MARKET_UPDATED.value
+        assert market_queued.event_type == DomainEventType.MARKET_DISCOVERED.value
         assert market_queued.priority == 2
 
         try:
@@ -143,6 +143,32 @@ def test_event_bus_mirrors_supported_domain_events_and_trims_user_payloads() -> 
             pass
         else:  # pragma: no cover - defensive assertion path
             raise AssertionError("unsupported events should not be mirrored into the outbox")
+
+    asyncio.run(run())
+
+
+def test_event_bus_does_not_mirror_routine_market_updated_events() -> None:
+    async def run() -> None:
+        bus = EventBus()
+        outbox = LocalOutbox(max_size=8)
+        bus.bind_persistence_sink(build_domain_event_outbox_sink(outbox))
+
+        await bus.publish(
+            OutboxPriority.P2,
+            _event(
+                trace_id="trace-market",
+                event_id="event-market",
+                event_type=DomainEventType.MARKET_UPDATED,
+                reason="market_snapshot",
+            ),
+        )
+
+        try:
+            await asyncio.wait_for(outbox.get(), timeout=0.05)
+        except asyncio.TimeoutError:
+            pass
+        else:  # pragma: no cover - defensive assertion path
+            raise AssertionError("routine market updates should not be mirrored into the outbox")
 
     asyncio.run(run())
 

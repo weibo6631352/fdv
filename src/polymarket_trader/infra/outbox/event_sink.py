@@ -7,7 +7,6 @@ from polymarket_trader.domain.events import DomainEventType, OutboxEvent
 
 _MARKET_EVENT_TYPES = {
     DomainEventType.MARKET_DISCOVERED.value,
-    DomainEventType.MARKET_UPDATED.value,
     DomainEventType.MARKET_FILTERED_IN.value,
     DomainEventType.MARKET_FILTERED_OUT.value,
     DomainEventType.MARKET_RESOLVED_OR_DISABLED.value,
