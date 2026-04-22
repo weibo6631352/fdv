@@ -83,5 +83,5 @@ def build_filtered_tracking_market(
         )
     return candidate_market.with_trading_status(
         TradingStatus.PAUSED,
-        reject_reason=reason or "strategy_filtered_out",
+        reject_reason=reason or "market_out_of_universe",
     )

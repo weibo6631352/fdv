@@ -11,6 +11,7 @@ FORBIDDEN_FRAMEWORK_TERMS = (
     "entry" + "_no_price",
     "exit" + "_no_price",
     "primary" + " outcome",
+    "strategy" + "_filtered_out",
 )
 
 

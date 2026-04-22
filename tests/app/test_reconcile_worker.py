@@ -676,7 +676,7 @@ def test_reconcile_worker_refreshes_account_balance_from_clob_balance_allowance(
     asyncio.run(run())
 
 
-def test_reconcile_worker_prunes_strategy_filtered_market_after_flattening() -> None:
+def test_reconcile_worker_prunes_out_of_universe_market_after_flattening() -> None:
     async def run() -> None:
         registry = MarketRegistry()
         market = build_binary_market(
@@ -690,7 +690,7 @@ def test_reconcile_worker_prunes_strategy_filtered_market_after_flattening() -> 
             market_question="Will this project hit the target threshold?",
             category="Crypto",
             trading_status=TradingStatus.PAUSED,
-            reject_reason="strategy_filtered_out",
+            reject_reason="market_out_of_universe",
         )
         registry.upsert(market)
         account_state_store = AccountStateStore()

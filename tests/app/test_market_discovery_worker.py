@@ -17,7 +17,7 @@ class _RejectingStrategy:
         return ExtensionSpec(name="rejecting")
 
     def select_market(self, market):
-        return UniverseDecision.exclude(reason="strategy_filtered_out")
+        return UniverseDecision.exclude(reason="market_out_of_universe")
 
     def size_entry(self, context):
         raise AssertionError("not used")
@@ -77,7 +77,7 @@ class _SwitchingStrategy:
     def select_market(self, market):
         if self.selected:
             return UniverseDecision.include(reason="accepted")
-        return UniverseDecision.exclude(reason="strategy_filtered_out")
+        return UniverseDecision.exclude(reason="market_out_of_universe")
 
     def size_entry(self, context):
         raise AssertionError("not used")
@@ -225,7 +225,7 @@ def test_market_discovery_worker_replays_duplicate_payload_when_tracking_state_c
         assert second[0].payload["parse_status"] == "accepted"
         assert second[0].payload["parse_reason"] is None
         assert second[0].payload["parse_detail"] is None
-        assert second[0].payload["extension_reason"] == "strategy_filtered_out"
+        assert second[0].payload["extension_reason"] == "market_out_of_universe"
         assert registry.get_by_condition_id("condition-1") is None
 
     asyncio.run(run())

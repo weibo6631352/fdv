@@ -70,7 +70,7 @@ class _AcceptingStrategy:
     def build_filtered_tracking_market(self, candidate_market, *, existing_market, reason):
         return candidate_market.with_trading_status(
             TradingStatus.PAUSED,
-            reject_reason=reason or "strategy_filtered_out",
+            reject_reason=reason or "market_out_of_universe",
         )
 
 
@@ -85,7 +85,7 @@ class _SwitchingStrategy:
     def select_market(self, market):
         if self.selected:
             return UniverseDecision.include(reason="accepted")
-        return UniverseDecision.exclude(reason="strategy_filtered_out")
+        return UniverseDecision.exclude(reason="market_out_of_universe")
 
     def size_entry(self, context):
         raise AssertionError("not used")
@@ -111,7 +111,7 @@ class _SwitchingStrategy:
     def build_filtered_tracking_market(self, candidate_market, *, existing_market, reason):
         return candidate_market.with_trading_status(
             TradingStatus.PAUSED,
-            reject_reason=reason or "strategy_filtered_out",
+            reject_reason=reason or "market_out_of_universe",
         )
 
 
@@ -157,14 +157,14 @@ def test_market_service_marks_existing_market_as_updated() -> None:
     assert second.event.event_type == DomainEventType.MARKET_UPDATED
 
 
-def test_market_service_respects_strategy_universe_filter() -> None:
+def test_market_service_respects_extension_universe_filter() -> None:
     class _RejectingStrategy:
         @property
         def spec(self):
             return ExtensionSpec(name="rejecting")
 
         def select_market(self, market):
-            return UniverseDecision.exclude(reason="strategy_filtered_out")
+            return UniverseDecision.exclude(reason="market_out_of_universe")
 
         def size_entry(self, context):
             raise AssertionError("not used")
@@ -184,7 +184,7 @@ def test_market_service_respects_strategy_universe_filter() -> None:
         def build_filtered_tracking_market(self, candidate_market, *, existing_market, reason):
             return candidate_market.with_trading_status(
                 TradingStatus.PAUSED,
-                reject_reason=reason or "strategy_filtered_out",
+                reject_reason=reason or "market_out_of_universe",
             )
 
     registry = MarketRegistry()
@@ -201,7 +201,7 @@ def test_market_service_respects_strategy_universe_filter() -> None:
     assert outcome.market is None
     assert outcome.parse_result.accepted
     assert outcome.event.event_type == DomainEventType.MARKET_FILTERED_OUT
-    assert outcome.event.reason == "strategy_filtered_out"
+    assert outcome.event.reason == "market_out_of_universe"
     assert outcome.should_publish_event is False
     assert tracker.markets == []
 
@@ -239,7 +239,7 @@ def test_market_service_keeps_filtered_existing_market_paused_while_exposure_rem
     retained = registry.get_by_condition_id("condition")
     assert retained is not None
     assert retained.trading_status == TradingStatus.PAUSED
-    assert retained.reject_reason == "strategy_filtered_out"
+    assert retained.reject_reason == "market_out_of_universe"
     assert outcome.event.payload["tracking_retained"] is True
     assert outcome.event.payload["tracked_market"]["trading_status"] == TradingStatus.PAUSED.value
     assert tracker.untracked_token_ids == []

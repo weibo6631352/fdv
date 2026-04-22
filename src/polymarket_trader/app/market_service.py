@@ -17,7 +17,7 @@ AccountSnapshotProvider = Callable[[], AccountSnapshot]
 
 
 class MarketService:
-    """Coordinates market discovery, strategy universe filtering, and registry updates."""
+    """Coordinates market discovery, extension universe filtering, and registry updates."""
 
     def __init__(
         self,

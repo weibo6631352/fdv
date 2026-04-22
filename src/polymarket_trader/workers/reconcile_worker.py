@@ -367,7 +367,7 @@ class ReconcileWorker:
 
         if self._account_state_store is not None:
             self._account_state_store.mark_reconciled()
-            self._prune_strategy_filtered_markets(self._account_state_store.snapshot())
+            self._prune_out_of_universe_markets(self._account_state_store.snapshot())
 
         completed_at = _utc_now()
         self._last_completed_at = completed_at
@@ -408,14 +408,14 @@ class ReconcileWorker:
         if self._event_bus is not None:
             await self._event_bus.publish(priority, event)
 
-    def _prune_strategy_filtered_markets(self, account_snapshot: AccountSnapshot) -> None:
+    def _prune_out_of_universe_markets(self, account_snapshot: AccountSnapshot) -> None:
         if self._registry is None:
             return
         markets = self._registry.snapshot().markets
         for market in markets:
             if market.trading_status != TradingStatus.PAUSED:
                 continue
-            if market.reject_reason != "strategy_filtered_out":
+            if market.reject_reason != "market_out_of_universe":
                 continue
             if _market_has_exposure(account_snapshot, market):
                 continue
