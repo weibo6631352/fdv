@@ -9,6 +9,13 @@ from decimal import Decimal
 from typing import Any, Callable, Protocol
 from uuid import uuid4
 
+from polymarket_trader.app.order_projection import (
+    AccountStateProjector,
+    find_open_order,
+    order_open_shares,
+    order_open_size,
+    order_result_to_order_status,
+)
 from polymarket_trader.app.reconcile_service import (
     ReconcileAction,
     ReconcileActionType,
@@ -21,7 +28,6 @@ from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.order import (
     BuyOrderIntent,
     CancelOrderIntent,
-    Order,
     OrderRecord,
     OrderResult,
     OrderResultStatus,
@@ -472,67 +478,12 @@ class ReconcileWorker:
         submitted = review.submitted and _submission_succeeded(review.order_result)
 
         if self._account_state_store is not None and submitted:
-            order_id = (
-                trade_intent.idempotency_key
-                or f"{trade_intent.trace_id}:{trade_intent.condition_id}:{trade_intent.token_id}:{trade_intent.side.value.lower()}"
+            AccountStateProjector(self._account_state_store).apply_submitted_intent(
+                trade_intent,
+                market_slug=action.market_slug,
+                snapshot=account_snapshot,
+                reason="reconcile_submit_order",
             )
-            buy_open_shares = (
-                (trade_intent.amount_usdc / trade_intent.price)
-                if isinstance(trade_intent, BuyOrderIntent) and trade_intent.price > 0
-                else Decimal("0")
-            )
-            current_position = account_snapshot.get_position(action.condition_id, action.token_id)
-            if current_position is None:
-                current_position = Position(
-                    condition_id=action.condition_id,
-                    token_id=action.token_id,
-                    shares=Decimal("0"),
-                    cost_usdc=Decimal("0"),
-                    market_slug=action.market_slug,
-                    open_buy_shares=buy_open_shares,
-                    open_sell_shares=(
-                        trade_intent.size_shares if isinstance(trade_intent, SellOrderIntent) else Decimal("0")
-                    ),
-                    pending_buy_shares=buy_open_shares,
-                )
-            elif isinstance(trade_intent, SellOrderIntent):
-                open_sell_shares = account_snapshot.open_sell_shares_for_market(
-                    action.condition_id,
-                    action.token_id,
-                )
-                current_position = current_position.with_open_sell_shares(
-                    open_sell_shares + trade_intent.size_shares,
-                )
-            else:
-                current_position = current_position.with_open_buy_shares(
-                    current_position.open_buy_shares + buy_open_shares
-                )
-                current_position = current_position.with_pending_buy_shares(
-                    current_position.pending_buy_shares + buy_open_shares
-                )
-            self._account_state_store.upsert_order(
-                OrderRecord(
-                    trace_id=trade_intent.trace_id,
-                    condition_id=trade_intent.condition_id,
-                    token_id=trade_intent.token_id,
-                    side=trade_intent.side,
-                    order_type=trade_intent.order_type,
-                    price=trade_intent.price,
-                    market_slug=trade_intent.market_slug,
-                    size_shares=getattr(trade_intent, "size_shares", None),
-                    remaining_shares=getattr(trade_intent, "size_shares", None),
-                    amount_usdc=getattr(trade_intent, "amount_usdc", None),
-                    notional_usdc=trade_intent.notional_usdc,
-                    order_id=order_id,
-                    status=OrderStatus.SUBMITTED,
-                    idempotency_key=trade_intent.idempotency_key or order_id,
-                    reason="reconcile_submit_order",
-                    post_only=trade_intent.post_only,
-                    created_at=_utc_now(),
-                    updated_at=_utc_now(),
-                )
-            )
-            self._account_state_store.upsert_position(current_position)
 
     async def _apply_replace(
         self,
@@ -554,19 +505,19 @@ class ReconcileWorker:
             return
 
         current_snapshot = self._account_state_store.snapshot()
-        existing_order = _find_open_order(
+        existing_order = find_open_order(
             current_snapshot,
             action.condition_id,
             action.token_id,
             action.source_order_id,
-        ) or _find_open_order(
+        ) or find_open_order(
             account_snapshot,
             action.condition_id,
             action.token_id,
             action.source_order_id,
         )
-        existing_size = Decimal("0") if existing_order is None else _order_open_size(existing_order)
-        existing_shares = Decimal("0") if existing_order is None else (_order_open_shares(existing_order) or Decimal("0"))
+        existing_size = Decimal("0") if existing_order is None else order_open_size(existing_order)
+        existing_shares = Decimal("0") if existing_order is None else (order_open_shares(existing_order) or Decimal("0"))
         if action.source_order_id is not None:
             self._account_state_store.remove_order(action.source_order_id)
 
@@ -583,7 +534,7 @@ class ReconcileWorker:
             replacement_price = result.price or replacement_price
             matched_shares = result.matched_shares
             trade_id = result.trade_id
-            replacement_status = _order_result_to_order_status(result)
+            replacement_status = order_result_to_order_status(result)
             replacement_side = result.side or replacement_side
             replacement_order_type = result.order_type or replacement_order_type
             replacement_remaining = result.remaining_shares
@@ -1109,52 +1060,6 @@ def _market_has_exposure(account_snapshot: AccountSnapshot, market: Market) -> b
         if account_snapshot.open_orders_for_market(market.condition_id, token_id):
             return True
     return False
-
-
-def _order_open_size(order: Order) -> Decimal:
-    if order.remaining_shares is not None:
-        return max(order.remaining_shares, Decimal("0"))
-    if order.size_shares is not None:
-        return max(order.size_shares, Decimal("0"))
-    if order.amount_usdc is not None:
-        return max(order.amount_usdc, Decimal("0"))
-    return Decimal("0")
-
-
-def _order_open_shares(order: Order) -> Decimal | None:
-    if order.remaining_shares is not None:
-        return max(order.remaining_shares, Decimal("0"))
-    if order.size_shares is not None:
-        return max(order.size_shares, Decimal("0"))
-    return None
-
-
-def _order_result_to_order_status(result: OrderResult) -> OrderStatus:
-    return {
-        OrderResultStatus.FULL_FILL: OrderStatus.MATCHED,
-        OrderResultStatus.PARTIAL_FILL: OrderStatus.PARTIALLY_FILLED,
-        OrderResultStatus.NO_FILL: OrderStatus.NO_FILL,
-        OrderResultStatus.LIVE: OrderStatus.LIVE,
-        OrderResultStatus.REJECTED: OrderStatus.REJECTED,
-        OrderResultStatus.FAILED: OrderStatus.FAILED,
-        OrderResultStatus.CANCELLED: OrderStatus.CANCELLED,
-        OrderResultStatus.UNKNOWN_TIMEOUT: OrderStatus.FAILED,
-    }[result.status]
-
-
-def _find_open_order(
-    snapshot: AccountSnapshot | None,
-    condition_id: str,
-    token_id: str,
-    order_id: str | None,
-) -> Order | None:
-    if snapshot is None or order_id is None:
-        return None
-    for order in snapshot.open_orders_for_market(condition_id, token_id):
-        candidate_id = order.order_id or order.idempotency_key
-        if candidate_id == order_id:
-            return order
-    return None
 
 
 def _pick_gamma_market(

@@ -7,10 +7,12 @@ from typing import Any
 
 import websockets
 
-from polymarket_trader.infra.polymarket.schemas import (
+from polymarket_trader.infra.polymarket.base_client import (
     PolymarketClientError,
-    PolymarketSubscriptionChannel,
     PolymarketWebSocketError,
+)
+from polymarket_trader.infra.polymarket.schemas import (
+    PolymarketSubscriptionChannel,
     WebSocketMessage,
     WebSocketSubscription,
     build_market_subscription_request,

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from decimal import Decimal
 from math import inf
 from threading import RLock
 from typing import Any, Mapping
+
+from polymarket_trader.serialization import jsonable
 
 DEFAULT_LATENCY_BUCKETS_MS: tuple[float, ...] = (
     1.0,
@@ -41,25 +42,9 @@ def _normalize_labels(labels: Mapping[str, Any] | None) -> tuple[tuple[str, str]
     return tuple(sorted((str(key), str(value)) for key, value in labels.items()))
 
 
-def _jsonable(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, datetime):
-        return _normalize_datetime(value).isoformat()
-    if is_dataclass(value):
-        return _jsonable(asdict(value))
-    if isinstance(value, Mapping):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [_jsonable(item) for item in value]
-    return str(value)
-
-
 class JsonSerializable:
     def as_dict(self) -> dict[str, Any]:
-        return _jsonable(asdict(self))
+        return jsonable(self)
 
 
 @dataclass(slots=True)

@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from polymarket_trader.infra.polymarket.auth import PolymarketTradingClient
+from polymarket_trader.infra.polymarket.base_client import PolymarketRestClientBase
 from polymarket_trader.infra.polymarket.schemas import (
     BalanceAllowanceDTO,
     ClobFillDTO,
@@ -14,7 +15,6 @@ from polymarket_trader.infra.polymarket.schemas import (
     ClobOrderRequest,
     ClobOrderbookDTO,
     ClobPriceHistoryDTO,
-    PolymarketRestClientBase,
     normalize_balance_allowance_payload,
     normalize_fill_payload,
     normalize_order_payload,

@@ -5,11 +5,11 @@ from typing import Any
 
 import httpx
 
+from polymarket_trader.domain.discovery import RawMarketEvent
+from polymarket_trader.infra.polymarket.base_client import PolymarketRestClientBase
 from polymarket_trader.infra.polymarket.schemas import (
     GammaEventDTO,
     GammaMarketDTO,
-    PolymarketRestClientBase,
-    RawMarketEvent,
     normalize_gamma_event,
     normalize_gamma_market,
 )

@@ -1,31 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Mapping
 
+from polymarket_trader.serialization import jsonable
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _jsonable(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc).isoformat()
-    if isinstance(value, StrEnum):
-        return value.value
-    if isinstance(value, Mapping):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if is_dataclass(value):
-        return {key: _jsonable(item) for key, item in asdict(value).items()}
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [_jsonable(item) for item in value]
-    return str(value)
 
 
 class RuntimePhase(StrEnum):
@@ -60,7 +44,7 @@ class WorkerHealth:
     last_error: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return _jsonable(self)
+        return jsonable(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +63,7 @@ class SchedulerJob:
     last_error: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return _jsonable(self)
+        return jsonable(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +72,7 @@ class SchedulerSnapshot:
     created_at: datetime = field(default_factory=_utc_now)
 
     def as_dict(self) -> dict[str, Any]:
-        return _jsonable(self)
+        return jsonable(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +95,7 @@ class ReadinessSnapshot:
     created_at: datetime = field(default_factory=_utc_now)
 
     def as_dict(self) -> dict[str, Any]:
-        return _jsonable(self)
+        return jsonable(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,4 +121,4 @@ class RuntimeSnapshot:
     created_at: datetime = field(default_factory=_utc_now)
 
     def as_dict(self) -> dict[str, Any]:
-        return _jsonable(self)
+        return jsonable(self)

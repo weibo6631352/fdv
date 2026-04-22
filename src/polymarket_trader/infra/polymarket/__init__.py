@@ -11,6 +11,17 @@ from polymarket_trader.infra.polymarket.auth import (
 from polymarket_trader.infra.polymarket.clob_client import ClobClient
 from polymarket_trader.infra.polymarket.data_client import DataClient
 from polymarket_trader.infra.polymarket.gamma_client import GammaClient
+from polymarket_trader.domain.discovery import RawMarketEvent
+from polymarket_trader.infra.polymarket.base_client import (
+    PolymarketAuthError,
+    PolymarketClientError,
+    PolymarketRateLimitError,
+    PolymarketResponseError,
+    PolymarketRestClientBase,
+    PolymarketTimeoutError,
+    PolymarketTransportError,
+    PolymarketWebSocketError,
+)
 from polymarket_trader.infra.polymarket.schemas import (
     BalanceAllowanceDTO,
     ClobFillDTO,
@@ -23,16 +34,7 @@ from polymarket_trader.infra.polymarket.schemas import (
     GammaEventDTO,
     GammaMarketDTO,
     OrderbookLevelDTO,
-    PolymarketAuthError,
-    PolymarketClientError,
-    PolymarketRateLimitError,
-    PolymarketResponseError,
-    PolymarketRestClientBase,
     PolymarketSubscriptionChannel,
-    PolymarketTimeoutError,
-    PolymarketTransportError,
-    PolymarketWebSocketError,
-    RawMarketEvent,
     WebSocketMessage,
     WebSocketSubscription,
     build_market_subscription_request,

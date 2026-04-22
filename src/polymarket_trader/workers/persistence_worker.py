@@ -1,165 +1,26 @@
 from __future__ import annotations
 
-
 import asyncio
 import inspect
 import logging
 from collections import Counter, deque
 from contextlib import suppress
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from decimal import Decimal
-from enum import Enum
 from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
-from polymarket_trader.domain.events import AuditEvent, DomainEventType, OutboxEvent
+from polymarket_trader.domain.events import OutboxEvent
+from polymarket_trader.workers.persistence_records import (
+    PersistencePlannedRecord as _PlannedRecord,
+    PersistenceRecordBuilder,
+    route_key,
+)
 
 logger = logging.getLogger(__name__)
-
-_MARKET_EVENT_TYPES = {
-    DomainEventType.MARKET_DISCOVERED.value,
-    DomainEventType.MARKET_UPDATED.value,
-    DomainEventType.MARKET_FILTERED_IN.value,
-    DomainEventType.MARKET_FILTERED_OUT.value,
-    DomainEventType.MARKET_RESOLVED_OR_DISABLED.value,
-}
-_ACCOUNT_EVENT_TYPES = {
-    DomainEventType.BALANCE_UPDATED.value,
-}
-_ORDERBOOK_EVENT_TYPES = {
-    DomainEventType.ORDERBOOK.value,
-    DomainEventType.ORDERBOOK_SNAPSHOT_UPDATED.value,
-}
-_ORDER_EVENT_TYPES = {
-    DomainEventType.ORDER_CREATED.value,
-    DomainEventType.ORDER_SIGNED.value,
-    DomainEventType.ORDER_SUBMITTED.value,
-    DomainEventType.ORDER_REJECTED.value,
-    DomainEventType.ORDER_MATCHED.value,
-    DomainEventType.ORDER_NO_FILL.value,
-    DomainEventType.ORDER_PARTIALLY_FILLED.value,
-    DomainEventType.ORDER_STATE_UPDATED.value,
-    DomainEventType.ORDER_CANCEL_REQUESTED.value,
-    DomainEventType.ORDER_CANCELLED.value,
-    DomainEventType.REPLACE_ORDER_SUBMITTED.value,
-    DomainEventType.UNEXPECTED_RESTING_ORDER_DETECTED.value,
-}
-_FILL_EVENT_TYPES = {
-    DomainEventType.FILL_RECORDED.value,
-    DomainEventType.TRADE_MINED.value,
-    DomainEventType.TRADE_CONFIRMED.value,
-}
-_POSITION_EVENT_TYPES = {
-    DomainEventType.POSITION_UPDATED.value,
-}
-_ALLOCATION_EVENT_TYPES = {
-    DomainEventType.SKIPPED.value,
-    DomainEventType.RISK_CHECK_PASSED.value,
-    DomainEventType.RISK_CHECK_FAILED.value,
-}
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _to_jsonable(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc).isoformat()
-    if isinstance(value, Enum):
-        return value.value
-    if is_dataclass(value):
-        return _to_jsonable(asdict(value))
-    if isinstance(value, Mapping):
-        return {str(key): _to_jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [_to_jsonable(item) for item in value]
-    return str(value)
-
-
-def _text(value: Any | None) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _mapping(payload: Mapping[str, Any], *keys: str) -> dict[str, Any] | None:
-    for key in keys:
-        value = payload.get(key)
-        if isinstance(value, Mapping):
-            return dict(value)
-    return None
-
-
-def _mapping_list(payload: Mapping[str, Any], *keys: str) -> list[dict[str, Any]]:
-    for key in keys:
-        value = payload.get(key)
-        if isinstance(value, Mapping):
-            return [dict(value)]
-        if isinstance(value, list):
-            records: list[dict[str, Any]] = []
-            for item in value:
-                if isinstance(item, Mapping):
-                    records.append(dict(item))
-            if records:
-                return records
-    return []
-
-
-def _base_meta(event: OutboxEvent) -> dict[str, Any]:
-    payload = dict(event.payload)
-    return {
-        "event_id": event.event_id,
-        "trace_id": event.trace_id,
-        "event_type": str(event.event_type),
-        "source_event_type": str(event.event_type),
-        "source_event_id": event.event_id,
-        "market_slug": event.market_slug,
-        "condition_id": event.condition_id,
-        "token_id": event.token_id,
-        "reason": event.reason,
-        "created_at": _to_jsonable(event.created_at),
-        "priority": event.priority,
-        "retry_count": event.retry_count,
-        "last_error": event.last_error,
-        "idempotency_key": event.idempotency_key,
-        "raw_payload": _to_jsonable(payload),
-    }
-
-
-def _kind_idempotency_key(kind: str, event: OutboxEvent) -> str:
-    return f"{kind}:{event.idempotency_key}"
-
-
-def _event_type_text(event: OutboxEvent) -> str:
-    return str(event.event_type).strip()
-
-
-def _route_key(event: OutboxEvent) -> str:
-    if event.merge_key:
-        return event.merge_key
-    parts = [
-        str(event.event_type),
-        event.market_slug or "",
-        event.condition_id or "",
-        event.token_id or "",
-    ]
-    return "|".join(parts)
-
-
-def _safe_first_payload_value(payload: Mapping[str, Any], *keys: str) -> Any | None:
-    for key in keys:
-        value = payload.get(key)
-        if value is not None:
-            return value
-    return None
 
 
 @runtime_checkable
@@ -266,13 +127,6 @@ class _WorkerStats:
     route_write_counts: Counter[str] = field(default_factory=Counter)
 
 
-@dataclass(frozen=True, slots=True)
-class _PlannedRecord:
-    event: OutboxEvent
-    kind: str
-    record: Mapping[str, Any]
-
-
 class PersistenceWorker:
     """P3 异步落库 worker。
 
@@ -295,6 +149,7 @@ class PersistenceWorker:
     ) -> None:
         self._outbox = outbox
         self._repository = repository
+        self._record_builder = PersistenceRecordBuilder()
         self._batch_size = max(1, batch_size)
         self._poll_timeout_s = max(0.01, poll_timeout_s)
         self._drain_timeout_s = max(0.0, drain_timeout_s)
@@ -408,7 +263,7 @@ class PersistenceWorker:
             if event.is_critical:
                 critical.append(event)
                 continue
-            key = _route_key(event)
+            key = route_key(event)
             previous = latest_by_key.get(key)
             if previous is not None:
                 merged_events += 1
@@ -617,339 +472,7 @@ class PersistenceWorker:
         self,
         events: Sequence[OutboxEvent],
     ) -> tuple[list[_PlannedRecord], dict[str, int]]:
-        planned_records: list[_PlannedRecord] = []
-        required_record_counts: dict[str, int] = {}
-
-        for event in events:
-            event_records = self._route_event(event)
-            required_record_counts[event.event_id] = len(event_records)
-            for kind, record in event_records:
-                planned_records.append(_PlannedRecord(event=event, kind=kind, record=record))
-
-        return planned_records, required_record_counts
-
-    def _route_event(self, event: OutboxEvent) -> list[tuple[str, Mapping[str, Any]]]:
-        records: list[tuple[str, Mapping[str, Any]]] = []
-        event_type = _event_type_text(event)
-        payload = dict(event.payload)
-
-        records.append(("audit", self._build_audit_record(event, payload)))
-
-        special_allocation_records = self._build_allocation_records(event, payload)
-        for record in special_allocation_records:
-            records.append(("allocation", record))
-
-        if event_type in _MARKET_EVENT_TYPES:
-            records.append(("market", self._build_market_record(event, payload)))
-
-        if event_type in _ACCOUNT_EVENT_TYPES:
-            records.append(("account", self._build_account_record(event, payload)))
-
-        if event_type in _ORDERBOOK_EVENT_TYPES:
-            records.append(("orderbook", self._build_orderbook_record(event, payload)))
-
-        if event_type in _ORDER_EVENT_TYPES:
-            records.append(("order", self._build_order_record(event, payload)))
-
-        if event_type in _FILL_EVENT_TYPES:
-            records.extend(("fill", record) for record in self._build_fill_records(event, payload))
-
-        if event_type in _POSITION_EVENT_TYPES:
-            records.extend(("position", record) for record in self._build_position_records(event, payload))
-
-        records.append(("outbox", self._build_outbox_record(event, payload)))
-        return records
-
-    def _build_audit_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any]:
-        audit = AuditEvent(
-            event_title=str(event.event_type),
-            trace_id=event.trace_id,
-            event_id=event.event_id,
-            market_slug=event.market_slug,
-            condition_id=event.condition_id,
-            token_id=event.token_id,
-            reason=event.reason or "",
-            created_at=event.created_at,
-            raw_response=event.raw_response_summary,
-            payload={
-                "source_event_id": event.event_id,
-                "source_event_type": str(event.event_type),
-                "source_payload": _to_jsonable(payload),
-                "idempotency_key": event.idempotency_key,
-                "priority": event.priority,
-                "retry_count": event.retry_count,
-            },
-        )
-        record = audit.to_payload()
-        record["idempotency_key"] = _kind_idempotency_key("audit", event)
-        record["source_event_id"] = event.event_id
-        record["source_event_type"] = str(event.event_type)
-        record["source_payload"] = _to_jsonable(payload)
-        return _to_jsonable(record)
-
-    def _build_market_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any]:
-        market = _mapping(payload, "market", "market_snapshot")
-        fees = _mapping(market or {}, "fees") or {}
-        if market is None:
-            fees = {
-                "enabled": _safe_first_payload_value(payload, "fees_enabled"),
-                "maker_base_fee_bps": _safe_first_payload_value(payload, "maker_base_fee_bps"),
-                "taker_base_fee_bps": _safe_first_payload_value(payload, "taker_base_fee_bps"),
-                "fee_rate_bps": _safe_first_payload_value(payload, "fee_rate_bps"),
-                "fee_rate_updated_at": _safe_first_payload_value(payload, "fee_rate_updated_at"),
-            }
-            market = {
-                "condition_id": event.condition_id,
-                "market_slug": event.market_slug,
-                "event_id": _safe_first_payload_value(payload, "event_id", "source_event_id"),
-                "event_title": _safe_first_payload_value(payload, "event_title", "title"),
-                "event_slug": _safe_first_payload_value(payload, "event_slug", "slug"),
-                "icon_url": _safe_first_payload_value(payload, "icon_url", "icon"),
-                "end_date": _safe_first_payload_value(payload, "end_date", "endDate"),
-                "token_ids": _safe_first_payload_value(payload, "token_ids"),
-                "outcomes": _safe_first_payload_value(payload, "outcomes"),
-                "tick_size": _safe_first_payload_value(payload, "tick_size"),
-                "min_order_size": _safe_first_payload_value(payload, "min_order_size"),
-                "neg_risk": _safe_first_payload_value(payload, "neg_risk"),
-                "fees": fees,
-                "category": _safe_first_payload_value(payload, "category"),
-                "tags": _safe_first_payload_value(payload, "tags"),
-                "matched_keywords": _safe_first_payload_value(payload, "matched_keywords"),
-                "trading_status": "rejected"
-                if _safe_first_payload_value(payload, "accepted") is False
-                else _safe_first_payload_value(payload, "trading_status"),
-                "reject_reason": _safe_first_payload_value(
-                    payload,
-                    "reject_reason",
-                    "parse_reason",
-                    "classification_reason",
-                ),
-            }
-
-        record = _base_meta(event)
-        record.update(
-            {
-                "idempotency_key": _kind_idempotency_key("market", event),
-                "source": _safe_first_payload_value(payload, "source"),
-                "discovery_kind": _safe_first_payload_value(payload, "discovery_kind"),
-                "parse_status": _safe_first_payload_value(payload, "parse_status"),
-                "parse_reason": _safe_first_payload_value(payload, "parse_reason"),
-                "parse_detail": _safe_first_payload_value(payload, "parse_detail"),
-                "matched_fields": _to_jsonable(_safe_first_payload_value(payload, "matched_fields")),
-                "matched_keywords": _to_jsonable(_safe_first_payload_value(payload, "matched_keywords")),
-                "accepted": _safe_first_payload_value(payload, "accepted"),
-                "fees_enabled": _safe_first_payload_value(fees, "enabled"),
-                "maker_base_fee_bps": _safe_first_payload_value(fees, "maker_base_fee_bps"),
-                "taker_base_fee_bps": _safe_first_payload_value(fees, "taker_base_fee_bps"),
-                "fee_rate_bps": _safe_first_payload_value(fees, "fee_rate_bps"),
-                "fee_rate_updated_at": _safe_first_payload_value(fees, "fee_rate_updated_at"),
-                "market_data": _to_jsonable(market),
-            }
-        )
-        record.update(_to_jsonable(market))
-        return record
-
-    def _build_account_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any]:
-        record = _base_meta(event)
-        account = {
-            "account_key": "primary",
-            "balance_usdc": _safe_first_payload_value(payload, "balance_usdc"),
-            "allowance_usdc": _safe_first_payload_value(payload, "allowance_usdc"),
-            "user_ws_connected": _safe_first_payload_value(payload, "user_ws_connected"),
-            "allow_new_entries": _safe_first_payload_value(payload, "allow_new_entries"),
-            "paused_markets": _safe_first_payload_value(payload, "paused_markets"),
-            "pause_reasons": _safe_first_payload_value(payload, "pause_reasons"),
-            "last_reconcile_at": _safe_first_payload_value(payload, "last_reconcile_at"),
-        }
-        record.update(
-            {
-                "idempotency_key": _kind_idempotency_key("account", event),
-                "account_data": _to_jsonable(account),
-            }
-        )
-        record.update(_to_jsonable(account))
-        return record
-
-    def _build_orderbook_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any]:
-        snapshot = _mapping(payload, "snapshot", "orderbook", "book")
-        if snapshot is None:
-            snapshot = {
-                "token_id": event.token_id,
-                "market_slug": event.market_slug,
-                "condition_id": event.condition_id,
-                "best_bid": _safe_first_payload_value(payload, "best_bid"),
-                "best_ask": _safe_first_payload_value(payload, "best_ask"),
-                "best_bid_size": _safe_first_payload_value(payload, "best_bid_size"),
-                "best_ask_size": _safe_first_payload_value(payload, "best_ask_size"),
-                "last_trade_price": _safe_first_payload_value(payload, "last_trade_price"),
-                "tick_size": _safe_first_payload_value(payload, "tick_size"),
-                "spread": _safe_first_payload_value(payload, "spread"),
-                "buyable_no_depth": _safe_first_payload_value(payload, "buyable_no_depth"),
-                "snapshot_time": _safe_first_payload_value(payload, "snapshot_time"),
-                "needs_rest_snapshot": _safe_first_payload_value(payload, "needs_rest_snapshot"),
-            }
-
-        record = _base_meta(event)
-        record.update(
-            {
-                "idempotency_key": _kind_idempotency_key("orderbook", event),
-                "source": _safe_first_payload_value(payload, "source"),
-                "snapshot_time": _safe_first_payload_value(payload, "snapshot_time"),
-                "needs_rest_snapshot": _safe_first_payload_value(payload, "needs_rest_snapshot"),
-                "spread": _safe_first_payload_value(payload, "spread"),
-                "buyable_no_depth": _safe_first_payload_value(payload, "buyable_no_depth"),
-                "orderbook_data": _to_jsonable(snapshot),
-            }
-        )
-        record.update(_to_jsonable(snapshot))
-        return record
-
-    def _build_order_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any]:
-        order = _mapping(payload, "order")
-        if order is None:
-            order = {
-                "order_id": _safe_first_payload_value(payload, "order_id"),
-                "trade_id": _safe_first_payload_value(payload, "trade_id"),
-                "side": _safe_first_payload_value(payload, "side"),
-                "order_type": _safe_first_payload_value(payload, "order_type"),
-                "price": _safe_first_payload_value(payload, "price"),
-                "amount_usdc": _safe_first_payload_value(payload, "amount_usdc"),
-                "size_shares": _safe_first_payload_value(payload, "size_shares"),
-                "filled_shares": _safe_first_payload_value(payload, "filled_shares"),
-                "remaining_shares": _safe_first_payload_value(payload, "remaining_shares"),
-                "notional_usdc": _safe_first_payload_value(payload, "notional_usdc"),
-                "status": _safe_first_payload_value(payload, "status"),
-                "reason": _safe_first_payload_value(payload, "reason"),
-                "post_only": _safe_first_payload_value(payload, "post_only"),
-            }
-
-        record = _base_meta(event)
-        record.update(
-            {
-                "idempotency_key": _kind_idempotency_key("order", event),
-                "order_data": _to_jsonable(order),
-            }
-        )
-        record.update(_to_jsonable(order))
-        return record
-
-    def _build_fill_records(
-        self,
-        event: OutboxEvent,
-        payload: Mapping[str, Any],
-    ) -> list[dict[str, Any]]:
-        fills = _mapping_list(payload, "fill", "fills")
-        if not fills:
-            fills = [
-                {
-                    "event_id": event.event_id,
-                    "trade_id": _safe_first_payload_value(payload, "trade_id"),
-                    "order_id": _safe_first_payload_value(payload, "order_id"),
-                    "side": _safe_first_payload_value(payload, "side"),
-                    "price": _safe_first_payload_value(payload, "price"),
-                    "size": _safe_first_payload_value(payload, "size"),
-                    "notional_usdc": _safe_first_payload_value(payload, "notional_usdc"),
-                    "status": _safe_first_payload_value(payload, "status"),
-                    "confirmed_at": _safe_first_payload_value(payload, "confirmed_at"),
-                }
-            ]
-
-        records: list[dict[str, Any]] = []
-        for index, fill in enumerate(fills):
-            record = _base_meta(event)
-            record.update(
-                {
-                    "event_id": fill.get("event_id") or event.event_id,
-                    "idempotency_key": _kind_idempotency_key("fill", event),
-                    "fill_index": index,
-                    "fill_data": _to_jsonable(fill),
-                }
-            )
-            record.update(_to_jsonable(fill))
-            records.append(record)
-        return records
-
-    def _build_position_records(
-        self,
-        event: OutboxEvent,
-        payload: Mapping[str, Any],
-    ) -> list[dict[str, Any]]:
-        positions = _mapping_list(payload, "position", "positions")
-        if not positions:
-            positions = [
-                {
-                    "condition_id": event.condition_id,
-                    "token_id": event.token_id,
-                    "market_slug": event.market_slug,
-                    "shares": _safe_first_payload_value(payload, "shares"),
-                    "cost_usdc": _safe_first_payload_value(payload, "cost_usdc"),
-                    "open_buy_shares": _safe_first_payload_value(payload, "open_buy_shares"),
-                    "open_sell_shares": _safe_first_payload_value(payload, "open_sell_shares"),
-                    "pending_buy_shares": _safe_first_payload_value(payload, "pending_buy_shares"),
-                    "confirmed_shares": _safe_first_payload_value(payload, "confirmed_shares"),
-                    "last_order_id": _safe_first_payload_value(payload, "last_order_id"),
-                    "last_trade_id": _safe_first_payload_value(payload, "last_trade_id"),
-                    "confirmation_status": _safe_first_payload_value(payload, "confirmation_status"),
-                }
-            ]
-
-        records: list[dict[str, Any]] = []
-        for index, position in enumerate(positions):
-            record = _base_meta(event)
-            record.update(
-                {
-                    "idempotency_key": _kind_idempotency_key("position", event),
-                    "position_index": index,
-                    "position_data": _to_jsonable(position),
-                }
-            )
-            record.update(_to_jsonable(position))
-            records.append(record)
-        return records
-
-    def _build_allocation_records(
-        self,
-        event: OutboxEvent,
-        payload: Mapping[str, Any],
-    ) -> list[dict[str, Any]]:
-        allocation = _mapping(payload, "allocation")
-        allocations = _mapping_list(payload, "allocations")
-        plan = _mapping(payload, "allocation_plan")
-
-        if allocation is None and allocations:
-            records_source = allocations
-        elif allocation is not None:
-            records_source = [allocation]
-        elif plan is not None and isinstance(plan.get("allocations"), list):
-            records_source = [item for item in plan["allocations"] if isinstance(item, Mapping)]
-        else:
-            return []
-
-        records: list[dict[str, Any]] = []
-        plan_meta = _to_jsonable(plan) if plan is not None else None
-        for index, allocation_item in enumerate(records_source):
-            record = _base_meta(event)
-            record.update(
-                {
-                    "idempotency_key": _kind_idempotency_key("allocation", event),
-                    "allocation_index": index,
-                    "allocation_plan": plan_meta,
-                    "allocation_data": _to_jsonable(allocation_item),
-                }
-            )
-            record.update(_to_jsonable(allocation_item))
-            records.append(record)
-        return records
-
-    def _build_outbox_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any]:
-        record = _base_meta(event)
-        record.update(
-            {
-                "idempotency_key": event.idempotency_key,
-                "outbox_payload": _to_jsonable(payload),
-            }
-        )
-        return record
+        return self._record_builder.build_planned_records(events)
 
     def _success_map(self, items: Sequence[_PlannedRecord]) -> dict[str, int]:
         counts: dict[str, int] = {}

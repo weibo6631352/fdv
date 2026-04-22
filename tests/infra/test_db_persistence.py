@@ -7,7 +7,7 @@ from polymarket_trader.domain.events import DomainEventType, OutboxEvent
 from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.infra.db.models import MarketModel
 from polymarket_trader.infra.db.persistence import _audit_event_from_record, _market_from_record
-from polymarket_trader.workers.persistence_worker import PersistenceWorker
+from polymarket_trader.workers.persistence_records import PersistenceRecordBuilder
 from tests.helpers.markets import build_binary_market
 
 
@@ -84,7 +84,7 @@ def test_market_model_to_domain_prefers_fee_schedule_rate_from_raw_payload() -> 
 
 
 def test_market_persistence_worker_falls_back_to_parse_reason_in_market_data() -> None:
-    worker = PersistenceWorker()
+    builder = PersistenceRecordBuilder()
     event = OutboxEvent(
         trace_id="trace-1",
         event_type=DomainEventType.MARKET_FILTERED_OUT.value,
@@ -109,7 +109,8 @@ def test_market_persistence_worker_falls_back_to_parse_reason_in_market_data() -
         },
     )
 
-    record = worker._build_market_record(event, event.payload)
+    records = dict(builder.route_event(event))
+    record = records["market"]
 
     assert record["parse_reason"] == "missing_trading_conditions"
     assert record["market_data"]["reject_reason"] == "missing_trading_conditions"

@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from polymarket_trader.app.market_service import MarketDiscoveryOutcome, MarketService
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
-from polymarket_trader.infra.polymarket.schemas import RawMarketEvent
+from polymarket_trader.domain.discovery import RawMarketEvent
 from polymarket_trader.runtime.event_bus import EventBus
 
 

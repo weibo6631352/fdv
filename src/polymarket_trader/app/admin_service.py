@@ -1,6 +1,5 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal
 from typing import Any, Callable, Literal, Mapping, Sequence
 from uuid import uuid4
@@ -8,24 +7,17 @@ from uuid import uuid4
 from polymarket_trader.app.admin_operations import (
     market_status_allowed_for_manual_order,
     normalize_condition_ids,
-    normalize_order_id,
-    order_open_shares,
-    order_result_to_order_status,
-    order_status_to_text,
 )
-from polymarket_trader.app.admin_serialization import AdminSerializer, decimal_text, jsonable, page_payload, utc_now
+from polymarket_trader.app.admin_serialization import AdminSerializer, decimal_text, jsonable, page_payload
+from polymarket_trader.app.order_projection import AccountStateProjector, normalize_order_id, order_open_shares
 from polymarket_trader.app.trading_service import TradingService
 from polymarket_trader.domain.market import Market
 from polymarket_trader.domain.order import (
     Order,
-    OrderResult,
     OrderResultStatus,
-    OrderSide,
-    OrderStatus,
     ReplaceOrderIntent,
 )
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
-from polymarket_trader.domain.position import Position
 from polymarket_trader.infra.db import (
     AllocationRepository,
     AuditEventRepository,
@@ -39,6 +31,7 @@ from polymarket_trader.infra.db import (
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.event_bus import QueueDepthSnapshot
 from polymarket_trader.runtime.registry import MarketRegistrySnapshot
+from polymarket_trader.serialization import utc_now
 
 
 MarketFeeSortField = Literal[
@@ -790,13 +783,15 @@ class AdminService:
                 "replace_review": self._serializer().review(replace_review),
             }
 
-        self._apply_hot_replace_result(
-            market,
-            source_order=source_order,
-            result=replace_result,
-            operator=operator,
-            reason=reason,
-        )
+        account_state = getattr(self.runtime, "account_state_store", None)
+        if account_state is not None:
+            AccountStateProjector(account_state).apply_replace_result(
+                market,
+                source_order=source_order,
+                result=replace_result,
+                operator=operator,
+                reason=reason,
+            )
         return {
             "status": "ok",
             "trace_id": trace_id,
@@ -1212,149 +1207,6 @@ class AdminService:
         if len(matches) != 1:
             return None
         return matches[0]
-
-    def _remove_hot_order(self, order: Order) -> None:
-        account_state = getattr(self.runtime, "account_state_store", None)
-        if account_state is None:
-            return
-        order_id = normalize_order_id(order)
-        account_state.remove_order(order_id)
-
-    def _apply_hot_replace_result(
-        self,
-        market: Market,
-        *,
-        source_order: Order,
-        result: OrderResult,
-        operator: str,
-        reason: str,
-    ) -> None:
-        account_state = getattr(self.runtime, "account_state_store", None)
-        if account_state is None:
-            return
-        self._remove_hot_order(source_order)
-        order_status = order_result_to_order_status(result)
-        replacement_size_shares = (
-            result.requested_size_shares
-            or order_open_shares(source_order)
-            or source_order.size_shares
-        )
-        replacement_remaining = result.remaining_shares
-        if (
-            result.status in {OrderResultStatus.LIVE, OrderResultStatus.PARTIAL_FILL}
-            and replacement_remaining <= Decimal("0")
-            and replacement_size_shares is not None
-        ):
-            replacement_remaining = max(replacement_size_shares - result.matched_shares, Decimal("0"))
-        if replacement_remaining < Decimal("0"):
-            replacement_remaining = Decimal("0")
-
-        if order_status in {
-            OrderStatus.CREATED,
-            OrderStatus.SIGNED,
-            OrderStatus.SUBMITTED,
-            OrderStatus.LIVE,
-            OrderStatus.MATCHED,
-            OrderStatus.PARTIALLY_FILLED,
-        }:
-            order_id = result.order_id or result.trace_id
-            replacement_side = result.side or source_order.side
-            replacement_order_type = result.order_type or source_order.order_type
-            replacement_price = result.price or source_order.price
-            amount_usdc = result.requested_amount_usdc
-            if amount_usdc is None and replacement_side == OrderSide.BUY:
-                amount_usdc = source_order.amount_usdc
-            notional_usdc = result.notional_usdc
-            if (
-                notional_usdc == Decimal("0")
-                and replacement_size_shares is not None
-                and replacement_price is not None
-            ):
-                notional_usdc = replacement_price * replacement_size_shares
-            account_state.upsert_order(
-                Order(
-                    trace_id=result.trace_id,
-                    condition_id=result.condition_id,
-                    token_id=result.token_id,
-                    market_slug=source_order.market_slug or market.market_slug,
-                    side=replacement_side,
-                    order_type=replacement_order_type,
-                    price=replacement_price,
-                    amount_usdc=amount_usdc,
-                    size_shares=replacement_size_shares,
-                    filled_shares=result.matched_shares,
-                    remaining_shares=replacement_remaining,
-                    notional_usdc=notional_usdc,
-                    order_id=order_id,
-                    trade_id=result.trade_id,
-                    status=order_status,
-                    idempotency_key=result.intent.idempotency_key if result.intent is not None else order_id,
-                    reason=f"{reason}:{operator}",
-                    post_only=bool(getattr(result.intent, "post_only", False)),
-                    created_at=result.timestamps.queued_at,
-                    updated_at=result.timestamps.ack_at,
-                )
-            )
-
-        self._refresh_hot_position_coverage(
-            condition_id=source_order.condition_id,
-            token_id=source_order.token_id,
-            market_slug=source_order.market_slug or market.market_slug,
-            last_order_id=result.order_id or result.trace_id,
-            last_trade_id=result.trade_id,
-            confirmation_status=order_status_to_text(result.status),
-            updated_at=result.timestamps.ack_at,
-        )
-
-    def _refresh_hot_position_coverage(
-        self,
-        *,
-        condition_id: str,
-        token_id: str,
-        market_slug: str | None,
-        last_order_id: str | None,
-        last_trade_id: str | None,
-        confirmation_status: str,
-        updated_at: datetime | None,
-    ) -> None:
-        account_state = getattr(self.runtime, "account_state_store", None)
-        if account_state is None:
-            return
-        snapshot = account_state.snapshot()
-        position = snapshot.get_position(condition_id, token_id)
-        open_buy_shares = sum(
-            order_open_shares(order) or Decimal("0")
-            for order in snapshot.open_buy_orders_for_market(condition_id, token_id)
-        )
-        open_sell_shares = snapshot.open_sell_shares_for_market(condition_id, token_id)
-        pending_buy_shares = open_buy_shares
-        if position is None and open_buy_shares <= Decimal("0") and open_sell_shares <= Decimal("0"):
-            return
-        current_position = position or Position(
-            condition_id=condition_id,
-            token_id=token_id,
-            shares=Decimal("0"),
-            cost_usdc=Decimal("0"),
-            market_slug=market_slug,
-        )
-        account_state.upsert_position(
-            Position(
-                condition_id=current_position.condition_id,
-                token_id=current_position.token_id,
-                shares=current_position.shares,
-                cost_usdc=current_position.cost_usdc,
-                market_slug=current_position.market_slug or market_slug,
-                open_buy_shares=open_buy_shares,
-                open_sell_shares=open_sell_shares,
-                pending_buy_shares=pending_buy_shares,
-                confirmed_shares=current_position.confirmed_shares,
-                last_order_id=last_order_id,
-                last_trade_id=last_trade_id,
-                confirmation_status=confirmation_status,
-                updated_at=updated_at,
-            )
-        )
-
 
 @dataclass(frozen=True, slots=True)
 class _RepositoryGroup:

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any, Awaitable, Callable, Iterable, Mapping
 from uuid import uuid4
 
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, Fill, OutboxPriority
-from polymarket_trader.domain.order import Order, OrderSide, OrderStatus, OrderType
+from polymarket_trader.domain.order import Order, OrderStatus
 from polymarket_trader.domain.position import Position
 from polymarket_trader.infra.polymarket import user_ws_adapter
 from polymarket_trader.runtime.account_state import AccountSnapshot, AccountStateStore
@@ -21,183 +21,27 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _first(mapping: Mapping[str, Any], *keys: str) -> Any | None:
-    for key in keys:
-        value = mapping.get(key)
-        if value is not None:
-            return value
-    return None
-
-
-def _to_decimal(value: Any | None, default: Decimal | None = None) -> Decimal | None:
-    if value is None:
-        return default
-    if isinstance(value, Decimal):
-        return value
-    text = str(value).strip()
-    if not text:
-        return default
-    return Decimal(text)
-
-
-def _to_datetime(value: Any | None) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
-    text = str(value).strip()
-    if not text:
-        return None
-    try:
-        numeric = Decimal(text)
-    except InvalidOperation:
-        numeric = None
-    if numeric is not None:
-        timestamp = float(numeric)
-        if timestamp > 10_000_000_000:
-            timestamp /= 1000.0
-        return datetime.fromtimestamp(timestamp, tz=timezone.utc)
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
-def _text(value: Any | None) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _normalize_status(value: Any | None) -> str:
-    text = _text(value)
-    return "" if text is None else text.lower()
-
-
-def _normalize_order_status(value: Any | None) -> OrderStatus:
-    text = _normalize_status(value)
-    if text in {"created", "new"}:
-        return OrderStatus.CREATED
-    if text in {"signed", "signing"}:
-        return OrderStatus.SIGNED
-    if text in {"submitted", "open"}:
-        return OrderStatus.SUBMITTED
-    if text in {"cancel_requested", "cancel-requested"}:
-        return OrderStatus.CANCEL_REQUESTED
-    if text in {"matched", "match"}:
-        return OrderStatus.MATCHED
-    if text in {"partially_filled", "partial_fill", "partial-filled"}:
-        return OrderStatus.PARTIALLY_FILLED
-    if text in {"no_fill", "no-fill", "unfilled"}:
-        return OrderStatus.NO_FILL
-    if text in {"live", "resting", "open_live"}:
-        return OrderStatus.LIVE
-    if text in {"cancelled", "canceled"}:
-        return OrderStatus.CANCELLED
-    if text in {"rejected", "reject"}:
-        return OrderStatus.REJECTED
-    if text in {"failed", "error"}:
-        return OrderStatus.FAILED
-    return OrderStatus.CREATED
-
-
-def _normalize_order_type(value: Any | None, *, default: OrderType = OrderType.GTC) -> OrderType:
-    text = _normalize_status(value)
-    if text == "fak":
-        return OrderType.FAK
-    if text == "gtc":
-        return OrderType.GTC
-    return default
-
-
-def _normalize_user_order_status(message: Mapping[str, Any]) -> OrderStatus:
-    explicit = _text(_first(message, "status", "order_status", "orderStatus"))
-    if explicit is not None:
-        return _normalize_order_status(explicit)
-    event_kind = _normalize_status(_first(message, "type", "action"))
-    matched = _to_decimal(
-        _first(message, "filled_shares", "size_matched", "matched_amount"),
-        default=Decimal("0"),
-    ) or Decimal("0")
-    original = _to_decimal(_first(message, "size_shares", "size", "original_size", "quantity"))
-    if event_kind in {"cancellation", "cancel", "cancelled", "canceled"}:
-        return OrderStatus.CANCELLED
-    if original is not None and original > 0 and matched >= original:
-        return OrderStatus.MATCHED
-    if matched > 0:
-        return OrderStatus.PARTIALLY_FILLED
-    if event_kind in {"placement", "update"}:
-        return OrderStatus.LIVE
-    return OrderStatus.CREATED
-
-
-def _message_type(message: Mapping[str, Any]) -> str:
-    value = _first(message, "event_type", "message_type", "channel_event", "type", "action")
-    return _normalize_status(value)
-
-
-def _extract_condition_id(message: Mapping[str, Any]) -> str | None:
-    return _text(_first(message, "condition_id", "conditionId", "condition", "market"))
-
-
-def _extract_token_id(message: Mapping[str, Any]) -> str | None:
-    return _text(_first(message, "token_id", "tokenId", "asset_id", "assetId", "market_token_id"))
-
-
-def _extract_market_slug(message: Mapping[str, Any]) -> str | None:
-    return _text(_first(message, "market_slug", "marketSlug", "slug"))
-
-
-def _extract_trace_id(message: Mapping[str, Any]) -> str:
-    value = _text(_first(message, "trace_id", "traceId"))
-    return value or uuid4().hex
-
-
-def _extract_event_id(message: Mapping[str, Any]) -> str:
-    value = _text(_first(message, "event_id", "eventId", "id"))
-    return value or uuid4().hex
-
-
-def _flatten_message(message: Mapping[str, Any] | DomainEvent) -> Mapping[str, Any]:
-    if isinstance(message, DomainEvent):
-        payload = dict(message.payload)
-        payload.setdefault("trace_id", message.trace_id)
-        payload.setdefault("event_id", message.event_id)
-        payload.setdefault("event_type", str(message.event_type))
-        payload.setdefault("market_slug", message.market_slug)
-        payload.setdefault("condition_id", message.condition_id)
-        payload.setdefault("token_id", message.token_id)
-        payload.setdefault("reason", message.reason)
-        return payload
-    return message
-
-
-def _decimal_or_zero(value: Any | None) -> Decimal:
-    return _to_decimal(value, default=Decimal("0")) or Decimal("0")
-
-
-def _coalesce_decimal(*values: Any | None, default: Decimal = Decimal("0")) -> Decimal:
-    for value in values:
-        decimal_value = _to_decimal(value)
-        if decimal_value is not None:
-            return decimal_value
-    return default
+_first = user_ws_adapter.first_value
+_coalesce_decimal = user_ws_adapter.coalesce_decimal
+_flatten_message = user_ws_adapter.flatten_message
+_message_type = user_ws_adapter.message_type
+_extract_condition_id = user_ws_adapter.extract_condition_id
+_extract_token_id = user_ws_adapter.extract_token_id
+_extract_market_slug = user_ws_adapter.extract_market_slug
+_extract_trace_id = user_ws_adapter.extract_trace_id
+_extract_event_id = user_ws_adapter.extract_event_id
+_iter_order_snapshots = user_ws_adapter.iter_order_snapshots
+_iter_position_snapshots = user_ws_adapter.iter_position_snapshots
+_iter_fill_snapshots = user_ws_adapter.iter_fill_snapshots
+_is_snapshot_message = user_ws_adapter.is_snapshot_message
+_order_from_fill = user_ws_adapter.order_from_fill
+_apply_fill_to_position = user_ws_adapter.apply_fill_to_position
 
 
 def _order_id(order: Order) -> str:
     return order.order_id or order.idempotency_key or (
         f"{order.condition_id}:{order.token_id}:{order.side.value}:{order.order_type.value}"
     )
-
-
-def _position_key(position: Position) -> tuple[str, str]:
-    return position.condition_id, position.token_id
 
 
 def _order_to_payload(order: Order) -> dict[str, Any]:
@@ -272,10 +116,6 @@ def _snapshot_to_payload(snapshot: AccountSnapshot) -> dict[str, Any]:
         "open_orders": [_order_to_payload(order) for order in snapshot.open_orders],
         "fills": [_fill_to_payload(fill) for fill in snapshot.fills],
     }
-
-
-def _is_mapping_sequence(value: Any) -> bool:
-    return isinstance(value, (list, tuple)) and all(isinstance(item, Mapping) for item in value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -844,202 +684,3 @@ class UserWsWorker:
 
     def _has_fill_fields(self, payload: Mapping[str, Any]) -> bool:
         return any(key in payload for key in ("trade", "trades", "fill", "fills"))
-
-
-def _iter_position_snapshots(payload: Mapping[str, Any]) -> Iterable[Position]:
-    candidates: Iterable[Any]
-    if _is_mapping_sequence(payload.get("positions")):
-        candidates = payload["positions"]
-    elif isinstance(payload.get("position"), Mapping):
-        candidates = (payload["position"],)
-    elif isinstance(payload.get("holdings"), Mapping):
-        candidates = (payload["holdings"],)
-    elif isinstance(payload.get("holdings"), list):
-        candidates = payload["holdings"]
-    else:
-        candidates = (payload,)
-
-    for item in candidates:
-        if not isinstance(item, Mapping):
-            continue
-        condition_id = _extract_condition_id(item)
-        token_id = _extract_token_id(item)
-        if condition_id is None or token_id is None:
-            continue
-        yield Position(
-            condition_id=condition_id,
-            token_id=token_id,
-            market_slug=_extract_market_slug(item),
-            shares=_coalesce_decimal(item.get("shares"), item.get("position_shares"), default=Decimal("0")),
-            cost_usdc=_coalesce_decimal(
-                item.get("cost_usdc"),
-                item.get("cost"),
-                item.get("avg_cost_usdc"),
-                default=Decimal("0"),
-            ),
-            open_buy_shares=_coalesce_decimal(item.get("open_buy_shares"), default=Decimal("0")),
-            open_sell_shares=_coalesce_decimal(item.get("open_sell_shares"), default=Decimal("0")),
-            pending_buy_shares=_coalesce_decimal(item.get("pending_buy_shares"), default=Decimal("0")),
-            confirmed_shares=_coalesce_decimal(item.get("confirmed_shares"), default=Decimal("0")),
-            last_order_id=_text(item.get("last_order_id")),
-            last_trade_id=_text(item.get("last_trade_id")),
-            confirmation_status=_normalize_status(item.get("confirmation_status")) or "unknown",
-            updated_at=_to_datetime(item.get("updated_at") or item.get("timestamp")),
-        )
-
-
-_iter_order_snapshots = user_ws_adapter.iter_order_snapshots
-
-
-def _iter_fill_snapshots(payload: Mapping[str, Any]) -> Iterable[Fill]:
-    candidates: Iterable[Any]
-    if _is_mapping_sequence(payload.get("fills")):
-        candidates = payload["fills"]
-    elif _is_mapping_sequence(payload.get("trades")):
-        candidates = payload["trades"]
-    elif isinstance(payload.get("fill"), Mapping):
-        candidates = (payload["fill"],)
-    elif isinstance(payload.get("trade"), Mapping):
-        candidates = (payload["trade"],)
-    else:
-        candidates = (payload,)
-
-    for item in candidates:
-        if not isinstance(item, Mapping):
-            continue
-        condition_id = _extract_condition_id(item)
-        token_id = _extract_token_id(item)
-        if condition_id is None or token_id is None:
-            continue
-        size = _coalesce_decimal(
-            item.get("size"),
-            item.get("filled_size"),
-            item.get("quantity"),
-            item.get("matched_amount"),
-        )
-        price = _coalesce_decimal(item.get("price"), item.get("avg_price"))
-        side_text = _normalize_status(item.get("side"))
-        status = _normalize_status(item.get("status")) or _normalize_status(item.get("trade_status"))
-        if not status:
-            status = "confirmed" if item.get("confirmed", False) else "matched"
-        notional_usdc = _coalesce_decimal(item.get("notional_usdc"), item.get("amount"), default=Decimal("0"))
-        if notional_usdc == Decimal("0") and size is not None and price is not None:
-            notional_usdc = price * size
-        yield Fill(
-            trace_id=_extract_trace_id(item),
-            event_id=_extract_event_id(item),
-            market_slug=_extract_market_slug(item),
-            condition_id=condition_id,
-            token_id=token_id,
-            reason=_text(item.get("reason")) or status,
-            created_at=_to_datetime(item.get("created_at") or item.get("timestamp")) or _utc_now(),
-            order_id=_text(item.get("order_id") or item.get("taker_order_id")),
-            trade_id=_text(item.get("trade_id") or item.get("matched_trade_id") or item.get("id")),
-            side=side_text,
-            price=price,
-            size=size,
-            notional_usdc=notional_usdc,
-            status=status,
-            confirmed_at=_to_datetime(
-                item.get("confirmed_at")
-                or item.get("matchtime")
-                or item.get("last_update")
-                or item.get("timestamp")
-            ),
-        )
-
-
-def _is_snapshot_message(payload: Mapping[str, Any]) -> bool:
-    message_type = _message_type(payload)
-    return message_type in {"snapshot", "sync", "initial_snapshot", "full_snapshot", "state"}
-
-
-def _order_from_fill(fill: Fill) -> Order:
-    side = OrderSide.BUY if _normalize_status(fill.side) == "buy" else OrderSide.SELL
-    order_status = OrderStatus.MATCHED
-    if fill.status in {"partial", "partially_filled", "partial_fill"}:
-        order_status = OrderStatus.PARTIALLY_FILLED
-    elif fill.status in {"confirmed", "mined"}:
-        order_status = OrderStatus.MATCHED
-    elif fill.status in {"failed"}:
-        order_status = OrderStatus.FAILED
-    return Order(
-        trace_id=fill.trace_id,
-        condition_id=fill.condition_id or "",
-        token_id=fill.token_id or "",
-        market_slug=fill.market_slug,
-        side=side,
-        order_type=OrderType.FAK if side == OrderSide.BUY else OrderType.GTC,
-        price=fill.price or Decimal("0"),
-        amount_usdc=fill.notional_usdc if side == OrderSide.BUY else None,
-        size_shares=fill.size if side == OrderSide.SELL else None,
-        notional_usdc=fill.notional_usdc,
-        order_id=fill.order_id,
-        trade_id=fill.trade_id,
-        status=order_status,
-        reason=fill.reason,
-    )
-
-
-def _apply_fill_to_position(position: Position | None, fill: Fill) -> Position | None:
-    if fill.size is None:
-        return position
-
-    if position is None:
-        if fill.condition_id is None or fill.token_id is None:
-            return None
-        position = Position(
-            condition_id=fill.condition_id,
-            token_id=fill.token_id,
-            market_slug=fill.market_slug,
-            shares=Decimal("0"),
-            cost_usdc=Decimal("0"),
-            open_buy_shares=Decimal("0"),
-            open_sell_shares=Decimal("0"),
-            pending_buy_shares=Decimal("0"),
-            confirmed_shares=Decimal("0"),
-            confirmation_status="unknown",
-            updated_at=fill.confirmed_at or fill.created_at,
-        )
-
-    size = fill.size
-    confirmed = _normalize_status(fill.status) in {"confirmed", "mined"}
-    side = _normalize_status(fill.side)
-    updated = position
-
-    if side == "buy":
-        updated = replace(
-            updated,
-            shares=updated.shares + size,
-            cost_usdc=updated.cost_usdc + (fill.notional_usdc or Decimal("0")),
-            pending_buy_shares=updated.pending_buy_shares + size if not confirmed else max(
-                Decimal("0"),
-                updated.pending_buy_shares - size,
-            ),
-            confirmed_shares=updated.confirmed_shares + size if confirmed else updated.confirmed_shares,
-            confirmation_status=_normalize_status(fill.status) or updated.confirmation_status,
-            last_order_id=fill.order_id or updated.last_order_id,
-            last_trade_id=fill.trade_id or updated.last_trade_id,
-            updated_at=fill.confirmed_at or fill.created_at,
-        )
-        return updated
-
-    if side == "sell":
-        updated = replace(
-            updated,
-            shares=max(Decimal("0"), updated.shares - size),
-            open_sell_shares=max(Decimal("0"), updated.open_sell_shares - size),
-            confirmed_shares=max(
-                Decimal("0"),
-                updated.confirmed_shares - size,
-            )
-            if confirmed
-            else updated.confirmed_shares,
-            confirmation_status=_normalize_status(fill.status) or updated.confirmation_status,
-            last_order_id=fill.order_id or updated.last_order_id,
-            last_trade_id=fill.trade_id or updated.last_trade_id,
-            updated_at=fill.confirmed_at or fill.created_at,
-        )
-        return updated
-
-    return position

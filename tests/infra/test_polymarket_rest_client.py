@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from polymarket_trader.infra.polymarket.schemas import _resolve_proxy_url
+from polymarket_trader.infra.polymarket.base_client import _resolve_proxy_url
 
 
 def test_resolve_proxy_url_prefers_https_proxy_and_ignores_socks_all_proxy(monkeypatch) -> None:

@@ -7,9 +7,9 @@ from typing import Any
 import httpx
 
 from polymarket_trader.infra.polymarket.auth import PolymarketTradingClient
+from polymarket_trader.infra.polymarket.base_client import PolymarketRestClientBase
 from polymarket_trader.infra.polymarket.schemas import (
     DataPositionDTO,
-    PolymarketRestClientBase,
     normalize_position_payload,
 )
 

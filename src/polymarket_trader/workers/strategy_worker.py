@@ -8,6 +8,11 @@ from uuid import uuid4
 
 from polymarket_trader.app.strategy_service import StrategyEntryPlan, StrategyService
 from polymarket_trader.app.trading_service import TradingReviewResult, TradingService
+from polymarket_trader.app.order_projection import (
+    AccountStateProjector,
+    has_unexpected_resting_order,
+    released_budget,
+)
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from polymarket_trader.domain.market import Market, MarketOutcome
 from polymarket_trader.domain.order import (
@@ -17,8 +22,6 @@ from polymarket_trader.domain.order import (
     OrderResult,
     OrderResultStatus,
     OrderSide,
-    OrderStatus,
-    OrderType,
     ReplaceOrderIntent,
     SellOrderIntent,
 )
@@ -297,7 +300,9 @@ class StrategyWorker:
             OrderResultStatus.PARTIAL_FILL,
             OrderResultStatus.NO_FILL,
         }:
-            self._update_account_state_from_buy(order_result, snapshot=snapshot)
+            projector = self._account_projector()
+            if projector is not None:
+                projector.apply_buy_result(order_result, snapshot=snapshot)
             active_snapshot = (
                 self._account_state_store.snapshot()
                 if self._account_state_store is not None
@@ -308,11 +313,13 @@ class StrategyWorker:
             and isinstance(execution.intent, SellOrderIntent)
             and order_result.side == OrderSide.SELL
         ):
-            self._update_account_state_from_sell(
-                order_result,
-                snapshot=snapshot,
-                intent=execution.intent,
-            )
+            projector = self._account_projector()
+            if projector is not None:
+                projector.apply_sell_result(
+                    order_result,
+                    snapshot=snapshot,
+                    intent=execution.intent,
+                )
             active_snapshot = (
                 self._account_state_store.snapshot()
                 if self._account_state_store is not None
@@ -321,7 +328,7 @@ class StrategyWorker:
 
         if order_result.side is not None and order_result.side.value == "BUY":
             if order_result.status in {OrderResultStatus.FULL_FILL, OrderResultStatus.PARTIAL_FILL}:
-                released_budget_usdc = _released_budget(order_result)
+                released_budget_usdc = released_budget(order_result)
                 await self._publish(
                     DomainEventType.ORDER_STATE_UPDATED,
                     trace_id=order_result.trace_id,
@@ -337,7 +344,7 @@ class StrategyWorker:
                     },
                 )
             elif order_result.status == OrderResultStatus.NO_FILL:
-                released_budget_usdc = _released_budget(order_result)
+                released_budget_usdc = released_budget(order_result)
                 await self._publish(
                     DomainEventType.ORDER_STATE_UPDATED,
                     trace_id=order_result.trace_id,
@@ -353,7 +360,7 @@ class StrategyWorker:
                     },
                 )
                 self._transition_market_by_result(order_result, MarketLifecycle.ENTRY_READY)
-            elif _has_unexpected_resting_order(order_result):
+            elif has_unexpected_resting_order(order_result):
                 await self._publish(
                     DomainEventType.ORDER_STATE_UPDATED,
                     trace_id=order_result.trace_id,
@@ -427,7 +434,7 @@ class StrategyWorker:
                 )
                 self._transition_market_by_result(order_result, MarketLifecycle.ENTRY_REJECTED)
 
-        resolved_market = self._strategy_service._resolve_market(
+        resolved_market = self._strategy_service.resolve_market(
             condition_id=order_result.condition_id,
             token_id=order_result.token_id,
         )
@@ -498,15 +505,19 @@ class StrategyWorker:
             if follow_up_review.order_result is not None:
                 self._transition_from_order_result(follow_up_review.order_result)
                 if isinstance(intent, SellOrderIntent):
-                    self._update_account_state_from_sell(
+                    projector = self._account_projector()
+                    if projector is not None:
+                        projector.apply_sell_result(
+                            follow_up_review.order_result,
+                            snapshot=active_snapshot,
+                            intent=intent,
+                        )
+                projector = self._account_projector()
+                if projector is not None:
+                    projector.apply_result_flags(
                         follow_up_review.order_result,
                         snapshot=active_snapshot,
-                        intent=intent,
                     )
-                self._update_account_state_from_order_result(
-                    follow_up_review.order_result,
-                    snapshot=active_snapshot,
-                )
                 active_snapshot = (
                     self._account_state_store.snapshot()
                     if self._account_state_store is not None
@@ -514,7 +525,9 @@ class StrategyWorker:
                 )
             result_event = follow_up_event
 
-        self._update_account_state_from_order_result(order_result, snapshot=snapshot)
+        projector = self._account_projector()
+        if projector is not None:
+            projector.apply_result_flags(order_result, snapshot=snapshot)
         return StrategyWorkerResult(
             entry_event=source_event,
             plan=plan,
@@ -648,157 +661,6 @@ class StrategyWorker:
             return None
         return self._market_lifecycle.get(condition_id)
 
-    def _update_account_state_from_buy(
-        self,
-        order_result: OrderResult,
-        *,
-        snapshot: AccountSnapshot | None,
-    ) -> None:
-        if self._account_state_store is None:
-            return
-        if order_result.status not in {
-            OrderResultStatus.FULL_FILL,
-            OrderResultStatus.PARTIAL_FILL,
-            OrderResultStatus.NO_FILL,
-        }:
-            return
-        position = _snapshot_position(snapshot, order_result.condition_id, order_result.token_id)
-        filled_shares = _filled_shares(order_result)
-        spent_usdc = _spent_usdc(order_result)
-        if position is None and filled_shares <= Decimal("0"):
-            return
-        if position is None:
-            position = Position(
-                condition_id=order_result.condition_id,
-                token_id=order_result.token_id,
-                shares=filled_shares,
-                cost_usdc=spent_usdc,
-                market_slug=order_result.market_slug,
-                open_sell_shares=Decimal("0"),
-                pending_buy_shares=Decimal("0"),
-                confirmation_status=str(order_result.status),
-                last_order_id=order_result.order_id,
-                last_trade_id=order_result.trade_id,
-                updated_at=_utc_now(),
-            )
-        else:
-            position = Position(
-                condition_id=position.condition_id,
-                token_id=position.token_id,
-                shares=position.shares + filled_shares,
-                cost_usdc=position.cost_usdc + spent_usdc,
-                market_slug=position.market_slug or order_result.market_slug,
-                open_buy_shares=Decimal("0"),
-                open_sell_shares=position.open_sell_shares,
-                pending_buy_shares=Decimal("0"),
-                confirmed_shares=position.confirmed_shares + filled_shares,
-                last_order_id=order_result.order_id or position.last_order_id,
-                last_trade_id=order_result.trade_id or position.last_trade_id,
-                confirmation_status=str(order_result.status),
-                updated_at=_utc_now(),
-            )
-        self._account_state_store.upsert_position(position)
-        if snapshot is not None:
-            self._account_state_store.update_balances(
-                balance_usdc=snapshot.balance_usdc,
-                allowance_usdc=snapshot.allowance_usdc,
-            )
-
-    def _update_account_state_from_sell(
-        self,
-        order_result: OrderResult,
-        *,
-        snapshot: AccountSnapshot | None,
-        intent: SellOrderIntent,
-    ) -> None:
-        if self._account_state_store is None:
-            return
-        if order_result.status not in {
-            OrderResultStatus.FULL_FILL,
-            OrderResultStatus.PARTIAL_FILL,
-            OrderResultStatus.LIVE,
-        }:
-            return
-        current_snapshot = self._account_state_store.snapshot()
-        position = _snapshot_position(current_snapshot, order_result.condition_id, order_result.token_id)
-        if position is None:
-            position = _snapshot_position(snapshot, order_result.condition_id, order_result.token_id)
-        if position is None:
-            return
-        remaining_shares = order_result.remaining_shares
-        if order_result.status in {OrderResultStatus.LIVE, OrderResultStatus.PARTIAL_FILL} and remaining_shares <= Decimal(
-            "0"
-        ):
-            remaining_shares = intent.size_shares - _filled_shares(order_result)
-        if remaining_shares < Decimal("0"):
-            remaining_shares = Decimal("0")
-        open_sell = max(position.open_sell_shares - _existing_order_size(current_snapshot, order_result), Decimal("0"))
-        open_sell += remaining_shares
-        if open_sell < Decimal("0"):
-            open_sell = Decimal("0")
-        order_id = order_result.order_id or intent.idempotency_key or f"{order_result.trace_id}:{order_result.condition_id}:{order_result.token_id}:sell"
-        if order_result.status in {OrderResultStatus.LIVE, OrderResultStatus.PARTIAL_FILL}:
-            self._account_state_store.upsert_order(
-                Order(
-                    trace_id=order_result.trace_id,
-                    condition_id=order_result.condition_id,
-                    token_id=order_result.token_id,
-                    market_slug=position.market_slug or order_result.market_slug,
-                    side=OrderSide.SELL,
-                    order_type=order_result.order_type or intent.order_type,
-                    price=order_result.price or intent.price,
-                    size_shares=order_result.requested_size_shares or intent.size_shares,
-                    filled_shares=order_result.matched_shares,
-                    remaining_shares=remaining_shares,
-                    notional_usdc=order_result.notional_usdc,
-                    order_id=order_id,
-                    trade_id=order_result.trade_id,
-                    status=_order_status_from_result(order_result),
-                    idempotency_key=intent.idempotency_key or order_id,
-                    reason=order_result.reason,
-                    post_only=intent.post_only,
-                    created_at=order_result.timestamps.queued_at,
-                    updated_at=order_result.timestamps.ack_at,
-                )
-            )
-        else:
-            self._account_state_store.remove_order(order_id)
-        position = Position(
-            condition_id=position.condition_id,
-            token_id=position.token_id,
-            shares=position.shares,
-            cost_usdc=position.cost_usdc,
-            market_slug=position.market_slug or order_result.market_slug,
-            open_buy_shares=position.open_buy_shares,
-            open_sell_shares=open_sell,
-            pending_buy_shares=position.pending_buy_shares,
-            confirmed_shares=position.confirmed_shares,
-            last_order_id=order_result.order_id or position.last_order_id,
-            last_trade_id=order_result.trade_id or position.last_trade_id,
-            confirmation_status=str(order_result.status),
-            updated_at=_utc_now(),
-        )
-        self._account_state_store.upsert_position(position)
-
-    def _update_account_state_from_order_result(
-        self,
-        order_result: OrderResult,
-        *,
-        snapshot: AccountSnapshot | None,
-    ) -> None:
-        if self._account_state_store is None:
-            return
-        if _has_unexpected_resting_order(order_result):
-            self._account_state_store.set_allow_new_entries(False)
-            self._pause_market(order_result.condition_id, reason="unexpected_resting_order")
-        if order_result.status in {OrderResultStatus.REJECTED, OrderResultStatus.FAILED, OrderResultStatus.UNKNOWN_TIMEOUT}:
-            self._account_state_store.set_allow_new_entries(True)
-        if snapshot is not None:
-            self._account_state_store.update_balances(
-                balance_usdc=snapshot.balance_usdc,
-                allowance_usdc=snapshot.allowance_usdc,
-            )
-
     def _market_from_snapshot_position(
         self,
         snapshot: AccountSnapshot,
@@ -810,7 +672,7 @@ class StrategyWorker:
         position = snapshot.get_position(condition_id, token_id)
         if position is None:
             return None
-        market = self._strategy_service._resolve_market(condition_id=condition_id, token_id=token_id)
+        market = self._strategy_service.resolve_market(condition_id=condition_id, token_id=token_id)
         return market
 
     async def _execute_managed_intent(
@@ -819,7 +681,7 @@ class StrategyWorker:
         *,
         snapshot: AccountSnapshot | None,
     ) -> TradingReviewResult:
-        market = self._strategy_service._resolve_market(
+        market = self._strategy_service.resolve_market(
             condition_id=intent.condition_id,
             token_id=intent.token_id,
         )
@@ -830,7 +692,7 @@ class StrategyWorker:
         return await self._trading_service.review_intent(
             intent,
             market=market,
-            orderbook=self._strategy_service._lookup_orderbook(intent.token_id),
+            orderbook=self._strategy_service.lookup_orderbook(intent.token_id),
             position=_snapshot_position(snapshot, intent.condition_id, intent.token_id),
             open_orders=(
                 snapshot.open_orders_for_market(intent.condition_id, intent.token_id)
@@ -849,6 +711,11 @@ class StrategyWorker:
             order_retry_limit=self._order_retry_limit,
             operation=intent.side.value.lower(),
         )
+
+    def _account_projector(self) -> AccountStateProjector | None:
+        if self._account_state_store is None:
+            return None
+        return AccountStateProjector(self._account_state_store)
 
 
 @dataclass(frozen=True, slots=True)
@@ -885,30 +752,6 @@ def _match_open_orders(
         for order in open_orders
         if order.condition_id == condition_id and order.token_id == token_id
     )
-
-
-def _existing_order_size(snapshot: AccountSnapshot | None, order_result: OrderResult) -> Decimal:
-    if snapshot is None:
-        return Decimal("0")
-    for order in snapshot.open_orders_for_market(order_result.condition_id, order_result.token_id):
-        if order.order_id == order_result.order_id or (
-            order_result.order_id is None and order.idempotency_key == getattr(order_result.intent, "idempotency_key", None)
-        ):
-            return order.remaining_shares or order.size_shares or Decimal("0")
-    return Decimal("0")
-
-
-def _order_status_from_result(order_result: OrderResult) -> OrderStatus:
-    return {
-        OrderResultStatus.FULL_FILL: OrderStatus.MATCHED,
-        OrderResultStatus.PARTIAL_FILL: OrderStatus.PARTIALLY_FILLED,
-        OrderResultStatus.NO_FILL: OrderStatus.NO_FILL,
-        OrderResultStatus.LIVE: OrderStatus.LIVE,
-        OrderResultStatus.REJECTED: OrderStatus.REJECTED,
-        OrderResultStatus.FAILED: OrderStatus.FAILED,
-        OrderResultStatus.CANCELLED: OrderStatus.CANCELLED,
-        OrderResultStatus.UNKNOWN_TIMEOUT: OrderStatus.FAILED,
-    }[order_result.status]
 
 
 def _serialize_snapshot(snapshot: AccountSnapshot | None) -> dict[str, object] | None:
@@ -1161,39 +1004,6 @@ def _decimal(value: object | None) -> Decimal | None:
         return Decimal(str(value))
     except Exception:
         return None
-
-
-def _filled_shares(order_result: OrderResult) -> Decimal:
-    if order_result.matched_shares > Decimal("0"):
-        return order_result.matched_shares
-    if order_result.requested_size_shares is not None:
-        return order_result.requested_size_shares - order_result.remaining_shares
-    if order_result.notional_usdc > Decimal("0") and order_result.price and order_result.price > Decimal("0"):
-        return order_result.notional_usdc / order_result.price
-    return Decimal("0")
-
-
-def _released_budget(order_result: OrderResult) -> Decimal:
-    requested = order_result.requested_amount_usdc or order_result.notional_usdc
-    released = requested - order_result.spent_usdc
-    if released < Decimal("0"):
-        return Decimal("0")
-    return released
-
-
-def _has_unexpected_resting_order(order_result: OrderResult) -> bool:
-    return (
-        order_result.order_type == OrderType.FAK
-        and (order_result.has_resting_order or order_result.status == OrderResultStatus.LIVE)
-    )
-
-
-def _spent_usdc(order_result: OrderResult) -> Decimal:
-    if order_result.spent_usdc > Decimal("0"):
-        return order_result.spent_usdc
-    if order_result.price is not None and order_result.matched_shares > Decimal("0"):
-        return order_result.price * order_result.matched_shares
-    return Decimal("0")
 
 
 def _snapshot_balance(snapshot: AccountSnapshot | None) -> Decimal:

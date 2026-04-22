@@ -262,6 +262,17 @@ class StrategyService:
     def decide_follow_up(self, context: ExtensionContext) -> tuple[ExtensionDecision, ...]:
         return self._extension_hooks.decide_follow_up(context)
 
+    def resolve_market(
+        self,
+        *,
+        condition_id: str | None,
+        token_id: str | None,
+    ) -> Market | None:
+        return self._resolve_market(condition_id=condition_id, token_id=token_id)
+
+    def lookup_orderbook(self, token_id: str) -> OrderbookSnapshot | None:
+        return self._lookup_orderbook(token_id)
+
     def build_intent_from_decision(
         self,
         *,
