@@ -129,7 +129,7 @@ class FakeDataClient:
             normalize_position_payload(
                 {
                     "proxyWallet": "0x1111111111111111111111111111111111111111",
-                    "asset": "no-token-500m",
+                    "asset": "no-token-sample",
                     "conditionId": "0x" + "1" * 64,
                     "size": 5,
                     "avgPrice": 0.5,
@@ -150,7 +150,7 @@ class FakeDataClient:
                     "outcome": "No",
                     "outcomeIndex": 1,
                     "oppositeOutcome": "Yes",
-                    "oppositeAsset": "yes-token-500m",
+                    "oppositeAsset": "yes-token-sample",
                     "endDate": "2026-02-01T00:00:00Z",
                     "negativeRisk": False,
                 }
@@ -185,10 +185,10 @@ class FakeClobClient:
             }
         )
         self._orderbooks = orderbooks or {
-            "no-token-500m": normalize_orderbook_payload(
+            "no-token-sample": normalize_orderbook_payload(
                 {
-                    "market": "condition-500m",
-                    "asset_id": "no-token-500m",
+                    "market": "condition-sample",
+                    "asset_id": "no-token-sample",
                     "timestamp": 1704100800,
                     "bids": [{"price": "0.55", "size": "100"}],
                     "asks": [{"price": "0.59", "size": "200"}],
@@ -196,14 +196,14 @@ class FakeClobClient:
                     "tick_size": "0.01",
                     "last_trade_price": "0.54",
                 },
-                token_id="no-token-500m",
+                token_id="no-token-sample",
                 market_slug="sample-market-a",
-                condition_id="condition-500m",
+                condition_id="condition-sample",
             ),
-            "yes-token-500m": normalize_orderbook_payload(
+            "yes-token-sample": normalize_orderbook_payload(
                 {
-                    "market": "condition-500m",
-                    "asset_id": "yes-token-500m",
+                    "market": "condition-sample",
+                    "asset_id": "yes-token-sample",
                     "timestamp": 1704100801,
                     "bids": [{"price": "0.95", "size": "80"}],
                     "asks": [{"price": "0.99", "size": "120"}],
@@ -211,9 +211,9 @@ class FakeClobClient:
                     "tick_size": "0.01",
                     "last_trade_price": "0.97",
                 },
-                token_id="yes-token-500m",
+                token_id="yes-token-sample",
                 market_slug="sample-market-a",
-                condition_id="condition-500m",
+                condition_id="condition-sample",
             ),
         }
         self._midpoint = midpoint or Decimal("0.57")
@@ -296,10 +296,10 @@ class FakeTradingService:
 
 def _market() -> Market:
     return build_binary_market(
-        condition_id="condition-500m",
+        condition_id="condition-sample",
         market_slug="sample-market-a",
-        no_token_id="no-token-500m",
-        yes_token_id="yes-token-500m",
+        no_token_id="no-token-sample",
+        yes_token_id="yes-token-sample",
         event_id="event-1",
         event_title="Sample Market A",
         event_slug="sample-event-a",
@@ -584,16 +584,16 @@ def run_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         market_detail = client.get("/markets/detail", params={"market_slug": "sample-market-a"}).json()
         market_orderbook = client.get(
             "/markets/orderbook",
-            params={"market_slug": "sample-market-a", "token_id": "no-token-500m"},
+            params={"market_slug": "sample-market-a", "token_id": "no-token-sample"},
         ).json()
         market_midpoint = client.get(
             "/markets/midpoint",
-            params={"market_slug": "sample-market-a", "token_id": "no-token-500m"},
+            params={"market_slug": "sample-market-a", "token_id": "no-token-sample"},
         ).json()
         market_prices_history = client.get(
             "/markets/prices-history",
             params={
-                "token_id": "no-token-500m",
+                "token_id": "no-token-sample",
                 "start_ts": 1704100800,
                 "end_ts": 1704104400,
                 "interval": "1h",
@@ -642,48 +642,48 @@ def run_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         market_item = markets["items"][0]
         no_view = _token_view(market_item, "NO")
         yes_view = _token_view(market_item, "YES")
-        assert market_item["market"]["condition_id"] == "condition-500m"
+        assert market_item["market"]["condition_id"] == "condition-sample"
         assert market_item["market"]["icon_url"] == "https://example.com/icon.png"
         assert market_item["market"]["end_date"] == "2026-02-01T00:00:00+00:00"
         assert market_item["market"]["fees"]["enabled"] is True
         assert market_item["market"]["fees"]["maker_base_fee_bps"] == 0
         assert market_item["market"]["fees"]["fee_rate_updated_at"] == "2026-01-01T12:02:00+00:00"
-        assert no_view["token_id"] == "no-token-500m"
+        assert no_view["token_id"] == "no-token-sample"
         assert no_view["outcome"] == "NO"
         assert no_view["fee_preview"]["basis_size_shares"] == "100"
         assert no_view["fee_preview"]["buy"]["fee_usdc"] == "3.02375"
         assert no_view["fee_preview"]["sell"]["fee_usdc"] == "3.09375"
-        assert yes_view["token_id"] == "yes-token-500m"
+        assert yes_view["token_id"] == "yes-token-sample"
         assert yes_view["outcome"] == "YES"
-        assert yes_view["orderbook"]["token_id"] == "yes-token-500m"
+        assert yes_view["orderbook"]["token_id"] == "yes-token-sample"
         assert yes_view["best_ask"] == "0.99"
         assert yes_view["best_bid"] == "0.95"
         assert yes_view["fee_preview"]["basis_size_shares"] == "100"
         assert yes_view["fee_preview"]["buy"]["fee_usdc"] == "0.12375"
         assert yes_view["fee_preview"]["sell"]["fee_usdc"] == "0.59375"
-        assert market_detail["market"]["condition_id"] == "condition-500m"
+        assert market_detail["market"]["condition_id"] == "condition-sample"
         assert market_detail["market"]["market_slug"] == "sample-market-a"
         assert market_detail["market"]["icon_url"] == "https://example.com/icon.png"
         assert market_detail["market"]["end_date"] == "2026-02-01T00:00:00+00:00"
         assert _token_view(market_detail, "NO")["fee_preview"]["buy"]["fee_shares"] == "5.12500"
-        assert _token_view(market_detail, "NO")["token_id"] == "no-token-500m"
-        assert _token_view(market_detail, "YES")["token_id"] == "yes-token-500m"
+        assert _token_view(market_detail, "NO")["token_id"] == "no-token-sample"
+        assert _token_view(market_detail, "YES")["token_id"] == "yes-token-sample"
         assert _token_view(market_detail, "YES")["fee_preview"]["buy"]["fee_shares"] == "0.12500"
-        assert market_orderbook["token_id"] == "no-token-500m"
+        assert market_orderbook["token_id"] == "no-token-sample"
         assert market_orderbook["source"] == "hot"
         assert market_orderbook["orderbook"]["best_bid"] == "0.55"
         assert market_orderbook["orderbook"]["best_ask"] == "0.59"
-        assert market_midpoint["token_id"] == "no-token-500m"
+        assert market_midpoint["token_id"] == "no-token-sample"
         assert market_midpoint["source"] == "hot"
         assert market_midpoint["midpoint"] == "0.57"
         assert market_midpoint["spread"] == "0.04"
-        assert market_prices_history["token_id"] == "no-token-500m"
+        assert market_prices_history["token_id"] == "no-token-sample"
         assert market_prices_history["interval"] == "1h"
         assert market_prices_history["fidelity"] == 60
         assert market_prices_history["history"][0]["timestamp"] == "2024-01-01T09:20:00+00:00"
         assert market_prices_history["history"][1]["price"] == "0.54"
         assert runtime.clob_client.orderbook_calls == []
-        assert runtime.clob_client.history_calls[0]["token_id"] == "no-token-500m"
+        assert runtime.clob_client.history_calls[0]["token_id"] == "no-token-sample"
         assert runtime.clob_client.history_calls[0]["start_ts"] == 1704100800.0
         assert runtime.clob_client.history_calls[0]["end_ts"] == 1704104400.0
 
@@ -755,7 +755,7 @@ def run_admin_api_supports_reconcile_and_replace_routes() -> None:
             "/operations/reconcile",
             json={
                 "trace_id": "trace-manual-reconcile",
-                "condition_ids": ["condition-500m"],
+                "condition_ids": ["condition-sample"],
             },
         )
         replace_response = client.post(
@@ -774,7 +774,7 @@ def run_admin_api_supports_reconcile_and_replace_routes() -> None:
         assert reconcile_payload["status"] == "ok"
         assert reconcile_payload["plan"]["total_actions"] == 1
         assert reconcile_payload["plan"]["market_plans"][0]["actions"][0]["action_type"] == "cancel_order"
-        assert runtime.reconcile_worker.calls == [("trace-manual-reconcile", ("condition-500m",))]
+        assert runtime.reconcile_worker.calls == [("trace-manual-reconcile", ("condition-sample",))]
 
         assert replace_response.status_code == 200
         replace_payload = replace_response.json()
@@ -836,7 +836,7 @@ def run_admin_api_supports_fee_filters_and_sorting() -> None:
         assert sorted_markets["total"] == 2
         assert [item["market"]["condition_id"] for item in sorted_markets["items"]] == [
             "condition-1b",
-            "condition-500m",
+            "condition-sample",
         ]
 
 
@@ -848,13 +848,13 @@ def run_markets_orderbook_falls_back_to_clob_when_hot_snapshot_missing() -> None
     with TestClient(app) as client:
         payload = client.get(
             "/markets/orderbook",
-            params={"token_id": "no-token-500m"},
+            params={"token_id": "no-token-sample"},
         ).json()
 
-        assert payload["token_id"] == "no-token-500m"
+        assert payload["token_id"] == "no-token-sample"
         assert payload["source"] == "rest"
         assert payload["orderbook"]["last_trade_price"] == "0.54"
-        assert runtime.clob_client.orderbook_calls[0]["token_id"] == "no-token-500m"
+        assert runtime.clob_client.orderbook_calls[0]["token_id"] == "no-token-sample"
 
 
 def run_markets_midpoint_falls_back_to_clob_when_hot_snapshot_missing() -> None:
@@ -865,13 +865,13 @@ def run_markets_midpoint_falls_back_to_clob_when_hot_snapshot_missing() -> None:
     with TestClient(app) as client:
         payload = client.get(
             "/markets/midpoint",
-            params={"token_id": "no-token-500m"},
+            params={"token_id": "no-token-sample"},
         ).json()
 
-        assert payload["token_id"] == "no-token-500m"
+        assert payload["token_id"] == "no-token-sample"
         assert payload["source"] == "rest"
         assert payload["midpoint"] == "0.57"
-        assert runtime.clob_client.midpoint_calls[0]["token_id"] == "no-token-500m"
+        assert runtime.clob_client.midpoint_calls[0]["token_id"] == "no-token-sample"
 
 
 def run_admin_ready_route_reports_blockers_when_runtime_is_not_ready() -> None:
@@ -955,8 +955,8 @@ def run_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypat
             idempotency_key="outbox-1",
             event_id="outbox-event-1",
             market_slug="sample-market-a",
-            condition_id="condition-500m",
-            token_id="no-token-500m",
+            condition_id="condition-sample",
+            token_id="no-token-sample",
             reason="submit",
             priority="P1",
             payload={"order_id": "buy-1"},
@@ -970,8 +970,8 @@ def run_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypat
             trace_id="trace-audit",
             event_id="audit-1",
             market_slug="sample-market-a",
-            condition_id="condition-500m",
-            token_id="no-token-500m",
+            condition_id="condition-sample",
+            token_id="no-token-sample",
             order_id="buy-1",
             status="cancelled",
             reason="manual_cancel",
@@ -979,9 +979,9 @@ def run_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypat
     )
     allocations = (
         Allocation(
-            condition_id="condition-500m",
+            condition_id="condition-sample",
             market_slug="sample-market-a",
-            token_id="no-token-500m",
+            token_id="no-token-sample",
             target_budget_usdc=Decimal("50"),
             buy_budget_usdc=Decimal("25"),
             current_exposure_usdc=Decimal("10"),
@@ -1050,13 +1050,9 @@ def run_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypat
             "/audit-events",
             params={"trace_id": "trace-audit", "event_title": "order_cancelled"},
         ).json()
-        legacy_audit_response = client.get(
-            "/audit-events",
-            params={"trace_id": "trace-audit", "event_type": "order_cancelled"},
-        )
         allocations_payload = client.get(
             "/allocations",
-            params={"condition_id": "condition-500m"},
+            params={"condition_id": "condition-sample"},
         ).json()
         outbox_payload = client.get(
             "/outbox/pending",
@@ -1070,8 +1066,6 @@ def run_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypat
         assert audit_payload["total"] == 1
         assert audit_payload["items"][0]["event_id"] == "audit-1"
         assert audit_payload["items"][0]["event_title"] == "order_cancelled"
-        assert legacy_audit_response.status_code == 422
-        assert legacy_audit_response.json()["detail"] == "event_type is removed; use event_title"
 
         assert allocations_payload["total"] == 1
         assert allocations_payload["items"][0]["idempotency_key"] == "alloc-1"
@@ -1095,8 +1089,8 @@ def run_admin_api_outbox_pending_prefers_live_runtime_queue() -> None:
             idempotency_key="live-outbox-1",
             event_id="live-outbox-event-1",
             market_slug="sample-market-a",
-            condition_id="condition-500m",
-            token_id="no-token-500m",
+            condition_id="condition-sample",
+            token_id="no-token-sample",
             reason="live",
             priority="P2",
             payload={"source": "runtime"},

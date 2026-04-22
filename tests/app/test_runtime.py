@@ -70,17 +70,17 @@ def test_build_runtime_binds_market_event_outbox_sink() -> None:
             event_type=DomainEventType.MARKET_UPDATED,
             event_id="event-market",
             market_slug="sample-market-a",
-            condition_id="condition-500m",
-            token_id="no-token-500m",
+            condition_id="condition-sample",
+            token_id="no-token-sample",
             reason="market_snapshot",
-            payload={"market": {"condition_id": "condition-500m"}},
+            payload={"market": {"condition_id": "condition-sample"}},
         )
         await runtime.event_bus.publish(OutboxPriority.P2, event)
 
         queued = await asyncio.wait_for(runtime.outbox.get(), timeout=0.1)
         assert queued.event_id == event.event_id
         assert queued.event_type == DomainEventType.MARKET_UPDATED.value
-        assert queued.payload["market"]["condition_id"] == "condition-500m"
+        assert queued.payload["market"]["condition_id"] == "condition-sample"
 
     asyncio.run(run())
 
@@ -104,13 +104,13 @@ def test_build_runtime_binds_user_event_outbox_sink_with_trimmed_payload() -> No
             event_type=DomainEventType.ORDER_STATE_UPDATED,
             event_id="event-order",
             market_slug="sample-market-a",
-            condition_id="condition-500m",
-            token_id="no-token-500m",
+            condition_id="condition-sample",
+            token_id="no-token-sample",
             reason="order_update",
             payload={
                 "order": {
-                    "condition_id": "condition-500m",
-                    "token_id": "no-token-500m",
+                    "condition_id": "condition-sample",
+                    "token_id": "no-token-sample",
                     "side": "BUY",
                     "order_type": "FAK",
                     "price": "0.43",

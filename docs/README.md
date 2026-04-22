@@ -7,7 +7,7 @@
 
 - 看仓库级开发规则和重构准则：看 [../AGENTS.md](../AGENTS.md)
 - 改策略规则：看 [需求文档](./需求文档.md) 和 [设计文档](./设计文档.md)
-- 看全量市场 discovery 改造方案：看 [全量市场发现改造计划](./全量市场发现改造计划.md)
+- 看市场 discovery 当前链路：看 [市场发现链路说明](./全量市场发现改造计划.md)
 - 看运行配置：看 [config.md](./config.md)
 - 看接口：看 [api.md](./api.md)
 - 看 SDK 手续费能力：看 [sdk-fees.md](./sdk-fees.md)
@@ -21,7 +21,7 @@
 - [config.md](./config.md)：配置说明
 - [frontend-开发清单.md](./frontend-开发清单.md)：前端边界、开发清单和模块拆分
 - [sdk-fees.md](./sdk-fees.md)：SDK 手续费能力与 `fee_preview` 说明
-- [全量市场发现改造计划.md](./全量市场发现改造计划.md)：全量 active 市场连续轮扫与 WS 热发现改造方案
+- [全量市场发现改造计划.md](./全量市场发现改造计划.md)：扩展 discovery hook、分页扫描、WS 热发现和运行时状态
 - [需求文档.md](./需求文档.md)：框架需求边界
 - [设计文档.md](./设计文档.md)：运行时结构与调用链
 - [runbook.md](./runbook.md)：故障处理

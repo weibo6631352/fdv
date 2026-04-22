@@ -62,7 +62,7 @@
 
 ```json
 {
-  "token_id": "no-token-500m",
+  "token_id": "no-token-sample",
   "interval": "1h",
   "fidelity": 60,
   "history": [
@@ -78,8 +78,8 @@
 
 ```json
 {
-  "token_id": "no-token-500m",
-  "condition_id": "condition-500m",
+  "token_id": "no-token-sample",
+  "condition_id": "condition-sample",
   "market_slug": "sample-market-a",
   "source": "hot",
   "midpoint": "0.57",
@@ -643,7 +643,7 @@
 ```json
 {
   "trace_id": "trace-manual-reconcile",
-  "condition_ids": ["condition-500m"]
+  "condition_ids": ["condition-sample"]
 }
 ```
 
