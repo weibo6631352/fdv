@@ -1,5 +1,10 @@
 # Extension API Refactor Implementation Plan
 
+> **Status:** Executed. The implementation now lives in `polymarket_trader.extension_api`,
+> the legacy `strategy_sdk` package has been removed, and current business behavior is isolated
+> under `src/strategies/current/`. The unchecked task boxes below are retained as historical
+> implementation notes and should not be treated as pending work.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Convert the project from a current-strategy bot into a secondary-development framework with a broad Extension API, controlled side effects, and current FDV logic isolated under `src/strategies/current/`.
