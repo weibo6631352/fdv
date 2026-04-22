@@ -303,7 +303,7 @@ class MarketDiscoveryWorker:
             trace_id=raw_event.trace_id,
             discovered_at=raw_event.discovered_at,
         )
-        classification = outcome.classification
+        parse_result = outcome.parse_result
         self._remember_seen(raw_event)
         if outcome.accepted:
             self._remember(raw_event)
@@ -329,12 +329,11 @@ class MarketDiscoveryWorker:
                 "source": raw_event.source,
                 "summary": raw_event.summary,
                 "dedupe_key": raw_event.dedupe_key,
-                "classification_status": classification.status.value,
-                "classification_reason": classification.reject_reason.value
-                if classification.reject_reason
+                "parse_status": parse_result.status.value,
+                "parse_reason": parse_result.reject_reason.value if parse_result.reject_reason
                 else None,
-                "classification_detail": classification.reject_detail,
-                "matched_keywords": classification.matched_keywords,
+                "parse_detail": parse_result.reject_detail,
+                "matched_keywords": parse_result.matched_keywords,
                 "accepted": outcome.accepted,
                 "strategy_reason": (
                     outcome.universe_decision.reason

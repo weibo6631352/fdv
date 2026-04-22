@@ -133,11 +133,15 @@ def test_market_service_ingests_market_into_registry_and_tracker() -> None:
     outcome = service.ingest_raw_market(_raw_market(), source="gamma", trace_id="trace")
 
     assert outcome.accepted
+    assert outcome.parse_result.accepted
     assert outcome.market is not None
     assert outcome.discovery_kind == DomainEventType.MARKET_DISCOVERED.value
     assert outcome.event.event_type == DomainEventType.MARKET_DISCOVERED
     assert registry.get_by_condition_id("condition") == outcome.market
     assert tracker.markets == [outcome.market]
+    assert outcome.event.payload["parse_status"] == "accepted"
+    assert outcome.event.payload["parse_reason"] is None
+    assert outcome.event.payload["parse_detail"] is None
     assert outcome.subscription_request == tracker.build_subscription_request(
         ("yes-condition", "no-condition")
     )
@@ -204,6 +208,7 @@ def test_market_service_respects_strategy_universe_filter() -> None:
 
     assert outcome.accepted is False
     assert outcome.market is None
+    assert outcome.parse_result.accepted
     assert outcome.event.event_type == DomainEventType.MARKET_FILTERED_OUT
     assert outcome.event.reason == "strategy_filtered_out"
     assert outcome.should_publish_event is False

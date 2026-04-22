@@ -134,7 +134,7 @@ class MarketService:
         return MarketDiscoveryOutcome(
             trace_id=trace_id,
             source=source,
-            classification=parse_result,
+            parse_result=parse_result,
             event=event,
             market=market,
             discovery_kind=discovery_kind,
@@ -265,7 +265,7 @@ class MarketService:
 class MarketDiscoveryOutcome:
     trace_id: str
     source: str
-    classification: MarketParseResult
+    parse_result: MarketParseResult
     event: DomainEvent
     market: Market | None
     discovery_kind: str

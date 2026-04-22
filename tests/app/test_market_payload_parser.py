@@ -4,7 +4,8 @@ from polymarket_trader.app.market_payload_parser import MarketParseRejectReason,
 
 
 def test_market_payload_parser_accepts_market_with_required_trading_fields() -> None:
-    result = MarketPayloadParser().parse(
+    parser = MarketPayloadParser()
+    result = parser.parse(
         {
             "category": "Sports",
             "eventTitle": "Any event title is acceptable at parser level",
@@ -18,6 +19,10 @@ def test_market_payload_parser_accepts_market_with_required_trading_fields() -> 
     )
 
     assert result.accepted
+    event = result.to_event(trace_id="trace", event_id="event")
+    assert event.payload["parse_status"] == "accepted"
+    assert event.payload["parse_reason"] is None
+    assert event.payload["parse_detail"] is None
 
 
 def test_market_payload_parser_preserves_generic_text_fields() -> None:
@@ -98,3 +103,7 @@ def test_market_payload_parser_rejects_missing_tick_and_min_order_size() -> None
 
     assert not result.accepted
     assert result.reject_reason == MarketParseRejectReason.MISSING_TRADING_CONDITIONS
+    event = result.to_event(trace_id="trace", event_id="event")
+    assert event.payload["parse_status"] == "rejected"
+    assert event.payload["parse_reason"] == MarketParseRejectReason.MISSING_TRADING_CONDITIONS.value
+    assert event.payload["parse_detail"] == "missing tick_size / min_order_size"

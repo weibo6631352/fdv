@@ -76,7 +76,7 @@ class MarketParseResult:
     ) -> DomainEvent:
         payload_data: dict[str, Any] = {
             "accepted": self.accepted,
-            "status": self.status.value,
+            "parse_status": self.status.value,
             "condition_id": self.condition_id,
             "outcomes": tuple(
                 {
@@ -103,8 +103,8 @@ class MarketParseResult:
             "end_date": self.end_date,
             "matched_fields": self.matched_fields,
             "matched_keywords": self.matched_keywords,
-            "reject_reason": self.reject_reason.value if self.reject_reason else None,
-            "reject_detail": self.reject_detail,
+            "parse_reason": self.reject_reason.value if self.reject_reason else None,
+            "parse_detail": self.reject_detail,
         }
         if payload:
             payload_data.update(payload)

@@ -185,6 +185,9 @@ def test_market_discovery_worker_skips_duplicate_market_payloads() -> None:
 
         assert len(first) == 1
         assert first[0].event_type == DomainEventType.MARKET_DISCOVERED
+        assert first[0].payload["parse_status"] == "accepted"
+        assert first[0].payload["parse_reason"] is None
+        assert first[0].payload["parse_detail"] is None
         assert second == []
         assert event_bus.snapshot().maintenance_queue_depth == 1
 
@@ -228,6 +231,10 @@ def test_market_discovery_worker_replays_duplicate_payload_when_tracking_state_c
         assert first[0].event_type == DomainEventType.MARKET_DISCOVERED
         assert len(second) == 1
         assert second[0].event_type == DomainEventType.MARKET_FILTERED_OUT
+        assert second[0].payload["parse_status"] == "accepted"
+        assert second[0].payload["parse_reason"] is None
+        assert second[0].payload["parse_detail"] is None
+        assert second[0].payload["strategy_reason"] == "strategy_filtered_out"
         assert registry.get_by_condition_id("condition-1") is None
 
     asyncio.run(run())

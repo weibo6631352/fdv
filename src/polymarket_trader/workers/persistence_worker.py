@@ -721,7 +721,6 @@ class PersistenceWorker:
                 "reject_reason": _safe_first_payload_value(
                     payload,
                     "reject_reason",
-                    "classification_reason",
                 ),
             }
 
@@ -731,13 +730,9 @@ class PersistenceWorker:
                 "idempotency_key": _kind_idempotency_key("market", event),
                 "source": _safe_first_payload_value(payload, "source"),
                 "discovery_kind": _safe_first_payload_value(payload, "discovery_kind"),
-                "classification_status": _safe_first_payload_value(payload, "classification_status"),
-                "classification_reason": _safe_first_payload_value(
-                    payload,
-                    "classification_reason",
-                    "reject_reason",
-                ),
-                "classification_detail": _safe_first_payload_value(payload, "classification_detail"),
+                "parse_status": _safe_first_payload_value(payload, "parse_status"),
+                "parse_reason": _safe_first_payload_value(payload, "parse_reason"),
+                "parse_detail": _safe_first_payload_value(payload, "parse_detail"),
                 "matched_fields": _to_jsonable(_safe_first_payload_value(payload, "matched_fields")),
                 "matched_keywords": _to_jsonable(_safe_first_payload_value(payload, "matched_keywords")),
                 "accepted": _safe_first_payload_value(payload, "accepted"),
