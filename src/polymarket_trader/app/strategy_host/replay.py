@@ -20,9 +20,11 @@ from polymarket_trader.extension_api import load_mapping_file
 def run_entry_replay(
     fixture_path: str,
     *,
-    extension_module: str = "strategies.current",
+    extension_module: str | None = None,
     extension_config_path: str | None = None,
 ) -> dict[str, Any]:
+    if extension_module is None:
+        raise ValueError("extension_module is required for entry replay")
     fixture = load_mapping_file(fixture_path)
     registry = MarketRegistry()
     markets = tuple(_load_market(item) for item in _list(fixture, "markets"))

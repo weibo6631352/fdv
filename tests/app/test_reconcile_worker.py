@@ -23,7 +23,8 @@ from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
 from polymarket_trader.infra.outbox import LocalOutbox, build_domain_event_outbox_sink
 from polymarket_trader.extension_api import (
-    ExtensionSpec as StrategySpec,
+    EntrySizing,
+    ExtensionSpec,
     RecoveryDecision,
     StrategyContext,
     StrategyDecision,
@@ -32,7 +33,6 @@ from polymarket_trader.extension_api import (
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
-from strategies.current.strategy import build_strategy
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 from polymarket_trader.workers.reconcile_worker import ReconcileWorker
 from tests.helpers.markets import build_binary_market
@@ -97,8 +97,8 @@ class _StubExecutor:
 
 class _ReplaceRecoveryStrategy:
     @property
-    def spec(self) -> StrategySpec:
-        return StrategySpec(
+    def spec(self) -> ExtensionSpec:
+        return ExtensionSpec(
             name="replace-recovery",
             capabilities=("universe", "entry", "exit", "recovery"),
         )
@@ -135,6 +135,79 @@ class _ReplaceRecoveryStrategy:
 
     def decide_follow_up(self, context: StrategyContext) -> tuple[StrategyDecision, ...]:
         return ()
+
+
+class _ReconcileHooks:
+    @property
+    def spec(self) -> ExtensionSpec:
+        return ExtensionSpec(
+            name="reconcile-hooks",
+            capabilities=("universe", "entry", "exit", "recovery"),
+        )
+
+    def build_discovery_queries(self) -> tuple[object, ...]:
+        return ()
+
+    def select_market(self, market: Market) -> UniverseDecision:
+        return UniverseDecision.include(reason="selected")
+
+    def size_entry(self, context: StrategyContext) -> EntrySizing:  # pragma: no cover - not used
+        raise AssertionError("size_entry should not be called in reconcile tests")
+
+    def decide_entry(self, context: StrategyContext) -> StrategyDecision:  # pragma: no cover - not used
+        raise AssertionError("decide_entry should not be called in reconcile tests")
+
+    def decide_exit(self, context: StrategyContext) -> StrategyDecision:
+        return StrategyDecision.skip(reason="no_exit")
+
+    def decide_recovery(self, context: StrategyContext) -> RecoveryDecision:
+        actions: list[StrategyDecision] = []
+        for order in context.open_orders:
+            order_id = order.order_id or order.idempotency_key
+            if order.side == OrderSide.BUY and order_id:
+                actions.append(
+                    StrategyDecision.cancel(
+                        reason="cancel_open_buy",
+                        token_id=order.token_id,
+                        order_id=order_id,
+                        market_slug=order.market_slug,
+                    )
+                )
+        for view in context.market_token_views:
+            if view.position is None or view.position.shares <= Decimal("0"):
+                continue
+            if any(order.side == OrderSide.SELL for order in view.open_orders):
+                continue
+            actions.append(
+                StrategyDecision.sell(
+                    reason="backfill_sell",
+                    token_id=view.token_id,
+                    price=Decimal("0.80"),
+                    size_shares=view.position.shares,
+                    order_type=OrderType.GTC,
+                    market_slug=None if context.market is None else context.market.market_slug,
+                )
+            )
+        return RecoveryDecision(reason="reconcile_requested", actions=tuple(actions))
+
+    def decide_follow_up(self, context: StrategyContext) -> tuple[StrategyDecision, ...]:
+        return ()
+
+    def should_keep_tracking(self, market: Market, account_snapshot: object | None) -> bool:
+        return True
+
+    def build_filtered_tracking_market(
+        self,
+        candidate_market: Market,
+        *,
+        existing_market: Market,
+        reason: str,
+    ) -> Market:
+        return existing_market.with_trading_status(candidate_market.trading_status, reject_reason=reason)
+
+
+def _reconcile_service() -> ReconcileService:
+    return ReconcileService(extension_hooks=_ReconcileHooks())
 
 
 class _StubGammaMarket:
@@ -250,7 +323,7 @@ def test_reconcile_worker_cancels_open_buy_and_backfills_missing_sell() -> None:
 
         executor = _StubExecutor()
         worker = ReconcileWorker(
-            reconcile_service=ReconcileService(extension_hooks=build_strategy()),
+            reconcile_service=_reconcile_service(),
             registry_snapshot_provider=registry.snapshot,
             account_state_store=account_state_store,
             trading_service=TradingService(executor=executor),
@@ -315,7 +388,7 @@ def test_reconcile_worker_refreshes_market_fee_fields() -> None:
         clob_client = _StubClobClient(orderbook_snapshot, fee_rate_bps=125)
 
         worker = ReconcileWorker(
-            reconcile_service=ReconcileService(extension_hooks=build_strategy()),
+            reconcile_service=_reconcile_service(),
             registry_snapshot_provider=registry.snapshot,
             registry=registry,
             gamma_client=_StubGammaClient(refreshed_market),
@@ -391,7 +464,7 @@ def test_reconcile_worker_keeps_gamma_fee_schedule_without_fetching_fee_rate() -
         clob_client = _StubClobClient(orderbook_snapshot, fee_rate_bps=1000)
 
         worker = ReconcileWorker(
-            reconcile_service=ReconcileService(extension_hooks=build_strategy()),
+            reconcile_service=_reconcile_service(),
             registry_snapshot_provider=registry.snapshot,
             registry=registry,
             gamma_client=_StubGammaClient(refreshed_market),
@@ -497,7 +570,7 @@ def test_reconcile_worker_refreshes_account_balance_from_clob_balance_allowance(
     async def run() -> None:
         account_state_store = AccountStateStore()
         worker = ReconcileWorker(
-            reconcile_service=ReconcileService(extension_hooks=build_strategy()),
+            reconcile_service=_reconcile_service(),
             account_state_store=account_state_store,
             data_client=_StubPositionsDataClient(),
             clob_client=_StubAccountClobClient(
@@ -543,7 +616,7 @@ def test_reconcile_worker_prunes_strategy_filtered_market_after_flattening() -> 
         market_ws_worker.track_market(market)
 
         worker = ReconcileWorker(
-            reconcile_service=ReconcileService(extension_hooks=build_strategy()),
+            reconcile_service=_reconcile_service(),
             registry_snapshot_provider=registry.snapshot,
             account_state_store=account_state_store,
             registry=registry,
@@ -581,7 +654,7 @@ def test_reconcile_worker_emits_observe_events_without_requeueing_maintenance() 
 
         worker = ReconcileWorker(
             event_bus=event_bus,
-            reconcile_service=ReconcileService(extension_hooks=build_strategy()),
+            reconcile_service=_reconcile_service(),
             registry_snapshot_provider=registry.snapshot,
             account_state_store=account_state_store,
             registry=registry,

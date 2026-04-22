@@ -234,7 +234,7 @@ def test_market_discovery_worker_replays_duplicate_payload_when_tracking_state_c
         assert second[0].payload["parse_status"] == "accepted"
         assert second[0].payload["parse_reason"] is None
         assert second[0].payload["parse_detail"] is None
-        assert second[0].payload["strategy_reason"] == "strategy_filtered_out"
+        assert second[0].payload["extension_reason"] == "strategy_filtered_out"
         assert registry.get_by_condition_id("condition-1") is None
 
     asyncio.run(run())

@@ -1,10 +1,9 @@
-# SDK 手续费说明
+# 手续费工具说明
 
-这页只说明当前新增的手续费能力，给二开策略或脚本直接复用。
+这页只说明当前新增的手续费能力，给二开扩展或脚本直接复用。
 
 适用代码：
 
-- SDK 导出：`src/strategy_sdk/__init__.py`
 - 计算实现：`src/polymarket_trader/domain/fees.py`
 
 ## 能力边界
@@ -16,7 +15,7 @@
 2. 基于当前 market + orderbook 的预估：
    - `build_taker_fee_preview(...)`
 
-当前默认策略**没有**接入这套能力。
+当前示例扩展**没有**接入这套能力。
 也就是说，这次改动只补通用能力和展示，不改变现有策略决策。
 
 ## 导入方式
@@ -24,7 +23,7 @@
 ```python
 from decimal import Decimal
 
-from strategy_sdk import calculate_trade_fee, build_taker_fee_preview
+from polymarket_trader.domain.fees import calculate_trade_fee, build_taker_fee_preview
 ```
 
 ## 公式
@@ -51,7 +50,7 @@ from strategy_sdk import calculate_trade_fee, build_taker_fee_preview
 ```python
 from decimal import Decimal
 
-from strategy_sdk import calculate_trade_fee
+from polymarket_trader.domain.fees import calculate_trade_fee
 
 quote = calculate_trade_fee(
     price=Decimal("0.52"),
@@ -68,7 +67,7 @@ print(quote.charged_in)  # shares
 ## 预估示例
 
 ```python
-from strategy_sdk import build_taker_fee_preview
+from polymarket_trader.domain.fees import build_taker_fee_preview
 
 preview = build_taker_fee_preview(
     market=context.market,

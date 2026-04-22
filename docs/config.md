@@ -52,7 +52,7 @@
 - `DATABASE_URL` 优先级最高；一旦填写，`DATABASE_DRIVER`、`DATABASE_HOST`、`DATABASE_PORT`、`DATABASE_NAME`、`DATABASE_USER`、`DATABASE_PASSWORD` 会被忽略。
 - 当 `DATABASE_URL` 为空时，运行时会用上述拆分字段拼接 PostgreSQL 连接串。
 
-## 策略文件
+## 扩展文件
 
 - 当 `EXTENSION_MODULE=strategies.current` 时，对应文件为：
 - manifest：`src/strategies/current/manifest.py`
@@ -62,7 +62,8 @@
 - 市场筛选：`src/strategies/current/universe.py`
 - 交易决策：`src/strategies/current/trading.py`
 - 恢复与跟踪：`src/strategies/current/recovery.py` / `src/strategies/current/tracking.py`
-- 策略契约：`src/strategy_sdk/`
+- 扩展契约：`src/polymarket_trader/extension_api/`
+- 扩展外部配置路径：`EXTENSION_CONFIG_PATH`
 
 ## 密钥规则
 
