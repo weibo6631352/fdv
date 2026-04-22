@@ -14,7 +14,7 @@ class TradingDecisionWorkerResult:
     entry_event: DomainEvent
     plan: EntryPlan | None
     review: TradingReviewResult | None
-    emitted_event: DomainEvent
+    emitted_event: DomainEvent | None
     emitted_events: tuple[DomainEvent, ...] = ()
     follow_up_intents: tuple[ManagedOrderIntent, ...] = ()
     follow_up_reviews: tuple[TradingReviewResult, ...] = ()

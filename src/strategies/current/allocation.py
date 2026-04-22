@@ -46,6 +46,18 @@ class AllocationMarketSnapshot:
         return self.market.market_slug
 
 
+@dataclass(slots=True)
+class _AllocationCandidate:
+    snapshot: AllocationMarketSnapshot
+    exposure_usdc: Decimal
+    hard_capacity_usdc: Decimal
+    liquidity_usdc: Decimal
+    market_min_order_size: Decimal
+    target_budget_usdc: Decimal = field(default_factory=lambda: Decimal("0"))
+    buy_budget_usdc: Decimal = field(default_factory=lambda: Decimal("0"))
+    release_reason: str = ""
+
+
 def equal_weight_plan(
     *,
     trace_id: str,
@@ -57,7 +69,7 @@ def equal_weight_plan(
     max_total_usdc: Decimal,
 ) -> AllocationPlan:
     market_snapshots = tuple(markets)
-    candidate_details: list[dict[str, object]] = []
+    candidate_details: list[_AllocationCandidate] = []
     allocations: list[Allocation] = []
     budget_changes: list[MarketBuyBudgetChanged] = []
     plan_reason = ""
@@ -95,16 +107,13 @@ def equal_weight_plan(
             continue
 
         candidate_details.append(
-            {
-                "snapshot": snapshot,
-                "exposure_usdc": exposure_usdc,
-                "hard_capacity_usdc": hard_capacity_usdc,
-                "liquidity_usdc": liquidity_usdc,
-                "market_min_order_size": snapshot.market.min_order_size,
-                "target_budget_usdc": Decimal("0"),
-                "buy_budget_usdc": Decimal("0"),
-                "release_reason": "",
-            }
+            _AllocationCandidate(
+                snapshot=snapshot,
+                exposure_usdc=exposure_usdc,
+                hard_capacity_usdc=hard_capacity_usdc,
+                liquidity_usdc=liquidity_usdc,
+                market_min_order_size=snapshot.market.min_order_size,
+            )
         )
 
     eligible_count = len(candidate_details)
@@ -132,19 +141,19 @@ def equal_weight_plan(
     active_candidates = [
         candidate
         for candidate in candidate_details
-        if candidate["hard_capacity_usdc"] >= candidate["market_min_order_size"]
+        if candidate.hard_capacity_usdc >= candidate.market_min_order_size
     ]
     skipped_for_min_order = [candidate for candidate in candidate_details if candidate not in active_candidates]
     for candidate in skipped_for_min_order:
-        candidate["release_reason"] = candidate["release_reason"] or "below_min_order_size"
+        candidate.release_reason = candidate.release_reason or "below_min_order_size"
     if not active_candidates:
         plan_reason = "no_market_meets_min_order_size"
     elif remaining_pool_usdc < min(
-        (candidate["market_min_order_size"] for candidate in active_candidates),
+        (candidate.market_min_order_size for candidate in active_candidates),
         default=Decimal("0"),
     ):
         for candidate in active_candidates:
-            candidate["release_reason"] = candidate["release_reason"] or "below_min_order_size"
+            candidate.release_reason = candidate.release_reason or "below_min_order_size"
         plan_reason = "total_budget_insufficient"
     else:
         while active_candidates and remaining_pool_usdc > Decimal("0"):
@@ -154,20 +163,20 @@ def equal_weight_plan(
             )
             if per_market_target_usdc <= Decimal("0"):
                 for candidate in active_candidates:
-                    candidate["release_reason"] = candidate["release_reason"] or "below_min_order_size"
+                    candidate.release_reason = candidate.release_reason or "below_min_order_size"
                 plan_reason = "total_budget_insufficient"
                 break
 
-            next_active_candidates: list[dict[str, object]] = []
+            next_active_candidates: list[_AllocationCandidate] = []
             allocated_this_round_usdc = Decimal("0")
             for candidate in active_candidates:
-                market_min_order_size = candidate["market_min_order_size"]
-                hard_capacity_usdc = candidate["hard_capacity_usdc"]
-                previous_buy_budget_usdc = candidate["buy_budget_usdc"]
+                market_min_order_size = candidate.market_min_order_size
+                hard_capacity_usdc = candidate.hard_capacity_usdc
+                previous_buy_budget_usdc = candidate.buy_budget_usdc
                 available_capacity_usdc = hard_capacity_usdc - previous_buy_budget_usdc
 
                 if available_capacity_usdc < market_min_order_size:
-                    candidate["release_reason"] = candidate["release_reason"] or "market_limit_reached"
+                    candidate.release_reason = candidate.release_reason or "market_limit_reached"
                     continue
 
                 buy_budget_usdc = per_market_target_usdc
@@ -177,26 +186,26 @@ def equal_weight_plan(
                     release_reason = _capacity_release_reason(
                         available_capacity_usdc=available_capacity_usdc,
                         hard_capacity_usdc=hard_capacity_usdc,
-                        liquidity_usdc=candidate["liquidity_usdc"],
+                        liquidity_usdc=candidate.liquidity_usdc,
                     )
 
                 if buy_budget_usdc < market_min_order_size:
                     next_active_candidates.append(candidate)
                     continue
 
-                candidate["buy_budget_usdc"] = previous_buy_budget_usdc + buy_budget_usdc
-                candidate["target_budget_usdc"] = equal_weight_target_usdc
+                candidate.buy_budget_usdc = previous_buy_budget_usdc + buy_budget_usdc
+                candidate.target_budget_usdc = equal_weight_target_usdc
                 allocated_this_round_usdc += buy_budget_usdc
                 if buy_budget_usdc < per_market_target_usdc:
-                    candidate["release_reason"] = candidate["release_reason"] or release_reason or "reallocated"
+                    candidate.release_reason = candidate.release_reason or release_reason or "reallocated"
 
-                remaining_capacity_after_buy_usdc = hard_capacity_usdc - candidate["buy_budget_usdc"]
+                remaining_capacity_after_buy_usdc = hard_capacity_usdc - candidate.buy_budget_usdc
                 if remaining_capacity_after_buy_usdc >= market_min_order_size:
                     next_active_candidates.append(candidate)
 
             if allocated_this_round_usdc <= Decimal("0"):
                 for candidate in active_candidates:
-                    candidate["release_reason"] = candidate["release_reason"] or "below_min_order_size"
+                    candidate.release_reason = candidate.release_reason or "below_min_order_size"
                 plan_reason = "budget_remaining_below_min_order_size"
                 break
 
@@ -209,7 +218,7 @@ def equal_weight_plan(
                 remaining_pool_usdc,
                 len(active_candidates),
             ) < min(
-                (candidate["market_min_order_size"] for candidate in active_candidates),
+                (candidate.market_min_order_size for candidate in active_candidates),
                 default=Decimal("0"),
             ):
                 plan_reason = "budget_remaining_below_min_order_size"
@@ -223,14 +232,14 @@ def equal_weight_plan(
     )
 
     for candidate in candidate_details:
-        snapshot = candidate["snapshot"]
-        buy_budget_usdc = candidate["buy_budget_usdc"]
-        target_budget_usdc = candidate["target_budget_usdc"] or equal_weight_target_usdc
+        snapshot = candidate.snapshot
+        buy_budget_usdc = candidate.buy_budget_usdc
+        target_budget_usdc = candidate.target_budget_usdc or equal_weight_target_usdc
         released_budget_usdc = target_budget_usdc - buy_budget_usdc
         if released_budget_usdc < Decimal("0"):
             released_budget_usdc = Decimal("0")
 
-        release_reason = str(candidate["release_reason"] or "")
+        release_reason = candidate.release_reason
         if buy_budget_usdc != target_budget_usdc or release_reason:
             budget_changes.append(
                 MarketBuyBudgetChanged(
@@ -241,7 +250,7 @@ def equal_weight_plan(
                     new_buy_budget_usdc=buy_budget_usdc,
                     released_budget_usdc=released_budget_usdc,
                     release_reason=release_reason,
-                    current_exposure_usdc=candidate["exposure_usdc"],
+                    current_exposure_usdc=candidate.exposure_usdc,
                     target_budget_usdc=target_budget_usdc,
                     idempotency_key=snapshot.idempotency_key,
                 )
@@ -346,15 +355,15 @@ def _capacity_release_reason(
 
 
 def _finalize_candidate_allocations(
-    candidate_details: Iterable[dict[str, object]],
+    candidate_details: Iterable[_AllocationCandidate],
     *,
     equal_weight_target_usdc: Decimal,
 ) -> list[Allocation]:
     finalized: list[Allocation] = []
     for candidate in candidate_details:
-        snapshot = candidate["snapshot"]
-        buy_budget_usdc = candidate["buy_budget_usdc"]
-        target_budget_usdc = candidate["target_budget_usdc"] or equal_weight_target_usdc
+        snapshot = candidate.snapshot
+        buy_budget_usdc = candidate.buy_budget_usdc
+        target_budget_usdc = candidate.target_budget_usdc or equal_weight_target_usdc
         released_budget_usdc = target_budget_usdc - buy_budget_usdc
         if released_budget_usdc < Decimal("0"):
             released_budget_usdc = Decimal("0")
@@ -365,11 +374,11 @@ def _finalize_candidate_allocations(
                 buy_budget_usdc=buy_budget_usdc,
                 market_slug=snapshot.market_slug,
                 token_id=snapshot.token_id,
-                current_exposure_usdc=candidate["exposure_usdc"],
+                current_exposure_usdc=candidate.exposure_usdc,
                 released_budget_usdc=released_budget_usdc,
-                reason=str(candidate["release_reason"] or ""),
+                reason=candidate.release_reason,
                 idempotency_key=snapshot.idempotency_key,
-                release_reason=str(candidate["release_reason"] or ""),
+                release_reason=candidate.release_reason,
             )
         )
     return finalized

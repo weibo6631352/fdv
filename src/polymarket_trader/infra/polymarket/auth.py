@@ -250,7 +250,7 @@ class PolymarketTradingClient:
     def cancel_order(self, order_id: str) -> Mapping[str, Any]:
         client = self._ensure_client(require_l2=True)
         response = client.cancel(order_id)
-        normalized = self._normalize_response(response)
+        normalized = dict(self._normalize_response(response))
         normalized.setdefault("order_id", order_id)
         normalized.setdefault("status", "cancelled")
         return normalized

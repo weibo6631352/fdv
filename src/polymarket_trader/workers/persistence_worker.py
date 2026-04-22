@@ -291,7 +291,7 @@ class PersistenceWorker:
 
         planned_records, required_record_counts = self._build_planned_records(events)
         if not planned_records:
-            return self._finalize_batch(
+            return await self._finalize_batch(
                 events=events,
                 required_record_counts=required_record_counts,
                 merged_events=merged_events,

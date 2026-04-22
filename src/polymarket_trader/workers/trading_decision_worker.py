@@ -317,9 +317,9 @@ class TradingDecisionWorker:
         reason: str = "",
         payload: Mapping[str, object] | None = None,
     ) -> DomainEvent:
-        payload_dict = {"origin": TRADING_DECISION_WORKER_ORIGIN}
+        payload_dict: dict[str, object] = {"origin": TRADING_DECISION_WORKER_ORIGIN}
         if payload is not None:
-            payload_dict.update(dict(payload))
+            payload_dict.update(payload)
         event = DomainEvent(
             trace_id=trace_id,
             event_type=event_type,
@@ -351,12 +351,14 @@ class TradingDecisionWorker:
     def _build_positions_provider(self) -> PositionsProvider:
         if self._account_state_store is None:
             return lambda: ()
-        return lambda: self._account_state_store.snapshot().positions
+        account_state_store = self._account_state_store
+        return lambda: account_state_store.snapshot().positions
 
     def _build_open_orders_provider(self) -> OpenOrdersProvider:
         if self._account_state_store is None:
             return lambda: ()
-        return lambda: self._account_state_store.snapshot().open_orders
+        account_state_store = self._account_state_store
+        return lambda: account_state_store.snapshot().open_orders
 
     def _transition_market(self, market: Market | None, lifecycle: MarketLifecycle | None) -> None:
         if market is None or lifecycle is None:

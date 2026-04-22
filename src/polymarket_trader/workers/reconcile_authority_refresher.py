@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, cast
 
 from polymarket_trader.domain.events import Fill
 from polymarket_trader.domain.market import Market, TradingStatus
@@ -33,9 +33,16 @@ class MarketAuthorityClient(Protocol):
 
 
 class OrderAuthorityClient(Protocol):
-    has_auth_client: bool
+    @property
+    def has_auth_client(self) -> bool: ...
 
-    async def get_orderbook(self, token_id: str, *, market_slug: str | None = None) -> Any: ...
+    async def get_orderbook(
+        self,
+        token_id: str,
+        *,
+        market_slug: str | None = None,
+        condition_id: str | None = None,
+    ) -> Any: ...
 
     async def get_fee_rate(self, token_id: str) -> int | None: ...
 
@@ -47,9 +54,19 @@ class OrderAuthorityClient(Protocol):
 
 
 class DataAuthorityClient(Protocol):
-    has_auth_client: bool
+    @property
+    def has_auth_client(self) -> bool: ...
 
     async def list_positions(self) -> tuple[Any, ...]: ...
+
+
+class GammaMarketCandidate(Protocol):
+    condition_id: str
+    market_slug: str
+    clob_enabled: bool | None
+    outcomes: tuple[Any, ...]
+
+    def to_market(self) -> Market: ...
 
 
 class TradingAuthorityClient(Protocol):
@@ -150,7 +167,7 @@ class ReconcileAuthorityRefresher:
         refreshed_fee_rates = 0
 
         for item in market_refreshes:
-            if isinstance(item, Exception):
+            if isinstance(item, BaseException):
                 refresh_failures.append(str(item))
                 continue
             if item.refreshed_market is not None:
@@ -494,10 +511,10 @@ def _utc_now() -> datetime:
 def _pick_gamma_market(
     candidates: tuple[object, ...],
     market: Market,
-) -> object | None:
+) -> GammaMarketCandidate | None:
     for candidate in candidates:
         if getattr(candidate, "condition_id", None) == market.condition_id:
-            return candidate
+            return cast(GammaMarketCandidate, candidate)
     for candidate in candidates:
         candidate_outcomes = getattr(candidate, "outcomes", ())
         candidate_token_ids = tuple(
@@ -506,8 +523,8 @@ def _pick_gamma_market(
             if getattr(outcome, "token_id", None)
         )
         if set(candidate_token_ids).intersection(market.token_ids):
-            return candidate
+            return cast(GammaMarketCandidate, candidate)
     for candidate in candidates:
         if getattr(candidate, "market_slug", None) == market.market_slug:
-            return candidate
+            return cast(GammaMarketCandidate, candidate)
     return None

@@ -14,13 +14,26 @@ from polymarket_trader.extension_api.decisions import EntryCandidate, MarketToke
 
 
 class AccountSnapshotView(Protocol):
-    balance_usdc: Decimal
-    allowance_usdc: Decimal
-    positions: tuple[Position, ...]
-    open_orders: tuple[Order, ...]
-    allow_new_entries: bool
-    paused_markets: tuple[str, ...]
-    last_reconcile_at: datetime | None
+    @property
+    def balance_usdc(self) -> Decimal: ...
+
+    @property
+    def allowance_usdc(self) -> Decimal: ...
+
+    @property
+    def positions(self) -> tuple[Position, ...]: ...
+
+    @property
+    def open_orders(self) -> tuple[Order, ...]: ...
+
+    @property
+    def allow_new_entries(self) -> bool: ...
+
+    @property
+    def paused_markets(self) -> tuple[str, ...]: ...
+
+    @property
+    def last_reconcile_at(self) -> datetime | None: ...
 
     def get_position(self, condition_id: str, token_id: str) -> Position | None: ...
 

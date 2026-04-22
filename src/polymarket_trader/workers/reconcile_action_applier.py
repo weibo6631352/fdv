@@ -76,8 +76,9 @@ class ReconcileActionApplier:
             return
 
         if self._account_state_store is not None and action.source_order_id is not None:
+            token_id = _require_token_id(action)
             self._account_state_store.remove_order(action.source_order_id)
-            position = account_snapshot.get_position(action.condition_id, action.token_id)
+            position = account_snapshot.get_position(action.condition_id, token_id)
             if position is not None:
                 if action.source_order_side == OrderSide.BUY:
                     updated_position = position.with_open_buy_shares(Decimal("0"))
@@ -101,12 +102,13 @@ class ReconcileActionApplier:
             raise TypeError("submit action is missing trade intent")
         if self._trading_service is None:
             raise RuntimeError("trading_service_required")
+        token_id = _require_token_id(action)
 
         review = await self._trading_service.review_intent(
             trade_intent,
             market=market,
-            position=account_snapshot.get_position(action.condition_id, action.token_id),
-            open_orders=account_snapshot.open_orders_for_market(action.condition_id, action.token_id),
+            position=account_snapshot.get_position(action.condition_id, token_id),
+            open_orders=account_snapshot.open_orders_for_market(action.condition_id, token_id),
             classification_passed=True,
             market_active=market.trading_status == TradingStatus.ELIGIBLE,
             market_open=market.trading_status == TradingStatus.ELIGIBLE,
@@ -149,15 +151,16 @@ class ReconcileActionApplier:
             return
 
         current_snapshot = self._account_state_store.snapshot()
+        token_id = _require_token_id(action)
         existing_order = find_open_order(
             current_snapshot,
             action.condition_id,
-            action.token_id,
+            token_id,
             action.source_order_id,
         ) or find_open_order(
             account_snapshot,
             action.condition_id,
-            action.token_id,
+            token_id,
             action.source_order_id,
         )
         existing_size = Decimal("0") if existing_order is None else order_open_size(existing_order)
@@ -229,9 +232,9 @@ class ReconcileActionApplier:
         else:
             self._account_state_store.remove_order(replacement_order_id)
 
-        current_position = current_snapshot.get_position(action.condition_id, action.token_id)
+        current_position = current_snapshot.get_position(action.condition_id, token_id)
         if current_position is None:
-            current_position = account_snapshot.get_position(action.condition_id, action.token_id)
+            current_position = account_snapshot.get_position(action.condition_id, token_id)
         if current_position is None:
             return
         if replacement_side == OrderSide.SELL:
@@ -275,3 +278,9 @@ def _submission_succeeded(result: object | None) -> bool:
     if submitted is not None:
         return bool(submitted)
     return True
+
+
+def _require_token_id(action: ReconcileAction) -> str:
+    if action.token_id is None:
+        raise RuntimeError("reconcile_action_token_id_required")
+    return action.token_id

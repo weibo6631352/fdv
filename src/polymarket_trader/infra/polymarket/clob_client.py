@@ -382,7 +382,7 @@ class ClobClient(PolymarketRestClientBase):
         timeout_s: float | None = None,
         operation: str,
     ) -> tuple[Mapping[str, Any], ...]:
-        next_cursor = "MA=="
+        next_cursor: str | None = "MA=="
         items: list[Mapping[str, Any]] = []
         while True:
             page_params = dict(params or {})

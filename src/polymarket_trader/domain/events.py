@@ -393,13 +393,15 @@ class OutboxEvent:
     payload: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        priority = self.priority
-        if isinstance(priority, str):
-            text = priority.strip().upper()
+        raw_priority = self.priority
+        if isinstance(raw_priority, str):
+            text = raw_priority.strip().upper()
             if text.startswith("P") and text[1:].isdigit():
                 priority = int(text[1:])
             else:
                 priority = int(text)
+        else:
+            priority = raw_priority
         object.__setattr__(self, "priority", int(priority))
         object.__setattr__(self, "created_at", _normalize_datetime(self.created_at))
         if self.raw_response_summary is not None:
@@ -417,11 +419,11 @@ class OutboxEvent:
 
     @property
     def is_critical(self) -> bool:
-        return self.priority <= 1
+        return int(self.priority) <= 1
 
     @property
     def merge_key(self) -> str | None:
-        if self.priority < 2:
+        if int(self.priority) < 2:
             return None
         parts = [self.event_type, self.market_slug or "", self.condition_id or "", self.token_id or ""]
         if not any(parts[1:]):

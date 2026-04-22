@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from polymarket_trader.runtime.status import SchedulerJob, SchedulerSnapshot
 
-JobCallable = Callable[[], Awaitable[None]]
+JobCallable = Callable[[], Coroutine[object, object, None]]
 
 
 def _utc_now() -> datetime:
@@ -142,7 +142,7 @@ class Scheduler:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    def create_task(self, job: Callable[[], Awaitable[None]]) -> asyncio.Task[None]:
+    def create_task(self, job: Callable[[], Coroutine[object, object, None]]) -> asyncio.Task[None]:
         return asyncio.create_task(job())
 
     def snapshot(self) -> SchedulerSnapshot:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Callable, Literal, Sequence
+from typing import Any, Callable, Literal, Sequence, cast
 from uuid import uuid4
 
 from polymarket_trader.app.admin_operations import (
@@ -96,7 +96,7 @@ def _sort_markets(
     present = [market for market in markets if _market_sort_value(market, sort_by) is not None]
     missing = [market for market in markets if _market_sort_value(market, sort_by) is None]
     present.sort(
-        key=lambda market: _market_sort_value(market, sort_by),
+        key=lambda market: cast(Any, _market_sort_value(market, sort_by)),
         reverse=sort_direction == "desc",
     )
     return tuple(present + missing)
@@ -442,7 +442,7 @@ class AdminService:
         event_title: str | None = None,
     ) -> dict[str, Any]:
         if not self._has_db_session_factory():
-            page = RepositoryPage(items=tuple(), total=0, limit=limit, offset=offset)
+            page: RepositoryPage[Any] = RepositoryPage(items=tuple(), total=0, limit=limit, offset=offset)
             return page_payload(page, serializer=self._serializer().audit_event)
 
         async def _query(repos: _RepositoryGroup) -> RepositoryPage[Any]:
@@ -467,7 +467,7 @@ class AdminService:
         market_slug: str | None = None,
     ) -> dict[str, Any]:
         if not self._has_db_session_factory():
-            page = RepositoryPage(items=tuple(), total=0, limit=limit, offset=offset)
+            page: RepositoryPage[Any] = RepositoryPage(items=tuple(), total=0, limit=limit, offset=offset)
             return page_payload(page, serializer=self._serializer().allocation)
 
         async def _query(repos: _RepositoryGroup) -> RepositoryPage[Any]:

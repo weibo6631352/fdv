@@ -2,7 +2,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import is_dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.status import (
@@ -31,7 +31,7 @@ def _as_mapping(value: Any) -> Mapping[str, Any]:
     if is_dataclass(value):
         from dataclasses import asdict
 
-        return asdict(value)
+        return asdict(cast(Any, value))
     if isinstance(value, Mapping):
         return value
     return {"value": value}
@@ -387,12 +387,15 @@ class Supervisor:
 
 
 def _extract_metric_value(metrics: Mapping[str, Any], metric_name: str) -> int | None:
-    if metric_name in metrics:
-        value = metrics.get(metric_name)
+    def _to_int(value: Any) -> int | None:
         try:
             return int(value)
         except (TypeError, ValueError):
             return None
+
+    if metric_name in metrics:
+        value = metrics.get(metric_name)
+        return _to_int(value)
     gauges = metrics.get("gauges")
     if isinstance(gauges, Mapping):
         gauge = gauges.get(metric_name)
@@ -400,16 +403,10 @@ def _extract_metric_value(metrics: Mapping[str, Any], metric_name: str) -> int |
             value = gauge.get("value")
         else:
             value = gauge
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
+        return _to_int(value)
     if isinstance(gauges, list):
         for gauge in gauges:
             if not isinstance(gauge, Mapping) or gauge.get("name") != metric_name:
                 continue
-            try:
-                return int(gauge.get("value"))
-            except (TypeError, ValueError):
-                return None
+            return _to_int(gauge.get("value"))
     return None

@@ -366,12 +366,10 @@ class PolymarketOrderExecutor:
                     task=task,
                 )
                 self._inflight[request.idempotency_key] = task
-                task.add_done_callback(
-                    lambda finished, key=request.idempotency_key: self._store_task_result(
-                        key,
-                        finished,
-                    )
-                )
+                def _store_finished(finished: asyncio.Task[OrderResult]) -> None:
+                    self._store_task_result(request.idempotency_key, finished)
+
+                task.add_done_callback(_store_finished)
         finally:
             lock.release()
 

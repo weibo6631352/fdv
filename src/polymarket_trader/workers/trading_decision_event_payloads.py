@@ -92,6 +92,8 @@ def serialize_allocation(plan: EntryPlan) -> dict[str, object] | None:
 
 
 def serialize_intent(intent: ManagedOrderIntent) -> dict[str, object]:
+    amount_usdc = getattr(intent, "amount_usdc", None)
+    size_shares = getattr(intent, "size_shares", None)
     return {
         "trace_id": intent.trace_id,
         "condition_id": intent.condition_id,
@@ -99,12 +101,8 @@ def serialize_intent(intent: ManagedOrderIntent) -> dict[str, object]:
         "side": intent.side.value if hasattr(intent, "side") else None,
         "order_type": intent.order_type.value if hasattr(intent, "order_type") else None,
         "price": str(intent.price) if hasattr(intent, "price") and intent.price is not None else None,
-        "amount_usdc": (
-            None if getattr(intent, "amount_usdc", None) is None else str(intent.amount_usdc)
-        ),
-        "size_shares": (
-            None if getattr(intent, "size_shares", None) is None else str(intent.size_shares)
-        ),
+        "amount_usdc": None if amount_usdc is None else str(amount_usdc),
+        "size_shares": None if size_shares is None else str(size_shares),
         "order_id": getattr(intent, "order_id", None),
         "reason": getattr(intent, "reason", ""),
         "market_slug": intent.market_slug,

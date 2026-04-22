@@ -85,8 +85,8 @@ async def get_market_midpoint(
 @router.get("/prices-history")
 async def get_market_prices_history(
     token_id: str = Query(min_length=1),
-    start_ts: float | None = Query(default=None, ge=0),
-    end_ts: float | None = Query(default=None, ge=0),
+    start_ts: int | None = Query(default=None, ge=0),
+    end_ts: int | None = Query(default=None, ge=0),
     interval: Literal["max", "all", "1m", "1w", "1d", "6h", "1h"] | None = Query(default=None),
     fidelity: int | None = Query(default=None, ge=1),
     service: AdminService = Depends(get_admin_service),

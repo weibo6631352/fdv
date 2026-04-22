@@ -112,22 +112,22 @@ def normalize_tags(value: Any) -> tuple[str, ...]:
     if value is None:
         return ()
     if isinstance(value, str):
-        text = value.strip()
-        return (text,) if text else ()
+        value_text = value.strip()
+        return (value_text,) if value_text else ()
     if isinstance(value, Mapping):
-        tags: list[str] = []
+        mapping_tags: list[str] = []
         for key in ("label", "slug", "name"):
-            text = first_text(value, key)
-            if text:
-                tags.append(text)
-        return tuple(tags)
+            key_text = first_text(value, key)
+            if key_text:
+                mapping_tags.append(key_text)
+        return tuple(mapping_tags)
     if isinstance(value, (list, tuple, set, frozenset)):
-        tags: list[str] = []
+        nested_tags: list[str] = []
         for item in value:
-            tags.extend(normalize_tags(item))
-        return tuple(tags)
-    text = str(value).strip()
-    return (text,) if text else ()
+            nested_tags.extend(normalize_tags(item))
+        return tuple(nested_tags)
+    value_text = str(value).strip()
+    return (value_text,) if value_text else ()
 
 
 def normalize_token_ids(value: Any) -> tuple[str, ...]:

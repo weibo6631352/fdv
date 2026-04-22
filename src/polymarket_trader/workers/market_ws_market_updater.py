@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Callable, Mapping
 
 from polymarket_trader.domain.market import Market
@@ -13,7 +14,7 @@ _bool = market_ws_adapter.bool_value
 _bps = market_ws_adapter.bps_value
 _fee_rate_units = market_ws_adapter.fee_rate_units
 
-DecimalSerializer = Callable[[object], str | None]
+DecimalSerializer = Callable[[Decimal | None], str | None]
 
 
 class MarketWsMarketUpdater:

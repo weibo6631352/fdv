@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from polymarket_trader.domain.events import DomainEventType, OutboxEvent
@@ -55,7 +56,7 @@ def _to_outbox_event(priority: int, event: Any) -> OutboxEvent | None:
         condition_id=_text(getattr(event, "condition_id", None)),
         token_id=_text(getattr(event, "token_id", None)),
         reason=_text(getattr(event, "reason", None)),
-        created_at=getattr(event, "created_at", None),
+        created_at=_datetime(getattr(event, "created_at", None)),
         priority=priority,
         payload=_project_payload(event_type_text, payload),
     )
@@ -79,14 +80,14 @@ def _project_payload(event_type: str, payload: Mapping[str, Any]) -> dict[str, A
                 projected[key] = payload[key]
         return projected
     if event_type == DomainEventType.ORDER_STATE_UPDATED.value:
-        projected: dict[str, Any] = {}
+        order_projected: dict[str, Any] = {}
         order = _mapping(payload, "order")
         fill = _mapping(payload, "fill")
         if order is not None:
-            projected["order"] = order
+            order_projected["order"] = order
         if fill is not None:
-            projected["fill"] = fill
-        return projected
+            order_projected["fill"] = fill
+        return order_projected
     if event_type == DomainEventType.FILL_RECORDED.value:
         fill = _mapping(payload, "fill")
         return {} if fill is None else {"fill": fill}
@@ -100,6 +101,14 @@ def _project_payload(event_type: str, payload: Mapping[str, Any]) -> dict[str, A
             projected["positions"] = positions
         return projected
     return {}
+
+
+def _datetime(value: Any | None) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    return datetime.now(timezone.utc)
 
 
 def _mapping(payload: Mapping[str, Any], *keys: str) -> dict[str, Any] | None:

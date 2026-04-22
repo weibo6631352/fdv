@@ -413,9 +413,9 @@ class AccountStateProjector:
         open_buy_shares = sum(
             order_open_shares(order) or Decimal("0")
             for order in snapshot.open_buy_orders_for_market(condition_id, token_id)
-        )
+        ) or Decimal("0")
         open_sell_shares = snapshot.open_sell_shares_for_market(condition_id, token_id)
-        pending_buy_shares = open_buy_shares
+        pending_buy_shares = Decimal(open_buy_shares)
         if position is None and open_buy_shares <= Decimal("0") and open_sell_shares <= Decimal("0"):
             return
         current_position = position or Position(

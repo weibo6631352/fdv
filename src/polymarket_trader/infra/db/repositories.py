@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Generic, Iterable, Sequence, TypeVar
+from typing import Any, Generic, Iterable, Sequence, TypeVar, cast
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -160,7 +160,7 @@ def _sort_market_snapshots(
     missing = [market for market in markets if _market_snapshot_sort_value(market, sort_by) is None]
     present.sort(key=lambda market: market.market_slug)
     present.sort(
-        key=lambda market: _market_snapshot_sort_value(market, sort_by),
+        key=lambda market: cast(Any, _market_snapshot_sort_value(market, sort_by)),
         reverse=sort_direction == "desc",
     )
     return tuple(present + missing)

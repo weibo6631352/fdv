@@ -175,7 +175,7 @@ class MarketWsWorker:
         self._last_message_at = _utc_now()
         message_type = _message_type(message)
         if message_type == "price_change" and isinstance(message.get("price_changes"), list):
-            events: list[DomainEvent] = []
+            expanded_events: list[DomainEvent] = []
             for item in message["price_changes"]:
                 if not isinstance(item, Mapping):
                     continue
@@ -183,8 +183,8 @@ class MarketWsWorker:
                 expanded.pop("price_changes", None)
                 expanded.update(item)
                 expanded["event_type"] = "price_change"
-                events.extend(await self.handle_message(expanded, source=source))
-            return events
+                expanded_events.extend(await self.handle_message(expanded, source=source))
+            return expanded_events
 
         token_id = self._resolve_token_id(message)
         if token_id is None:
@@ -305,10 +305,11 @@ class MarketWsWorker:
                 needs_rest_snapshot_token_ids.append(token_id)
             if state.last_error is not None and last_error is None:
                 last_error = state.last_error
-            if state.last_result is not None and (
-                last_result is None or state.last_result.created_at > last_result.created_at
+            state_result = state.last_result
+            if isinstance(state_result, MarketWsResultSummary) and (
+                last_result is None or state_result.created_at > last_result.created_at
             ):
-                last_result = state.last_result
+                last_result = state_result
             subscriptions.append(
                 MarketWsSubscriptionStatus(
                     token_id=token_id,

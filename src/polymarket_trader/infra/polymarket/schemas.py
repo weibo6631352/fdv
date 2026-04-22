@@ -181,22 +181,22 @@ def _string_tuple(value: Any | None) -> tuple[str, ...]:
     if value is None:
         return ()
     if isinstance(value, str):
-        text = value.strip()
-        return (text,) if text else ()
+        value_text = value.strip()
+        return (value_text,) if value_text else ()
     if isinstance(value, Mapping):
-        items: list[str] = []
+        mapping_items: list[str] = []
         for key in ("label", "slug", "name"):
-            text = _first_text(value, key)
-            if text:
-                items.append(text)
-        return tuple(items)
+            key_text = _first_text(value, key)
+            if key_text:
+                mapping_items.append(key_text)
+        return tuple(mapping_items)
     if isinstance(value, (list, tuple, set, frozenset)):
-        items: list[str] = []
+        nested_items: list[str] = []
         for item in value:
-            items.extend(_string_tuple(item))
-        return tuple(items)
-    text = str(value).strip()
-    return (text,) if text else ()
+            nested_items.extend(_string_tuple(item))
+        return tuple(nested_items)
+    value_text = str(value).strip()
+    return (value_text,) if value_text else ()
 
 
 def _token_id_tuple(value: Any | None) -> tuple[str, ...]:
@@ -953,7 +953,7 @@ class WebSocketSubscription:
     raw: Mapping[str, Any] = field(default_factory=dict)
 
     def to_payload(self) -> dict[str, Any]:
-        payload = {"type": self.channel.value}
+        payload: dict[str, Any] = {"type": self.channel.value}
         if self.channel is PolymarketSubscriptionChannel.MARKET:
             payload["assets_ids"] = list(self.token_ids)
             # Market Channel 的 best_bid_ask / new_market / market_resolved 只有开启 custom feature 才会送。

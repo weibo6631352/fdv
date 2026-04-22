@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 from inspect import isawaitable
-from typing import Iterable
+from typing import Any, Iterable
 
 from polymarket_trader.domain.allocation import AllocationPlan
 from polymarket_trader.domain.market import Market
@@ -118,10 +118,10 @@ class TradingService:
             submission_error=submission_error,
         )
 
-    async def buy(self, intent: BuyOrderIntent, **kwargs: object) -> "TradingReviewResult":
+    async def buy(self, intent: BuyOrderIntent, **kwargs: Any) -> "TradingReviewResult":
         return await self.review_intent(intent, operation="buy", **kwargs)
 
-    async def sell(self, intent: SellOrderIntent, **kwargs: object) -> "TradingReviewResult":
+    async def sell(self, intent: SellOrderIntent, **kwargs: Any) -> "TradingReviewResult":
         return await self.review_intent(intent, operation="sell", **kwargs)
 
     async def cancel(
@@ -339,10 +339,10 @@ def _coerce_order_result(
         requested_size_shares=_coerce_decimal(
             data.get("requested_size_shares", getattr(intent, "size_shares", None))
         ),
-        matched_shares=_coerce_decimal(data.get("matched_shares", Decimal("0"))),
-        remaining_shares=_coerce_decimal(data.get("remaining_shares", Decimal("0"))),
-        spent_usdc=_coerce_decimal(data.get("spent_usdc", Decimal("0"))),
-        notional_usdc=_coerce_decimal(
+        matched_shares=_coerce_decimal_or_zero(data.get("matched_shares", Decimal("0"))),
+        remaining_shares=_coerce_decimal_or_zero(data.get("remaining_shares", Decimal("0"))),
+        spent_usdc=_coerce_decimal_or_zero(data.get("spent_usdc", Decimal("0"))),
+        notional_usdc=_coerce_decimal_or_zero(
             data.get("notional_usdc", getattr(intent, "notional_usdc", Decimal("0")))
         ),
         reason=data.get("reason", fallback_reason),
@@ -377,7 +377,7 @@ def _synthetic_order_result(
         price=_coerce_decimal(getattr(intent, "price", None)),
         requested_amount_usdc=_coerce_decimal(getattr(intent, "amount_usdc", None)),
         requested_size_shares=_coerce_decimal(getattr(intent, "size_shares", None)),
-        notional_usdc=_coerce_decimal(getattr(intent, "notional_usdc", Decimal("0"))),
+        notional_usdc=_coerce_decimal_or_zero(getattr(intent, "notional_usdc", Decimal("0"))),
         reason=reason,
         retryable=retryable,
     )
@@ -392,6 +392,10 @@ def _coerce_decimal(value: object | None) -> Decimal | None:
         return Decimal(str(value))
     except Exception:
         return None
+
+
+def _coerce_decimal_or_zero(value: object | None) -> Decimal:
+    return _coerce_decimal(value) or Decimal("0")
 
 
 def _coerce_side(value: object | None):

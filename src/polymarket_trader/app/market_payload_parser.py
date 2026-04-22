@@ -506,17 +506,17 @@ class MarketPayloadParser:
         if isinstance(value, str):
             return tuple(tag.strip() for tag in value.split(",") if tag.strip())
         if isinstance(value, Mapping):
-            tags: list[str] = []
+            mapping_tags: list[str] = []
             for key in ("label", "slug", "name"):
                 text = MarketPayloadParser._parse_text(value.get(key))
                 if text is not None:
-                    tags.append(text)
-            return tuple(tags)
+                    mapping_tags.append(text)
+            return tuple(mapping_tags)
         if isinstance(value, (list, tuple, set)):
-            tags: list[str] = []
+            nested_tags: list[str] = []
             for tag in value:
-                tags.extend(MarketPayloadParser._parse_tags(tag))
-            return tuple(tags)
+                nested_tags.extend(MarketPayloadParser._parse_tags(tag))
+            return tuple(nested_tags)
         return (str(value).strip(),)
 
     @staticmethod
@@ -535,12 +535,12 @@ class MarketPayloadParser:
         if isinstance(value, (list, tuple, set)):
             token_ids: list[str] = []
             for item in value:
-                text = MarketPayloadParser._parse_text(item)
-                if text is not None:
-                    token_ids.append(text)
+                parsed_text = MarketPayloadParser._parse_text(item)
+                if parsed_text is not None:
+                    token_ids.append(parsed_text)
             return tuple(token_ids)
-        text = MarketPayloadParser._parse_text(value)
-        return tuple() if text is None else (text,)
+        parsed_text = MarketPayloadParser._parse_text(value)
+        return tuple() if parsed_text is None else (parsed_text,)
 
     @staticmethod
     def _parse_outcome_names(value: Any | None) -> tuple[str, ...]:
@@ -558,12 +558,12 @@ class MarketPayloadParser:
         if isinstance(value, (list, tuple, set)):
             outcome_names: list[str] = []
             for item in value:
-                text = MarketPayloadParser._parse_text(item)
-                if text is not None:
-                    outcome_names.append(text)
+                parsed_text = MarketPayloadParser._parse_text(item)
+                if parsed_text is not None:
+                    outcome_names.append(parsed_text)
             return tuple(outcome_names)
-        text = MarketPayloadParser._parse_text(value)
-        return tuple() if text is None else (text,)
+        parsed_text = MarketPayloadParser._parse_text(value)
+        return tuple() if parsed_text is None else (parsed_text,)
 
     @staticmethod
     def _build_outcomes(

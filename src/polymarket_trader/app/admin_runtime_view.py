@@ -130,8 +130,10 @@ class AdminRuntimeView:
         supervisor: Mapping[str, Any],
         readiness: Mapping[str, Any],
     ) -> dict[str, Any]:
-        account_payload = supervisor.get("account") if isinstance(supervisor.get("account"), Mapping) else {}
-        user_ws = supervisor.get("user_ws") if isinstance(supervisor.get("user_ws"), Mapping) else {}
+        raw_account = supervisor.get("account")
+        raw_user_ws = supervisor.get("user_ws")
+        account_payload: Mapping[str, Any] = raw_account if isinstance(raw_account, Mapping) else {}
+        user_ws: Mapping[str, Any] = raw_user_ws if isinstance(raw_user_ws, Mapping) else {}
         fallback_account = self._account_snapshot() if not account_payload else None
         fallback_user_ws_connected = False if fallback_account is None else fallback_account.user_ws_connected
         fallback_allow_entries = True if fallback_account is None else fallback_account.allow_new_entries

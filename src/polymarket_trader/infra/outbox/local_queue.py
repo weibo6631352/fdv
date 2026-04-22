@@ -154,7 +154,7 @@ class LocalOutbox:
                 return True
         if self._has_capacity():
             try:
-                self._ready.put_nowait((event.priority, next(self._sequence), event.event_id))
+                self._ready.put_nowait((int(event.priority), next(self._sequence), event.event_id))
             except asyncio.QueueFull:
                 pass
             else:
@@ -223,7 +223,7 @@ class LocalOutbox:
         timeout = self._enqueue_timeout if timeout is None else timeout
         try:
             await asyncio.wait_for(
-                self._ready.put((event.priority, next(self._sequence), event.event_id)),
+                self._ready.put((int(event.priority), next(self._sequence), event.event_id)),
                 timeout=timeout,
             )
         except (asyncio.TimeoutError, TimeoutError):
