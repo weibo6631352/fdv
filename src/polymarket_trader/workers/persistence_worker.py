@@ -721,6 +721,8 @@ class PersistenceWorker:
                 "reject_reason": _safe_first_payload_value(
                     payload,
                     "reject_reason",
+                    "parse_reason",
+                    "classification_reason",
                 ),
             }
 

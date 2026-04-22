@@ -311,7 +311,11 @@ def _market_from_record(record: Mapping[str, Any]) -> Market | None:
         tags=_string_tuple(record.get("tags")),
         matched_keywords=_string_tuple(record.get("matched_keywords")),
         trading_status=_trading_status(record.get("trading_status")),
-        reject_reason=_text(record.get("reject_reason")) or _text(record.get("classification_reason")),
+        reject_reason=(
+            _text(record.get("reject_reason"))
+            or _text(record.get("parse_reason"))
+            or _text(record.get("classification_reason"))
+        ),
     )
 
 

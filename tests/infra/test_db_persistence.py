@@ -3,9 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from polymarket_trader.domain.events import DomainEventType, OutboxEvent
 from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.infra.db.models import MarketModel
 from polymarket_trader.infra.db.persistence import _audit_event_from_record, _market_from_record
+from polymarket_trader.workers.persistence_worker import PersistenceWorker
 from tests.helpers.markets import build_binary_market
 
 
@@ -79,3 +81,63 @@ def test_market_model_to_domain_prefers_fee_schedule_rate_from_raw_payload() -> 
 
     assert market.taker_base_fee_bps == 72
     assert market.fee_rate_bps == 72
+
+
+def test_market_persistence_worker_falls_back_to_parse_reason_in_market_data() -> None:
+    worker = PersistenceWorker()
+    event = OutboxEvent(
+        trace_id="trace-1",
+        event_type=DomainEventType.MARKET_FILTERED_OUT.value,
+        idempotency_key="idempotency-key",
+        event_id="event-1",
+        condition_id="condition-1",
+        market_slug="sample-market-a",
+        payload={
+            "accepted": False,
+            "parse_status": "rejected",
+            "parse_reason": "missing_trading_conditions",
+            "parse_detail": "missing tick_size / min_order_size",
+            "condition_id": "condition-1",
+            "market_slug": "sample-market-a",
+            "token_ids": ["yes-token", "no-token"],
+            "outcomes": [
+                {"token_id": "yes-token", "outcome": "YES"},
+                {"token_id": "no-token", "outcome": "NO"},
+            ],
+            "tick_size": "0.01",
+            "min_order_size": "1",
+        },
+    )
+
+    record = worker._build_market_record(event, event.payload)
+
+    assert record["parse_reason"] == "missing_trading_conditions"
+    assert record["market_data"]["reject_reason"] == "missing_trading_conditions"
+
+
+def test_market_from_record_restores_parse_reason_reject_reason() -> None:
+    market = _market_from_record(
+        {
+            "condition_id": "condition-1",
+            "market_slug": "sample-market-a",
+            "token_ids": ["yes-token", "no-token"],
+            "outcomes": [
+                {"token_id": "yes-token", "outcome": "YES"},
+                {"token_id": "no-token", "outcome": "NO"},
+            ],
+            "tick_size": "0.01",
+            "min_order_size": "1",
+            "reject_reason": None,
+            "parse_reason": "missing_trading_conditions",
+            "raw_payload": {
+                "conditionId": "condition-1",
+                "slug": "sample-market-a",
+                "clobTokenIds": ["yes-token", "no-token"],
+                "orderPriceMinTickSize": "0.01",
+                "orderMinSize": "1",
+            },
+        }
+    )
+
+    assert market is not None
+    assert market.reject_reason == "missing_trading_conditions"
