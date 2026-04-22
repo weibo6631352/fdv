@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import StrEnum
 from json import loads
@@ -115,7 +115,7 @@ class MarketParseResult:
             market_slug=self.market_slug,
             condition_id=self.condition_id,
             reason=self.reject_reason.value if self.reject_reason else "",
-            created_at=created_at or datetime.utcnow(),
+            created_at=created_at or datetime.now(timezone.utc),
             payload=payload_data,
         )
 
