@@ -13,7 +13,7 @@
 - 改分配、入场、退出：[src/strategies/current/trading.py](./src/strategies/current/trading.py)
 - 改恢复和保留跟踪：[src/strategies/current/recovery.py](./src/strategies/current/recovery.py) / [src/strategies/current/tracking.py](./src/strategies/current/tracking.py)
 - 看策略装配入口：[src/strategies/current/strategy.py](./src/strategies/current/strategy.py)
-- 看策略契约 SDK：[src/strategy_sdk](./src/strategy_sdk)
+- 看扩展 API 契约：[src/polymarket_trader/extension_api](./src/polymarket_trader/extension_api)
 
 常用命令：
 
@@ -47,7 +47,7 @@
 | Observability | [observability](./src/polymarket_trader/observability/README.md) | 审计、trace、指标 |
 | Runtime | [runtime](./src/polymarket_trader/runtime/README.md) | 事件总线、状态注册表、调度、supervisor |
 | Frontend | [frontend](./frontend/README.md) | 管理台前端、通用 UI 与策略展示扩展槽 |
-| Strategy SDK | [strategy_sdk](./src/strategy_sdk) | 策略契约、上下文对象、运行时 profile、配置加载 |
+| Extension API | [extension_api](./src/polymarket_trader/extension_api) | 业务扩展 hooks、上下文对象、决策对象、manifest 和配置加载 |
 | Strategies | [strategies](./src/strategies) | 顶层策略实现包 |
 | Workers | [workers](./src/polymarket_trader/workers/README.md) | 常驻后台任务 |
 | Tests | [tests](./tests/README.md) | 单元、编排和基础设施测试 |
@@ -72,7 +72,7 @@
 - discovery / universe：[src/strategies/current/discovery.py](./src/strategies/current/discovery.py) / [src/strategies/current/universe.py](./src/strategies/current/universe.py)
 - 交易决策：[src/strategies/current/trading.py](./src/strategies/current/trading.py)
 - 恢复 / 跟踪：[src/strategies/current/recovery.py](./src/strategies/current/recovery.py) / [src/strategies/current/tracking.py](./src/strategies/current/tracking.py)
-- 契约 SDK：[src/strategy_sdk/interfaces.py](./src/strategy_sdk/interfaces.py) / [src/strategy_sdk/models.py](./src/strategy_sdk/models.py)
+- 扩展 API 契约：[src/polymarket_trader/extension_api/hooks.py](./src/polymarket_trader/extension_api/hooks.py) / [src/polymarket_trader/extension_api/decisions.py](./src/polymarket_trader/extension_api/decisions.py)
 
 ## 模块接口原则
 
