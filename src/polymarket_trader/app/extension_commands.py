@@ -26,6 +26,9 @@ class ExtensionCommandExecutor:
         self._account_state_store = account_state_store
 
     def execute(self, command: ExtensionCommand, *, trace_id: str) -> ExtensionCommandResult:
+        if not isinstance(command.action, FrameworkCommandAction):
+            return self._result(command, trace_id=trace_id, accepted=False, reason="invalid_command_action")
+
         if command.action is FrameworkCommandAction.TRIGGER_RECONCILE:
             return self._result(command, trace_id=trace_id, accepted=True, reason=command.reason)
 

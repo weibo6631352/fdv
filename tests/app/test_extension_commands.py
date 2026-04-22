@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 from polymarket_trader.app.extension_commands import ExtensionCommandExecutor
 from polymarket_trader.extension_api import ExtensionCommand, FrameworkCommandAction
 from polymarket_trader.runtime.account_state import AccountStateStore
@@ -35,6 +37,24 @@ def test_pause_market_command_missing_condition_id_is_rejected() -> None:
     assert not result.accepted
     assert result.action is FrameworkCommandAction.PAUSE_MARKET
     assert result.reason == "missing_condition_id"
+
+
+def test_raw_string_pause_market_command_is_rejected_without_side_effect() -> None:
+    account_state = AccountStateStore()
+    executor = ExtensionCommandExecutor(account_state_store=account_state)
+
+    result = executor.execute(
+        ExtensionCommand(
+            action=cast(FrameworkCommandAction, "pause_market"),
+            reason="bad",
+            condition_id="condition",
+        ),
+        trace_id="trace",
+    )
+
+    assert not result.accepted
+    assert result.reason == "invalid_command_action"
+    assert not account_state.snapshot().is_market_paused("condition")
 
 
 def test_pause_market_command_without_account_state_store_is_rejected() -> None:
