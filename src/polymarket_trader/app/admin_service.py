@@ -18,7 +18,6 @@ from polymarket_trader.domain.order import (
     OrderResultStatus,
     OrderSide,
     OrderStatus,
-    OrderType,
     ReplaceOrderIntent,
 )
 from polymarket_trader.domain.orderbook import OrderbookSnapshot

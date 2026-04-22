@@ -4,8 +4,8 @@ import asyncio
 from decimal import Decimal
 from types import SimpleNamespace
 
-from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
+from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.config import Settings
 from polymarket_trader.main import (
     FullMarketDiscoveryState,

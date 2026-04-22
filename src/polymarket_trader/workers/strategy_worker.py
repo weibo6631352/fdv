@@ -11,7 +11,6 @@ from polymarket_trader.app.trading_service import TradingReviewResult, TradingSe
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from polymarket_trader.domain.market import Market, MarketOutcome
 from polymarket_trader.domain.order import (
-    BuyOrderIntent,
     CancelOrderIntent,
     ManagedOrderIntent,
     Order,

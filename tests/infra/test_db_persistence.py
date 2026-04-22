@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.infra.db.models import MarketModel
 from polymarket_trader.infra.db.persistence import _audit_event_from_record, _market_from_record
 from tests.helpers.markets import build_binary_market

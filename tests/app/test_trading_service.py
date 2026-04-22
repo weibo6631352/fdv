@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from polymarket_trader.app.trading_service import TradingService
-from polymarket_trader.domain.market import Market, TradingStatus
+from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.domain.order import BuyOrderIntent
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from tests.helpers.markets import build_binary_market

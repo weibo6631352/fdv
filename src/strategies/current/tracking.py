@@ -9,8 +9,6 @@ from __future__ import annotations
 from polymarket_trader.domain.market import Market, TradingStatus
 from strategy_sdk import AccountSnapshotView
 
-from strategies.current.outcomes import primary_token_id
-
 
 def should_keep_tracking(
     market: Market,
