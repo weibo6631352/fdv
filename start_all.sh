@@ -285,6 +285,14 @@ reclaim_managed_port() {
   return 1
 }
 
+stop_existing_services() {
+  log "关闭已有前后端服务"
+  cleanup_pid_file_process "$FRONTEND_PID_FILE"
+  cleanup_pid_file_process "$BACKEND_PID_FILE"
+  reclaim_managed_port "$FRONTEND_PORT" "前端服务" "fdv_static_server.py" || return 1
+  reclaim_managed_port "$BACKEND_PORT" "后端服务" "polymarket_trader.api.app:create_app" || return 1
+}
+
 initialize_database_once() {
   : > "$DATABASE_INIT_LOG"
   if python_run - <<'PY' >>"$DATABASE_INIT_LOG" 2>&1
@@ -534,6 +542,7 @@ open_browser() {
 main() {
   ensure_runtime_python
   load_env
+  stop_existing_services
   ensure_backend
   ensure_frontend
   if ! open_browser "$FRONTEND_URL"; then
