@@ -26,10 +26,13 @@ def test_current_strategy_exposes_remote_discovery_title_search_queries() -> Non
 
     queries = strategy.discovery_queries()
 
-    assert [query.name for query in queries] == ["title_search:fdv", "title_search:fully diluted valuation"]
+    assert [query.name for query in queries] == [
+        "title_search:fdv|tag_slug:crypto",
+        "title_search:fully diluted valuation|tag_slug:crypto",
+    ]
     assert [query.params for query in queries] == [
-        {"title_search": "fdv"},
-        {"title_search": "fully diluted valuation"},
+        {"title_search": "fdv", "tag_slug": "crypto"},
+        {"title_search": "fully diluted valuation", "tag_slug": "crypto"},
     ]
 
 

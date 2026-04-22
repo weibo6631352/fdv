@@ -56,7 +56,7 @@ class CurrentStrategyConfig:
     min_liquidity_usdc: Decimal = Decimal("5")
     max_spread: Decimal | None = Decimal("0.10")
     discovery_title_searches: tuple[str, ...] = ("fdv", "fully diluted valuation")
-    discovery_tag_slugs: tuple[str, ...] = ()
+    discovery_tag_slugs: tuple[str, ...] = ("crypto",)
     required_category_tokens: tuple[str, ...] = ("crypto", "cryptocurrency")
     required_event_tokens: tuple[str, ...] = ("fdv",)
     required_target_tokens: tuple[str, ...] = ("500m",)
