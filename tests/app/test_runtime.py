@@ -25,6 +25,7 @@ from tests.helpers.markets import build_binary_market
 def test_build_runtime_wires_m2_components() -> None:
     runtime = build_runtime(
         Settings(
+            extension_module="strategies.current",
             portfolio_budget_usdc=Decimal("100"),
             max_order_usdc=Decimal("25"),
             max_market_usdc=Decimal("50"),
@@ -34,7 +35,7 @@ def test_build_runtime_wires_m2_components() -> None:
     )
 
     assert runtime.market_discovery_worker is not None
-    assert runtime.strategy.spec.name == "current"
+    assert runtime.extension.spec.name == "current"
     assert runtime.market_service is not None
     assert runtime.market_ws_worker is not None
     assert runtime.user_ws_worker is not None
@@ -55,6 +56,7 @@ def test_build_runtime_binds_market_event_outbox_sink() -> None:
     async def run() -> None:
         runtime = build_runtime(
             Settings(
+                extension_module="strategies.current",
                 portfolio_budget_usdc=Decimal("100"),
                 max_order_usdc=Decimal("25"),
                 max_market_usdc=Decimal("50"),
@@ -87,6 +89,7 @@ def test_build_runtime_binds_user_event_outbox_sink_with_trimmed_payload() -> No
     async def run() -> None:
         runtime = build_runtime(
             Settings(
+                extension_module="strategies.current",
                 portfolio_budget_usdc=Decimal("100"),
                 max_order_usdc=Decimal("25"),
                 max_market_usdc=Decimal("50"),
@@ -129,6 +132,7 @@ def test_build_runtime_binds_balance_event_outbox_sink() -> None:
     async def run() -> None:
         runtime = build_runtime(
             Settings(
+                extension_module="strategies.current",
                 portfolio_budget_usdc=Decimal("100"),
                 max_order_usdc=Decimal("25"),
                 max_market_usdc=Decimal("50"),
@@ -164,6 +168,7 @@ def test_build_runtime_binds_strategy_orderbook_port() -> None:
     async def run() -> None:
         runtime = build_runtime(
             Settings(
+                extension_module="strategies.current",
                 portfolio_budget_usdc=Decimal("100"),
                 max_order_usdc=Decimal("25"),
                 max_market_usdc=Decimal("50"),
@@ -193,7 +198,7 @@ def test_build_runtime_binds_strategy_orderbook_port() -> None:
             }
         )
 
-        ports = getattr(runtime.strategy, "ports", None)
+        ports = getattr(runtime.extension, "ports", None)
         assert ports is not None
         assert ports.market is not None
         snapshot = ports.market.get_orderbook(market.require_token_id("NO"))

@@ -89,7 +89,7 @@ frontend/
 
 ## 5. 策略扩展设计
 
-策略扩展位采用显式注册，而不是在通用页面里写 `if strategy_module == "strategies.current"`。
+策略扩展位采用显式注册，而不是在通用页面里写 `if extension_module == "strategies.current"`。
 
 策略扩展接口至少提供：
 

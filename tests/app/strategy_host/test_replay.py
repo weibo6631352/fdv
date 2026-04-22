@@ -15,7 +15,7 @@ def test_run_entry_replay_uses_current_strategy_fixture() -> None:
 
     payload = run_entry_replay(str(fixture_path))
 
-    assert payload["strategy"]["name"] == "current"
-    assert payload["strategy"]["module_path"] == "strategies.current"
+    assert payload["extension"]["name"] == "current"
+    assert payload["extension"]["extension_module"] == "strategies.current"
     assert payload["plan"]["ready_to_trade"] is True
     assert payload["plan"]["intent"]["amount_usdc"] == "50"

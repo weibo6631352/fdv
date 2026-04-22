@@ -84,8 +84,8 @@ class Settings(BaseSettings):
     # 默认按 EOA 签名处理；如果使用代理钱包或 Safe，需要显式覆盖 signature type / funder。
     polymarket_signature_type: int = Field(default=0, ge=0, le=2)
     polymarket_funder_address: str | None = None
-    strategy_module: str = "strategies.current"
-    strategy_config_path: str | None = None
+    extension_module: str | None = None
+    extension_config_path: str | None = None
 
     # 预算相关默认值保持 0，避免在未明确配置前进入自动交易；其余风控阈值对齐示例推荐值。
     portfolio_budget_usdc: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
@@ -151,7 +151,8 @@ class Settings(BaseSettings):
         "polymarket_funder_address",
         "database_password",
         "database_url_override",
-        "strategy_config_path",
+        "extension_module",
+        "extension_config_path",
         mode="before",
     )
     @classmethod
@@ -227,6 +228,15 @@ class Settings(BaseSettings):
                         message="密钥未配置，启动阶段禁止自动下单",
                     )
                 )
+
+        if self.extension_module is None or not self.extension_module.strip():
+            blocking_issues.append(
+                ConfigIssue(
+                    field="extension_module",
+                    code="missing_extension_module",
+                    message="必须显式配置二次开发业务扩展模块。",
+                )
+            )
 
         api_cred_fields = (
             "polymarket_api_key",

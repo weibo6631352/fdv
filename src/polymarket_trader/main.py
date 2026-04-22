@@ -15,10 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from polymarket_trader.app.market_service import MarketService
 from polymarket_trader.app.ports import bind_strategy_orderbook_reader, build_strategy_ports
 from polymarket_trader.app.reconcile_service import ReconcileService
-from polymarket_trader.app.strategy_host import load_strategy
+from polymarket_trader.app.strategy_host import load_extension
 from polymarket_trader.app.strategy_service import StrategyService
 from polymarket_trader.app.trading_service import TradingService
-from polymarket_trader.config import Settings, StartupReadiness, load_settings
+from polymarket_trader.config import ConfigIssue, ConfigLoadError, Settings, StartupReadiness, load_settings
 from polymarket_trader.domain.events import DomainEvent, OutboxPriority
 from polymarket_trader.infra.db import (
     AccountSnapshotRepository,
@@ -50,11 +50,7 @@ from polymarket_trader.runtime import RuntimePhase, Scheduler, Supervisor, Worke
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
-from polymarket_trader.extension_api import (
-    BusinessExtension as StrategyModule,
-    DiscoveryEndpoint,
-    DiscoveryQuery,
-)
+from polymarket_trader.extension_api import BusinessExtension, DiscoveryEndpoint, DiscoveryQuery
 from polymarket_trader.workers.market_discovery_worker import MarketDiscoveryWorker
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 from polymarket_trader.workers.persistence_worker import PersistenceWorker
@@ -135,7 +131,7 @@ class FullMarketDiscoveryState:
 class RuntimeComponents:
     settings: Settings
     readiness: StartupReadiness
-    strategy: StrategyModule
+    extension: BusinessExtension
     logging_runtime: LoggingRuntime
     gamma_client: GammaClient
     clob_client: ClobClient
@@ -224,10 +220,20 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         registry=registry,
         snapshot_provider=account_state_store.snapshot,
     )
-    strategy = load_strategy(
-        module_path=settings.strategy_module,
+    if settings.extension_module is None:
+        raise ConfigLoadError(
+            [
+                ConfigIssue(
+                    field="extension_module",
+                    code="missing_extension_module",
+                    message="必须显式配置二次开发业务扩展模块。",
+                )
+            ]
+        )
+    extension = load_extension(
+        module_path=settings.extension_module,
         ports=strategy_ports,
-        config_path=settings.strategy_config_path,
+        config_path=settings.extension_config_path,
     )
     execution_client = (
         PolymarketOrderExecutionClient(trading_client)
@@ -254,13 +260,13 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     )
     bind_strategy_orderbook_reader(strategy_ports, market_ws_worker.snapshot)
     market_service = MarketService(
-        strategy_module=strategy,
+        strategy_module=extension.hooks,
         registry=registry,
         market_tracker=market_ws_worker,
         account_snapshot_provider=account_state_store.snapshot,
     )
     strategy_service = StrategyService(
-        strategy_module=strategy,
+        strategy_module=extension.hooks,
         registry=registry,
         orderbook_reader=market_ws_worker.snapshot,
     )
@@ -283,7 +289,7 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         max_open_orders=settings.max_open_orders,
         order_retry_limit=settings.order_retry_limit,
     )
-    reconcile_service = ReconcileService(strategy_module=strategy)
+    reconcile_service = ReconcileService(strategy_module=extension.hooks)
     reconcile_worker = ReconcileWorker(
         event_bus=event_bus,
         reconcile_service=reconcile_service,
@@ -324,7 +330,7 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
     return RuntimeComponents(
         settings=settings,
         readiness=readiness,
-        strategy=strategy,
+        extension=extension,
         logging_runtime=logging_runtime,
         gamma_client=gamma_client,
         clob_client=clob_client,

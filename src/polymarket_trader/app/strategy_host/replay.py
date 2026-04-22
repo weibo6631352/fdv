@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from polymarket_trader.app.ports import build_strategy_ports
-from polymarket_trader.app.strategy_host.loader import load_strategy
+from polymarket_trader.app.strategy_host.loader import load_extension
 from polymarket_trader.app.strategy_service import StrategyEntryPlan, StrategyService
 from polymarket_trader.domain.market import Market, MarketOutcome, TradingStatus
 from polymarket_trader.domain.order import Order, OrderSide, OrderStatus, OrderType
@@ -20,8 +20,8 @@ from polymarket_trader.extension_api import load_mapping_file
 def run_entry_replay(
     fixture_path: str,
     *,
-    strategy_module: str = "strategies.current",
-    strategy_config_path: str | None = None,
+    extension_module: str = "strategies.current",
+    extension_config_path: str | None = None,
 ) -> dict[str, Any]:
     fixture = load_mapping_file(fixture_path)
     registry = MarketRegistry()
@@ -49,17 +49,17 @@ def run_entry_replay(
     account_state_store.replace_open_orders(open_orders)
     account_state_store.mark_user_ws_connected(True)
     account_state_store.mark_reconciled()
-    strategy = load_strategy(
-        module_path=strategy_module,
+    extension = load_extension(
+        module_path=extension_module,
         ports=build_strategy_ports(
             registry=registry,
             snapshot_provider=account_state_store.snapshot,
             orderbook_reader=orderbooks.get,
         ),
-        config_path=strategy_config_path,
+        config_path=extension_config_path,
     )
     plan = StrategyService(
-        strategy_module=strategy,
+        strategy_module=extension.hooks,
         registry=registry,
         orderbook_reader=orderbooks.get,
     ).build_entry_plan(
@@ -75,10 +75,11 @@ def run_entry_replay(
     )
     return {
         "fixture_path": str(Path(fixture_path)),
-        "strategy": {
-            "name": strategy.spec.name,
-            "module_path": strategy_module,
-            "capabilities": list(strategy.spec.capabilities),
+        "extension": {
+            "name": extension.spec.name,
+            "extension_module": extension_module,
+            "extension_config_path": extension_config_path,
+            "capabilities": list(extension.spec.capabilities),
         },
         "plan": _serialize_plan(plan),
     }

@@ -23,12 +23,12 @@
 | 超时告警 | `ORDER_SUBMIT_TIMEOUT_MS`、`CRITICAL_LOCK_TIMEOUT_MS` | 防止交易链路无限等待 |
 | 数据库 | `DATABASE_URL`、`DATABASE_HOST` | PostgreSQL 连接地址；支持完整 URL 或拆分字段 |
 | 密钥 | `POLYMARKET_API_KEY`、`WALLET_PRIVATE_KEY` | 只能通过安全环境注入 |
-| 策略装配 | `STRATEGY_MODULE`、`STRATEGY_CONFIG_PATH` | 选择要装配的策略包和可选配置文件 |
+| 扩展装配 | `EXTENSION_MODULE`、`EXTENSION_CONFIG_PATH` | 选择要装配的业务扩展包和可选配置文件 |
 | 策略规则 | `src/strategies/current/` | 默认示例策略的交易阈值、筛选语义、订阅规则 |
 
 ## 规则
 
-- 框架只通过 `STRATEGY_MODULE` 选择策略实现；策略业务语义仍然收口在 `src/strategies/`。
+- 框架只通过 `EXTENSION_MODULE` 选择业务扩展实现；策略业务语义仍然收口在 `src/strategies/`。
 - `Settings` 只接受已声明字段；未声明字段和已淘汰字段会直接报错，不会静默忽略。
 - `.env.example` 只保留常用启动项；不常改的默认值直接看 `Settings`，需要显式覆盖时再写 `.env.full.example`。
 - `POLYMARKET_API_KEY`、`POLYMARKET_API_SECRET`、`POLYMARKET_API_PASSPHRASE` 要么同时提供，要么全部留空并在运行时派生。
@@ -54,7 +54,7 @@
 
 ## 策略文件
 
-- 当 `STRATEGY_MODULE=strategies.current` 时，对应文件为：
+- 当 `EXTENSION_MODULE=strategies.current` 时，对应文件为：
 - manifest：`src/strategies/current/manifest.py`
 - 入口：`src/strategies/current/strategy.py`
 - 配置：`src/strategies/current/config.py`
@@ -84,5 +84,5 @@
 - 单位是什么，取值范围是什么。
 - 是否可以运行时热更新。
 - 是否需要写入 [`.env.full.example`](../.env.full.example)；如果属于最常用启动项，再同步写入 [`.env.example`](../.env.example)。
-- 如果只是策略规则，直接写 `STRATEGY_MODULE` 指向的策略包，不要新增框架环境变量。
+- 如果只是策略规则，直接写 `EXTENSION_MODULE` 指向的策略包，不要新增框架环境变量。
 - 是否会改变资金暴露、订单行为或 reconcile 行为。
