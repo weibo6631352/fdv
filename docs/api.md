@@ -7,9 +7,9 @@
 - 服务入口：`src/polymarket_trader/api/app.py`
 - 默认无应用层鉴权，只放在本机或受控内网。
 
-## 1. 当前实际暴露的路由
+## 1. 已注册路由
 
-由 `create_app()` 当前注册的路由如下。
+由 `create_app()` 注册的路由如下。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -37,7 +37,7 @@
 | `GET` | `/outbox/pending` | outbox 待处理事件 |
 | `POST` | `/operations/reconcile` | 手动触发 reconcile |
 
-当前没有对外暴露的路由：
+不对外暴露的路由：
 
 - 直接下 BUY 单
 - 直接撤任意单
@@ -96,6 +96,9 @@
 - `Decimal` 字段统一序列化成字符串。
 - 时间统一输出 ISO 8601 UTC 字符串。
 - 枚举统一输出小写或固定字符串值。
+- `market_slug` 是 market 级标识；Polymarket 官网事件链接使用 `event_slug`。
+- `audit-events` / `outbox` 的 `event_slug` 来自事件自身的一等字段，不在序列化层回填。
+- `orders` / `fills` / `positions` / `allocations` 的 `event_slug` 是管理视图字段，用 registry 按 `condition_id`、`token_id` 或 `market_slug` 解析，用于前端打开官网事件页。
 
 ### 2.3 热态优先级
 
@@ -172,7 +175,7 @@
 
 - `settings` 已脱敏，测试里已覆盖 `wallet_private_key -> "***"`。
 - `market_discovery.query_cursors` / `completed_query_names` 用于观察远端 discovery 多 query 分页状态。
-- `markets[].market.fees` 当前会输出：
+- `markets[].market.fees` 输出：
   - `enabled`
   - `maker_base_fee_bps`
   - `taker_base_fee_bps`
@@ -207,16 +210,20 @@
 
 - `market`
 - `tracked`
+- `market.market_slug`
+- `market.event_slug`
 - `market.token_ids[]`
 - `market.outcomes[]`
 - `token_views[]`
 
 说明：
 
-- 当前不会在 handler 内现场请求外部费率接口。
+- handler 不现场请求外部费率接口。
 - 费率查询只使用本地缓存字段。
 - `token_views[]` 是唯一主视图；每个 token view 都包含 `token_id`、`outcome`、`orderbook`、`position`、`open_orders`、`best_ask`、`best_bid`、`spread`、`fee_preview`。
 - `fee_preview` 是逐 token 的热态派生视图，默认按 `100 shares` 结合 `best_ask` / `best_bid` 预估 taker 手续费。
+- `fee_preview` 使用 `src/polymarket_trader/domain/fees.py` 的 `build_taker_fee_preview(...)`，公式为 `fee = size_shares * feeRate * price * (1 - price)`，其中 `feeRate = fee_rate_bps / 1000`。
+- `fee_preview` 不落库，不作为 `Market` 静态事实。
 
 ### 3.5 `GET /markets/detail`
 
@@ -377,6 +384,7 @@
 - `condition_id`
 - `token_id`
 - `market_slug`
+- `event_slug`
 - `side`
 - `order_type`
 - `price`
@@ -420,6 +428,7 @@
 - `event_type`
 - `event_id`
 - `market_slug`
+- `event_slug`
 - `condition_id`
 - `token_id`
 - `order_id`
@@ -456,6 +465,7 @@
 - `condition_id`
 - `token_id`
 - `market_slug`
+- `event_slug`
 - `shares`
 - `cost_usdc`
 - `open_buy_shares`
@@ -473,7 +483,7 @@
 
 - 给出账户和组合摘要。
 
-当前返回重点：
+返回重点：
 
 - `balance_usdc`
 - `allowance_usdc`
@@ -490,7 +500,7 @@
 
 说明：
 
-- 当前 `available_usdc` 直接等于 `balance_usdc`。
+- `available_usdc` 直接等于 `balance_usdc`。
 - 若仓储可用，会补 `recent_allocations`；否则返回空数组。
 
 ### 3.13 `GET /audit-events`
@@ -514,6 +524,7 @@
 - `event_id`
 - `event_title`
 - `market_slug`
+- `event_slug`
 - `condition_id`
 - `token_id`
 - `outcome`
@@ -550,6 +561,7 @@
 
 - `condition_id`
 - `market_slug`
+- `event_slug`
 - `token_id`
 - `target_budget_usdc`
 - `buy_budget_usdc`
@@ -570,7 +582,7 @@
 
 - 输出 worker 健康状态、调度器快照和队列深度。
 
-当前返回重点：
+返回重点：
 
 - `phase`
 - `automatic_trading_enabled`
@@ -583,9 +595,9 @@
 
 用途：
 
-- 输出 runtime 当前指标快照。
+- 输出 runtime 指标快照。
 
-当前返回重点：
+返回重点：
 
 - `phase`
 - `automatic_trading_enabled`
@@ -614,6 +626,7 @@
 - `idempotency_key`
 - `event_id`
 - `market_slug`
+- `event_slug`
 - `condition_id`
 - `token_id`
 - `reason`
@@ -655,7 +668,7 @@
 - `applied_actions`
 - `failed_actions`
 
-`plan.market_plans[].actions[].action_type` 当前可能出现：
+`plan.market_plans[].actions[].action_type` 可能出现：
 
 - `cancel_order`
 - `replace_order`
@@ -711,7 +724,7 @@
 - 这是对单张 open order 的真正 replace，不会先把整个 market 的同类订单全部撤掉。
 - hot state 会按原订单的 `side` 和 `token_id` 更新，不再默认按 SELL / NO 处理。
 
-当前明确失败原因：
+明确失败原因：
 
 - `order_not_found`
 - `market_not_found`
@@ -722,7 +735,7 @@
 - `order_size_unknown`
 - `replace_order_failed`
 
-## 5. 当前接口边界
+## 5. 接口边界
 
 Admin API 是人工查询和受控操作入口，不是交易策略入口。
 

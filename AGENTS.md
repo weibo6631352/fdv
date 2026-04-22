@@ -1,6 +1,6 @@
 # Codex Rules
 
-本文件整理自仓库内的 `README.md`、`docs/需求文档.md`、`docs/设计文档.md`、`docs/市场发现链路.md` 以及各层 `README`，用于约束 Codex 在本仓库中的改动方式。
+本文件整理自仓库内的 `README.md`、`docs/设计文档.md`、`docs/市场发现链路.md` 以及各层 `README`，用于约束 Codex 在本仓库中的改动方式。
 
 只保留跨模块、可长期复用的规则；策略阈值、关键词、仓位参数等易变细节仍以 `src/strategies/current/` 和对应策略文档为准。
 
