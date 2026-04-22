@@ -37,6 +37,7 @@ from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
+from polymarket_trader.workers.reconcile_authority_refresher import ReconcileAuthorityRefresher
 from polymarket_trader.workers.reconcile_worker import ReconcileWorker
 from tests.helpers.markets import build_binary_market
 
@@ -648,11 +649,10 @@ def test_reconcile_worker_executes_replace_requests_and_keeps_sell_coverage() ->
     asyncio.run(run())
 
 
-def test_reconcile_worker_refreshes_account_balance_from_clob_balance_allowance() -> None:
+def test_reconcile_authority_refresher_refreshes_account_balance_from_clob_balance_allowance() -> None:
     async def run() -> None:
         account_state_store = AccountStateStore()
-        worker = ReconcileWorker(
-            reconcile_service=_reconcile_service(),
+        refresher = ReconcileAuthorityRefresher(
             account_state_store=account_state_store,
             data_client=_StubPositionsDataClient(),
             clob_client=_StubAccountClobClient(
@@ -662,7 +662,7 @@ def test_reconcile_worker_refreshes_account_balance_from_clob_balance_allowance(
             trading_client=object(),
         )
 
-        summary = await worker._refresh_account_authority(
+        summary = await refresher.refresh_account(
             trace_id="trace-reconcile",
             markets=(),
         )
