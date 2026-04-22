@@ -12,19 +12,12 @@ from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.domain.position import Position
 
 
-class StrategyAction(StrEnum):
+class ExtensionAction(StrEnum):
     SKIP = "skip"
     BUY = "buy"
     SELL = "sell"
     CANCEL = "cancel"
     REPLACE = "replace"
-
-
-class DiscoveryEndpoint(StrEnum):
-    EVENTS = "events"
-    EVENTS_KEYSET = "events_keyset"
-    MARKETS = "markets"
-    MARKETS_KEYSET = "markets_keyset"
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,16 +27,6 @@ class MarketTokenView:
     orderbook: OrderbookSnapshot | None = None
     position: Position | None = None
     open_orders: tuple[Order, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class DiscoveryQuery:
-    """Strategy-provided remote discovery query."""
-
-    endpoint: DiscoveryEndpoint
-    params: Mapping[str, Any] = field(default_factory=dict)
-    max_pages: int = 1
-    timeout_s: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,8 +69,8 @@ class EntryCandidate:
 
 
 @dataclass(frozen=True, slots=True)
-class StrategyDecision:
-    action: StrategyAction
+class ExtensionDecision:
+    action: ExtensionAction
     reason: str = ""
     token_id: str | None = None
     price: Decimal | None = None
@@ -104,8 +87,8 @@ class StrategyDecision:
         *,
         reason: str,
         metadata: Mapping[str, Any] | None = None,
-    ) -> "StrategyDecision":
-        return cls(action=StrategyAction.SKIP, reason=reason, metadata=metadata or {})
+    ) -> "ExtensionDecision":
+        return cls(action=ExtensionAction.SKIP, reason=reason, metadata=metadata or {})
 
     @classmethod
     def buy(
@@ -118,9 +101,9 @@ class StrategyDecision:
         order_type: OrderType | None = None,
         market_slug: str | None = None,
         metadata: Mapping[str, Any] | None = None,
-    ) -> "StrategyDecision":
+    ) -> "ExtensionDecision":
         return cls(
-            action=StrategyAction.BUY,
+            action=ExtensionAction.BUY,
             reason=reason,
             token_id=token_id,
             price=price,
@@ -141,9 +124,9 @@ class StrategyDecision:
         order_type: OrderType | None = None,
         market_slug: str | None = None,
         metadata: Mapping[str, Any] | None = None,
-    ) -> "StrategyDecision":
+    ) -> "ExtensionDecision":
         return cls(
-            action=StrategyAction.SELL,
+            action=ExtensionAction.SELL,
             reason=reason,
             token_id=token_id,
             price=price,
@@ -162,9 +145,9 @@ class StrategyDecision:
         order_id: str,
         market_slug: str | None = None,
         metadata: Mapping[str, Any] | None = None,
-    ) -> "StrategyDecision":
+    ) -> "ExtensionDecision":
         return cls(
-            action=StrategyAction.CANCEL,
+            action=ExtensionAction.CANCEL,
             reason=reason,
             token_id=token_id,
             order_id=order_id,
@@ -183,9 +166,9 @@ class StrategyDecision:
         size_shares: Decimal,
         market_slug: str | None = None,
         metadata: Mapping[str, Any] | None = None,
-    ) -> "StrategyDecision":
+    ) -> "ExtensionDecision":
         return cls(
-            action=StrategyAction.REPLACE,
+            action=ExtensionAction.REPLACE,
             reason=reason,
             token_id=token_id,
             order_id=order_id,
@@ -211,7 +194,7 @@ class EntrySizing:
 @dataclass(frozen=True, slots=True)
 class RecoveryDecision:
     reason: str = ""
-    actions: tuple[StrategyDecision, ...] = ()
+    actions: tuple[ExtensionDecision, ...] = ()
     pause_trading: bool = False
     pause_reason: str = ""
 

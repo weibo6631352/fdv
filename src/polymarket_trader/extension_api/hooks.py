@@ -5,12 +5,11 @@ from typing import Mapping, Protocol, runtime_checkable
 
 from polymarket_trader.domain.market import Market
 from polymarket_trader.extension_api.commands import ExtensionCommand
-from polymarket_trader.extension_api.context import AccountSnapshotView, StrategyContext
+from polymarket_trader.extension_api.context import AccountSnapshotView, ExtensionContext
 from polymarket_trader.extension_api.decisions import (
-    DiscoveryQuery,
     EntrySizing,
     RecoveryDecision,
-    StrategyDecision,
+    ExtensionDecision,
     UniverseDecision,
 )
 
@@ -23,19 +22,17 @@ class HookResult:
 
 @runtime_checkable
 class ExtensionHooks(Protocol):
-    def build_discovery_queries(self) -> tuple[DiscoveryQuery, ...]: ...
-
     def select_market(self, market: Market) -> UniverseDecision: ...
 
-    def size_entry(self, context: StrategyContext) -> EntrySizing: ...
+    def size_entry(self, context: ExtensionContext) -> EntrySizing: ...
 
-    def decide_entry(self, context: StrategyContext) -> StrategyDecision: ...
+    def decide_entry(self, context: ExtensionContext) -> ExtensionDecision: ...
 
-    def decide_exit(self, context: StrategyContext) -> StrategyDecision: ...
+    def decide_exit(self, context: ExtensionContext) -> ExtensionDecision: ...
 
-    def decide_recovery(self, context: StrategyContext) -> RecoveryDecision: ...
+    def decide_recovery(self, context: ExtensionContext) -> RecoveryDecision: ...
 
-    def decide_follow_up(self, context: StrategyContext) -> tuple[StrategyDecision, ...]: ...
+    def decide_follow_up(self, context: ExtensionContext) -> tuple[ExtensionDecision, ...]: ...
 
     def should_keep_tracking(
         self,

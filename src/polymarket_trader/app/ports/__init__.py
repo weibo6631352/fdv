@@ -1,4 +1,4 @@
-from polymarket_trader.app.ports.strategy_ports import (
+from polymarket_trader.app.ports.extension_ports import (
     AccountStatePort,
     MarketDataPort,
     NullTelemetryPort,
@@ -6,8 +6,8 @@ from polymarket_trader.app.ports.strategy_ports import (
     RegistryStatePort,
     RuntimeStatePort,
     UtcClockPort,
-    bind_strategy_orderbook_reader,
-    build_strategy_ports,
+    bind_extension_orderbook_reader,
+    build_extension_ports,
 )
 
 __all__ = [
@@ -18,6 +18,6 @@ __all__ = [
     "RegistryStatePort",
     "RuntimeStatePort",
     "UtcClockPort",
-    "bind_strategy_orderbook_reader",
-    "build_strategy_ports",
+    "bind_extension_orderbook_reader",
+    "build_extension_ports",
 ]

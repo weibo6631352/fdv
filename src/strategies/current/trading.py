@@ -15,7 +15,7 @@ from polymarket_trader.domain.allocation import (
     current_exposure_usdc,
 )
 from polymarket_trader.domain.market import TradingStatus
-from polymarket_trader.extension_api import EntryCandidate, EntrySizing, StrategyContext, StrategyDecision
+from polymarket_trader.extension_api import EntryCandidate, EntrySizing, ExtensionContext, ExtensionDecision
 
 from strategies.current.allocation import AllocationMarketSnapshot, equal_weight_plan
 from strategies.current.config import CurrentStrategyConfig
@@ -23,7 +23,7 @@ from strategies.current.outcomes import is_primary_token
 from strategies.current.universe import select_market
 
 
-def size_entry(config: CurrentStrategyConfig, context: StrategyContext) -> EntrySizing:
+def size_entry(config: CurrentStrategyConfig, context: ExtensionContext) -> EntrySizing:
     """为当前 market 计算本轮可用入场预算。
 
     参数：
@@ -126,7 +126,7 @@ def size_entry(config: CurrentStrategyConfig, context: StrategyContext) -> Entry
     )
 
 
-def decide_entry(config: CurrentStrategyConfig, context: StrategyContext) -> StrategyDecision:
+def decide_entry(config: CurrentStrategyConfig, context: ExtensionContext) -> ExtensionDecision:
     """根据盘口和预算生成 BUY 决策。
 
     参数：
@@ -138,24 +138,24 @@ def decide_entry(config: CurrentStrategyConfig, context: StrategyContext) -> Str
             ``buy_budget_usdc``。
 
     返回：
-        一个 ``StrategyDecision``：
+        一个 ``ExtensionDecision``：
         - 条件满足时返回 ``BUY``；
         - 条件不足时返回 ``SKIP`` 并说明原因。
     """
 
     if context.market is None or context.orderbook is None:
-        return StrategyDecision.skip(reason="missing_market_state")
+        return ExtensionDecision.skip(reason="missing_market_state")
     best_ask = context.orderbook.best_ask
     if best_ask is None:
-        return StrategyDecision.skip(reason="missing_best_ask")
+        return ExtensionDecision.skip(reason="missing_best_ask")
     if best_ask > config.entry_no_price_max:
-        return StrategyDecision.skip(reason="price_above_entry_max")
+        return ExtensionDecision.skip(reason="price_above_entry_max")
 
     amount_usdc = context.amount_usdc or _metadata_decimal(context, "amount_usdc", "buy_budget_usdc")
     if amount_usdc is None or amount_usdc <= Decimal("0"):
-        return StrategyDecision.skip(reason="missing_entry_amount")
+        return ExtensionDecision.skip(reason="missing_entry_amount")
 
-    return StrategyDecision.buy(
+    return ExtensionDecision.buy(
         reason="strategy_entry",
         token_id=context.token_id or context.orderbook.token_id,
         price=config.entry_no_price_max,
@@ -164,7 +164,7 @@ def decide_entry(config: CurrentStrategyConfig, context: StrategyContext) -> Str
     )
 
 
-def decide_exit(config: CurrentStrategyConfig, context: StrategyContext) -> StrategyDecision:
+def decide_exit(config: CurrentStrategyConfig, context: ExtensionContext) -> ExtensionDecision:
     """根据持仓状态生成 SELL 决策。
 
     参数：
@@ -175,7 +175,7 @@ def decide_exit(config: CurrentStrategyConfig, context: StrategyContext) -> Stra
             ``size_shares``，也可以依赖 ``position`` 自动推导未覆盖仓位。
 
     返回：
-        一个 ``StrategyDecision``：
+        一个 ``ExtensionDecision``：
         - 有可卖份额时返回 ``SELL``；
         - 否则返回 ``SKIP``。
     """
@@ -186,11 +186,11 @@ def decide_exit(config: CurrentStrategyConfig, context: StrategyContext) -> Stra
     elif context.position is not None:
         uncovered_shares = context.position.shares - context.position.open_sell_shares
     else:
-        return StrategyDecision.skip(reason="missing_position_state")
+        return ExtensionDecision.skip(reason="missing_position_state")
     if uncovered_shares <= Decimal("0"):
-        return StrategyDecision.skip(reason="no_uncovered_shares")
+        return ExtensionDecision.skip(reason="no_uncovered_shares")
 
-    return StrategyDecision.sell(
+    return ExtensionDecision.sell(
         reason="strategy_exit",
         token_id=(
             context.token_id
@@ -205,7 +205,7 @@ def decide_exit(config: CurrentStrategyConfig, context: StrategyContext) -> Stra
     )
 
 
-def _empty_sizing(context: StrategyContext, *, reason: str) -> EntrySizing:
+def _empty_sizing(context: ExtensionContext, *, reason: str) -> EntrySizing:
     """构造一个“无可分配预算”的占位结果。
 
     参数：
@@ -233,7 +233,7 @@ def _empty_sizing(context: StrategyContext, *, reason: str) -> EntrySizing:
 
 
 def _candidate_snapshots(
-    context: StrategyContext,
+    context: ExtensionContext,
 ) -> tuple[AllocationMarketSnapshot, ...]:
     """从上下文中提取候选市场快照。
 
@@ -245,7 +245,7 @@ def _candidate_snapshots(
         一组 ``AllocationMarketSnapshot``。
 
     说明：
-        正常路径下，框架会把候选市场列表放在 ``StrategyContext.entry_candidates``。
+        正常路径下，框架会把候选市场列表放在 ``ExtensionContext.entry_candidates``。
         如果当前调用点没有提供这个列表，这里会退化为只用当前 market
         生成一个 fallback snapshot，保证逻辑仍可运行。
     """
@@ -257,7 +257,7 @@ def _candidate_snapshots(
 
 
 def _fallback_snapshot(
-    context: StrategyContext,
+    context: ExtensionContext,
 ) -> AllocationMarketSnapshot | None:
     """在缺少候选市场列表时，为当前 market 构造一个最小快照。
 
@@ -467,7 +467,7 @@ def _sizing_reason(plan: AllocationPlan, allocation: Allocation | None) -> str:
     return plan.reason
 
 
-def _metadata_decimal(context: StrategyContext, *keys: str) -> Decimal | None:
+def _metadata_decimal(context: ExtensionContext, *keys: str) -> Decimal | None:
     """按优先顺序从 metadata 中读取十进制数值。
 
     参数：
@@ -493,7 +493,7 @@ def _metadata_decimal(context: StrategyContext, *keys: str) -> Decimal | None:
     return None
 
 
-def _metadata_text(context: StrategyContext, *keys: str) -> str | None:
+def _metadata_text(context: ExtensionContext, *keys: str) -> str | None:
     """按优先顺序从 metadata 中读取文本值。"""
 
     for key in keys:

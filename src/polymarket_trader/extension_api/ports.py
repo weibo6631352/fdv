@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping, Protocol
 
-from polymarket_trader.domain.events import AuditEvent, Fill
 from polymarket_trader.domain.market import Market
 from polymarket_trader.domain.order import Order
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
@@ -34,20 +33,6 @@ class AccountReadPort(Protocol):
 class HistoryReadPort(Protocol):
     def open_orders(self, *, condition_id: str, token_id: str) -> tuple[Order, ...]: ...
 
-    def recent_fills(
-        self,
-        *,
-        condition_id: str | None = None,
-        limit: int = 100,
-    ) -> tuple[Fill, ...]: ...
-
-    def recent_audit_events(
-        self,
-        *,
-        condition_id: str | None = None,
-        limit: int = 100,
-    ) -> tuple[AuditEvent, ...]: ...
-
 
 class RuntimeReadPort(Protocol):
     def is_market_paused(self, condition_id: str) -> bool: ...
@@ -70,7 +55,7 @@ class ClockPort(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class StrategyPorts:
+class ExtensionPorts:
     market: MarketReadPort | None = None
     orderbook: OrderbookReadPort | None = None
     account: AccountReadPort | None = None

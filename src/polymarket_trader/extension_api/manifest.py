@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from polymarket_trader.extension_api.hooks import ExtensionHooks
-from polymarket_trader.extension_api.ports import StrategyPorts
+from polymarket_trader.extension_api.ports import ExtensionPorts
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,7 +29,7 @@ class ExtensionFactory(Protocol):
     def __call__(
         self,
         *,
-        ports: StrategyPorts | None = None,
+        ports: ExtensionPorts | None = None,
         config_path: str | None = None,
     ) -> BusinessExtension: ...
 

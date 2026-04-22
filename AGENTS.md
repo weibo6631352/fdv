@@ -7,7 +7,7 @@
 ## 1. 改动落点
 
 - 改策略规则、筛选语义、定价、仓位和恢复策略，优先改 `src/strategies/current/`。
-- 改通用契约、上下文对象和策略接口，改 `src/strategy_sdk/`。
+- 改通用契约、上下文对象和扩展接口，改 `src/polymarket_trader/extension_api/`。
 - 改交易编排、恢复编排和管理操作编排，改 `src/polymarket_trader/app/`。
 - 改外部 API、数据库、WS、outbox 适配，改 `src/polymarket_trader/infra/`。
 - 改运行时状态、调度、队列和 supervisor，改 `src/polymarket_trader/runtime/` 或 `src/polymarket_trader/workers/`。

@@ -25,9 +25,9 @@ from polymarket_trader.extension_api import (
     EntryCandidate,
     ExtensionHooks,
     MarketTokenView,
-    StrategyAction,
-    StrategyContext,
-    StrategyDecision,
+    ExtensionAction,
+    ExtensionContext,
+    ExtensionDecision,
 )
 
 OrderbookReader = Callable[[str], OrderbookSnapshot | None]
@@ -146,7 +146,7 @@ class StrategyService:
             )
 
         sizing = self._extension_hooks.size_entry(
-            StrategyContext(
+            ExtensionContext(
                 trace_id=trace_id,
                 market=resolved_market,
                 token_id=resolved_token_id,
@@ -204,7 +204,7 @@ class StrategyService:
             reason = allocation.reason or reason
             if allocation.buy_budget_usdc > Decimal("0"):
                 decision = self._extension_hooks.decide_entry(
-                    StrategyContext(
+                    ExtensionContext(
                         trace_id=trace_id,
                         market=resolved_market,
                         token_id=allocation.token_id or resolved_token_id,
@@ -259,7 +259,7 @@ class StrategyService:
             reason=reason,
         )
 
-    def decide_follow_up(self, context: StrategyContext) -> tuple[StrategyDecision, ...]:
+    def decide_follow_up(self, context: ExtensionContext) -> tuple[ExtensionDecision, ...]:
         return self._extension_hooks.decide_follow_up(context)
 
     def build_intent_from_decision(
@@ -269,7 +269,7 @@ class StrategyService:
         condition_id: str,
         market_slug: str | None,
         default_token_id: str | None,
-        decision: StrategyDecision,
+        decision: ExtensionDecision,
     ) -> ManagedOrderIntent | None:
         return decision_to_managed_intent(
             trace_id=trace_id,
@@ -440,7 +440,7 @@ def _decision_to_trade_intent(
     trace_id: str,
     market: Market,
     default_token_id: str | None,
-    decision: StrategyDecision,
+    decision: ExtensionDecision,
 ) -> TradableOrderIntent | None:
     intent = decision_to_managed_intent(
         trace_id=trace_id,
@@ -460,13 +460,13 @@ def decision_to_managed_intent(
     condition_id: str,
     market_slug: str | None,
     default_token_id: str | None,
-    decision: StrategyDecision,
+    decision: ExtensionDecision,
 ) -> ManagedOrderIntent | None:
     resolved_token_id = decision.token_id or default_token_id
     if resolved_token_id is None:
         return None
     resolved_market_slug = decision.market_slug or market_slug
-    if decision.action == StrategyAction.BUY:
+    if decision.action == ExtensionAction.BUY:
         if (
             decision.price is None
             or decision.amount_usdc is None
@@ -482,7 +482,7 @@ def decision_to_managed_intent(
             order_type=decision.order_type or OrderType.FAK,
             market_slug=resolved_market_slug,
         )
-    if decision.action == StrategyAction.SELL:
+    if decision.action == ExtensionAction.SELL:
         if decision.price is None or decision.size_shares is None or decision.size_shares <= Decimal("0"):
             return None
         return SellOrderIntent(
@@ -494,7 +494,7 @@ def decision_to_managed_intent(
             order_type=decision.order_type or OrderType.GTC,
             market_slug=resolved_market_slug,
         )
-    if decision.action == StrategyAction.CANCEL:
+    if decision.action == ExtensionAction.CANCEL:
         if not decision.order_id:
             return None
         return CancelOrderIntent(
@@ -505,7 +505,7 @@ def decision_to_managed_intent(
             market_slug=resolved_market_slug,
             reason=decision.reason,
         )
-    if decision.action == StrategyAction.REPLACE:
+    if decision.action == ExtensionAction.REPLACE:
         if (
             not decision.order_id
             or decision.price is None

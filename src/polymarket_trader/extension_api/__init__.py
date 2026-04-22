@@ -2,16 +2,14 @@ from __future__ import annotations
 
 from polymarket_trader.extension_api.commands import ExtensionCommand, FrameworkCommandAction
 from polymarket_trader.extension_api.config_loader import load_extension_config, load_mapping_file
-from polymarket_trader.extension_api.context import AccountSnapshotView, StrategyContext
+from polymarket_trader.extension_api.context import AccountSnapshotView, ExtensionContext
 from polymarket_trader.extension_api.decisions import (
-    DiscoveryEndpoint,
-    DiscoveryQuery,
     EntryCandidate,
     EntrySizing,
     MarketTokenView,
     RecoveryDecision,
-    StrategyAction,
-    StrategyDecision,
+    ExtensionAction,
+    ExtensionDecision,
     UniverseDecision,
 )
 from polymarket_trader.extension_api.errors import ExtensionLoadError
@@ -30,7 +28,7 @@ from polymarket_trader.extension_api.ports import (
     MarketReadPort,
     OrderbookReadPort,
     RuntimeReadPort,
-    StrategyPorts,
+    ExtensionPorts,
     TelemetryPort,
 )
 from polymarket_trader.domain.events import AuditEvent, DomainEventType, Fill
@@ -42,8 +40,6 @@ __all__ = (
     "BusinessExtension",
     "ClockPort",
     "ConfigReadPort",
-    "DiscoveryEndpoint",
-    "DiscoveryQuery",
     "DomainEventType",
     "EntryCandidate",
     "EntrySizing",
@@ -64,10 +60,10 @@ __all__ = (
     "OrderbookReadPort",
     "RecoveryDecision",
     "RuntimeReadPort",
-    "StrategyAction",
-    "StrategyContext",
-    "StrategyDecision",
-    "StrategyPorts",
+    "ExtensionAction",
+    "ExtensionContext",
+    "ExtensionDecision",
+    "ExtensionPorts",
     "TelemetryPort",
     "UniverseDecision",
 )

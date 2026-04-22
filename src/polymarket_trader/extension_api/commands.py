@@ -8,13 +8,7 @@ from typing import Any, Mapping
 class FrameworkCommandAction(StrEnum):
     PAUSE_MARKET = "pause_market"
     RESUME_MARKET = "resume_market"
-    PAUSE_ENTRIES = "pause_entries"
     TRIGGER_RECONCILE = "trigger_reconcile"
-    REFRESH_MARKET = "refresh_market"
-    EMIT_ALERT = "emit_alert"
-    RECORD_AUDIT = "record_audit"
-    SUBSCRIBE_MARKET = "subscribe_market"
-    UNSUBSCRIBE_MARKET = "unsubscribe_market"
 
 
 @dataclass(frozen=True, slots=True)

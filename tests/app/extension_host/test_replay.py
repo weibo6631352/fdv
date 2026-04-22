@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from polymarket_trader.app.strategy_host import run_entry_replay
+from polymarket_trader.app.extension_host import run_entry_replay
 
 
 DEMO_EXTENSION_MODULE = "tests.helpers.demo_extension"

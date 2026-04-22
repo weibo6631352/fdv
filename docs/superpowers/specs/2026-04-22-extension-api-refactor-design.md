@@ -161,7 +161,6 @@ commands, metadata patches, or no-op results. They must not block the P0 trading
 Recommended hook groups:
 
 - Discovery:
-  - `build_discovery_queries`
   - `before_market_parse`
   - `after_market_parse`
   - `select_market`
@@ -240,8 +239,7 @@ Move or rename the current business leftovers:
 Discovery flow:
 
 ```text
-extension.build_discovery_queries
-  -> framework fetches raw markets
+framework full-market scanner fetches raw markets
   -> framework parses raw payload to generic market candidate
   -> extension.select_market
   -> registry/tracker update

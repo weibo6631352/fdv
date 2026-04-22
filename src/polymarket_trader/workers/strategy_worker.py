@@ -26,7 +26,7 @@ from polymarket_trader.domain.position import Position
 from polymarket_trader.domain.state_machine import MarketLifecycle
 from polymarket_trader.runtime.account_state import AccountSnapshot, AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
-from polymarket_trader.extension_api import MarketTokenView, StrategyContext
+from polymarket_trader.extension_api import MarketTokenView, ExtensionContext
 
 PositionsProvider = Callable[[], Iterable[Position]]
 OpenOrdersProvider = Callable[[], Iterable[Order]]
@@ -432,7 +432,7 @@ class StrategyWorker:
             token_id=order_result.token_id,
         )
         follow_up_decisions = self._strategy_service.decide_follow_up(
-            StrategyContext(
+            ExtensionContext(
                 trace_id=order_result.trace_id,
                 market=resolved_market,
                 token_id=order_result.token_id,

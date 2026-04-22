@@ -4,24 +4,21 @@ from decimal import Decimal
 
 from polymarket_trader.extension_api import (
     AccountSnapshotView,
-    DiscoveryEndpoint,
-    DiscoveryQuery,
     EntrySizing,
     ExtensionCommand,
     ExtensionHooks,
     ExtensionManifest,
     FrameworkCommandAction,
-    StrategyAction,
-    StrategyContext,
-    StrategyDecision,
-    StrategyPorts,
+    ExtensionAction,
+    ExtensionContext,
+    ExtensionDecision,
+    ExtensionPorts,
     UniverseDecision,
 )
 
 
 def test_extension_api_exports_core_contracts() -> None:
-    query = DiscoveryQuery(endpoint=DiscoveryEndpoint.MARKETS, params={"active": True})
-    decision = StrategyDecision.buy(
+    decision = ExtensionDecision.buy(
         reason="entry",
         token_id="token",
         price=Decimal("0.42"),
@@ -29,13 +26,12 @@ def test_extension_api_exports_core_contracts() -> None:
     )
     command = ExtensionCommand.pause_market(condition_id="condition", reason="business_pause")
 
-    assert query.endpoint is DiscoveryEndpoint.MARKETS
-    assert decision.action is StrategyAction.BUY
+    assert decision.action is ExtensionAction.BUY
     assert command.action is FrameworkCommandAction.PAUSE_MARKET
     assert ExtensionHooks is not None
     assert ExtensionManifest is not None
-    assert StrategyContext is not None
-    assert StrategyPorts is not None
+    assert ExtensionContext is not None
+    assert ExtensionPorts is not None
     assert AccountSnapshotView is not None
     assert EntrySizing is not None
     assert UniverseDecision.include(reason="ok").selected

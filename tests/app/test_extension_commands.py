@@ -87,23 +87,6 @@ def test_resume_market_command_without_account_state_store_is_rejected() -> None
     assert result.reason == "missing_account_state_store"
 
 
-def test_unsupported_extension_command_is_rejected() -> None:
-    executor = ExtensionCommandExecutor()
-
-    result = executor.execute(
-        ExtensionCommand(
-            action=FrameworkCommandAction.REFRESH_MARKET,
-            condition_id="condition",
-            reason="manual_refresh",
-        ),
-        trace_id="trace",
-    )
-
-    assert not result.accepted
-    assert result.action is FrameworkCommandAction.REFRESH_MARKET
-    assert result.reason == "unsupported_command"
-
-
 def test_trigger_reconcile_command_is_recorded_without_direct_side_effect() -> None:
     executor = ExtensionCommandExecutor()
     result = executor.execute(

@@ -5,8 +5,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping
 
-from polymarket_trader.app.ports import build_strategy_ports
-from polymarket_trader.app.strategy_host.loader import load_extension
+from polymarket_trader.app.ports import build_extension_ports
+from polymarket_trader.app.extension_host.loader import load_extension
 from polymarket_trader.app.strategy_service import StrategyEntryPlan, StrategyService
 from polymarket_trader.domain.market import Market, MarketOutcome, TradingStatus
 from polymarket_trader.domain.order import Order, OrderSide, OrderStatus, OrderType
@@ -53,7 +53,7 @@ def run_entry_replay(
     account_state_store.mark_reconciled()
     extension = load_extension(
         module_path=extension_module,
-        ports=build_strategy_ports(
+        ports=build_extension_ports(
             registry=registry,
             snapshot_provider=account_state_store.snapshot,
             orderbook_reader=orderbooks.get,

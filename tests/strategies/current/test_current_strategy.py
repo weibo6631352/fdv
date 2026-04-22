@@ -7,10 +7,9 @@ from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
 from polymarket_trader.extension_api import (
-    DiscoveryEndpoint,
     EntryCandidate,
-    StrategyAction,
-    StrategyContext,
+    ExtensionAction,
+    ExtensionContext,
 )
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from strategies.current.strategy import build_strategy
@@ -19,22 +18,6 @@ from tests.helpers.markets import build_binary_market
 
 def _no_token_id(market: Market) -> str:
     return market.require_token_id("NO")
-
-
-def test_current_strategy_builds_remote_discovery_query() -> None:
-    strategy = build_strategy()
-
-    queries = strategy.build_discovery_queries()
-
-    assert len(queries) == 2
-    assert all(query.endpoint == DiscoveryEndpoint.EVENTS_KEYSET for query in queries)
-    assert all(query.params["active"] is True for query in queries)
-    assert all(query.params["closed"] is False for query in queries)
-    assert {query.params["title_search"] for query in queries} == {
-        "fdv",
-        "fully diluted valuation",
-    }
-    assert all(query.max_pages == 1 for query in queries)
 
 
 def test_current_strategy_can_decide_entry() -> None:
@@ -62,7 +45,7 @@ def test_current_strategy_can_decide_entry() -> None:
 
     universe = strategy.select_market(market)
     decision = strategy.decide_entry(
-        StrategyContext(
+        ExtensionContext(
             trace_id="trace-1",
             market=market,
             token_id=_no_token_id(market),
@@ -72,7 +55,7 @@ def test_current_strategy_can_decide_entry() -> None:
     )
 
     assert universe.selected is True
-    assert decision.action == StrategyAction.BUY
+    assert decision.action == ExtensionAction.BUY
     assert decision.amount_usdc == Decimal("25")
 
 
@@ -121,7 +104,7 @@ def test_current_strategy_sizes_entry_from_candidate_snapshots() -> None:
     )
 
     sizing = strategy.size_entry(
-        StrategyContext(
+        ExtensionContext(
             trace_id="trace-sizing",
             market=primary,
             token_id=_no_token_id(primary),
@@ -176,7 +159,7 @@ def test_current_strategy_recovery_returns_target_sell_and_pause_state() -> None
     )
 
     recovery = strategy.decide_recovery(
-        StrategyContext(
+        ExtensionContext(
             trace_id="trace-1",
             market=market,
             account_snapshot=account,
@@ -185,6 +168,6 @@ def test_current_strategy_recovery_returns_target_sell_and_pause_state() -> None
     )
 
     assert len(recovery.actions) == 1
-    assert recovery.actions[0].action == StrategyAction.SELL
+    assert recovery.actions[0].action == ExtensionAction.SELL
     assert recovery.actions[0].size_shares == Decimal("12")
     assert recovery.pause_trading is True

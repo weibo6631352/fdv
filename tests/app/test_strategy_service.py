@@ -11,8 +11,8 @@ from polymarket_trader.extension_api import (
     EntrySizing,
     ExtensionSpec,
     RecoveryDecision,
-    StrategyContext,
-    StrategyDecision,
+    ExtensionContext,
+    ExtensionDecision,
     UniverseDecision,
 )
 from polymarket_trader.runtime.registry import MarketRegistry
@@ -30,7 +30,7 @@ class _CustomSizingStrategy:
     def select_market(self, market: Market) -> UniverseDecision:
         return UniverseDecision.include(reason="selected")
 
-    def size_entry(self, context: StrategyContext) -> EntrySizing:
+    def size_entry(self, context: ExtensionContext) -> EntrySizing:
         assert context.market is not None
         allocation = Allocation(
             condition_id=context.market.condition_id,
@@ -51,10 +51,10 @@ class _CustomSizingStrategy:
             reason="custom_sizing",
         )
 
-    def decide_entry(self, context: StrategyContext) -> StrategyDecision:
+    def decide_entry(self, context: ExtensionContext) -> ExtensionDecision:
         assert context.market is not None
         assert context.amount_usdc is not None
-        return StrategyDecision.buy(
+        return ExtensionDecision.buy(
             reason="custom_entry",
             token_id=context.token_id or context.market.require_token_id("NO"),
             price=Decimal("0.43"),
@@ -62,13 +62,13 @@ class _CustomSizingStrategy:
             market_slug=context.market.market_slug,
         )
 
-    def decide_exit(self, context: StrategyContext) -> StrategyDecision:
-        return StrategyDecision.skip(reason="noop_exit")
+    def decide_exit(self, context: ExtensionContext) -> ExtensionDecision:
+        return ExtensionDecision.skip(reason="noop_exit")
 
-    def decide_recovery(self, context: StrategyContext) -> RecoveryDecision:
+    def decide_recovery(self, context: ExtensionContext) -> RecoveryDecision:
         return RecoveryDecision(reason="noop_recovery")
 
-    def decide_follow_up(self, context: StrategyContext) -> tuple[StrategyDecision, ...]:
+    def decide_follow_up(self, context: ExtensionContext) -> tuple[ExtensionDecision, ...]:
         return ()
 
 

@@ -6,7 +6,7 @@ from decimal import Decimal
 from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
-from polymarket_trader.extension_api import EntryCandidate, EntrySizing, StrategyAction, StrategyContext
+from polymarket_trader.extension_api import EntryCandidate, EntrySizing, ExtensionAction, ExtensionContext
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from strategies.current.strategy import build_strategy as build_current_strategy
 from tests.helpers.markets import build_binary_market
@@ -14,7 +14,6 @@ from tests.helpers.markets import build_binary_market
 
 def test_strategy_contract_positive_path() -> None:
     strategy = build_current_strategy()
-    assert strategy.build_discovery_queries()
     market = build_binary_market(
         condition_id="condition-current",
         market_slug="slug-current",
@@ -56,7 +55,7 @@ def test_strategy_contract_positive_path() -> None:
     assert universe.selected is True
 
     sizing = strategy.size_entry(
-        StrategyContext(
+        ExtensionContext(
             trace_id="trace-contract",
             market=market,
             token_id=market.require_token_id("NO"),
@@ -82,7 +81,7 @@ def test_strategy_contract_positive_path() -> None:
     assert sizing.allocation.buy_budget_usdc > Decimal("0")
 
     entry = strategy.decide_entry(
-        StrategyContext(
+        ExtensionContext(
             trace_id="trace-contract",
             market=market,
             token_id=market.require_token_id("NO"),
@@ -90,20 +89,20 @@ def test_strategy_contract_positive_path() -> None:
             metadata={"amount_usdc": Decimal("10")},
         )
     )
-    assert entry.action == StrategyAction.BUY
+    assert entry.action == ExtensionAction.BUY
     assert entry.amount_usdc == Decimal("10")
 
     exit_decision = strategy.decide_exit(
-        StrategyContext(
+        ExtensionContext(
             trace_id="trace-contract",
             market=market,
             position=position,
         )
     )
-    assert exit_decision.action == StrategyAction.SELL
+    assert exit_decision.action == ExtensionAction.SELL
 
     recovery = strategy.decide_recovery(
-        StrategyContext(
+        ExtensionContext(
             trace_id="trace-contract",
             market=market,
             position=position,
@@ -111,5 +110,5 @@ def test_strategy_contract_positive_path() -> None:
         )
     )
     assert len(recovery.actions) == 1
-    assert recovery.actions[0].action == StrategyAction.SELL
+    assert recovery.actions[0].action == ExtensionAction.SELL
     assert recovery.actions[0].size_shares == Decimal("10")

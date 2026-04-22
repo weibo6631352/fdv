@@ -26,7 +26,7 @@ an extension.
 
 - Create `src/polymarket_trader/extension_api/`: public extension contracts, contexts, decisions, hooks, commands, ports, config loading, and errors.
 - Modify `src/strategies/current/`: import the new API, implement current FDV behavior as a business extension, and move equal-weight allocation policy here.
-- Modify `src/polymarket_trader/app/strategy_host/`: rename loader concepts from strategy to extension while keeping the directory until call sites are migrated.
+- Modify `src/polymarket_trader/app/extension_host/`: rename loader concepts from strategy to extension while keeping the directory until call sites are migrated.
 - Modify `src/polymarket_trader/app/market_service.py`, `strategy_service.py`, `reconcile_service.py`, and workers: call extension hooks instead of fixed strategy-specific protocols.
 - Modify `src/polymarket_trader/config.py` and docs: replace old runtime module naming with `extension_module` and make runtime wiring explicit.
 - Rename generic market payload parsing from `domain/classifier.py` into app/infra naming so domain no longer owns external payload parsing.
@@ -61,24 +61,21 @@ from decimal import Decimal
 
 from polymarket_trader.extension_api import (
     AccountSnapshotView,
-    DiscoveryEndpoint,
-    DiscoveryQuery,
     EntrySizing,
     ExtensionCommand,
     ExtensionHooks,
     ExtensionManifest,
     FrameworkCommandAction,
-    StrategyAction,
-    StrategyContext,
-    StrategyDecision,
-    StrategyPorts,
+    ExtensionAction,
+    ExtensionContext,
+    ExtensionDecision,
+    ExtensionPorts,
     UniverseDecision,
 )
 
 
 def test_extension_api_exports_core_contracts() -> None:
-    query = DiscoveryQuery(endpoint=DiscoveryEndpoint.MARKETS, params={"active": True})
-    decision = StrategyDecision.buy(
+    decision = ExtensionDecision.buy(
         reason="entry",
         token_id="token",
         price=Decimal("0.42"),
@@ -86,13 +83,12 @@ def test_extension_api_exports_core_contracts() -> None:
     )
     command = ExtensionCommand.pause_market(condition_id="condition", reason="business_pause")
 
-    assert query.endpoint is DiscoveryEndpoint.MARKETS
-    assert decision.action is StrategyAction.BUY
+    assert decision.action is ExtensionAction.BUY
     assert command.action is FrameworkCommandAction.PAUSE_MARKET
     assert ExtensionHooks is not None
     assert ExtensionManifest is not None
-    assert StrategyContext is not None
-    assert StrategyPorts is not None
+    assert ExtensionContext is not None
+    assert ExtensionPorts is not None
     assert AccountSnapshotView is not None
     assert EntrySizing is not None
     assert UniverseDecision.include(reason="ok").selected
@@ -165,10 +161,10 @@ def load_extension_config(config_type: type[T], config_path: str | None) -> T | 
 
 Move the dataclasses and enums from the legacy SDK models module into:
 
-- `src/polymarket_trader/extension_api/decisions.py`: `StrategyAction`, `DiscoveryEndpoint`,
-  `DiscoveryQuery`, `UniverseDecision`, `StrategyDecision`, `EntrySizing`, `RecoveryDecision`,
+- `src/polymarket_trader/extension_api/decisions.py`: `ExtensionAction`,
+  `UniverseDecision`, `ExtensionDecision`, `EntrySizing`, `RecoveryDecision`,
   `MarketTokenView`, `EntryCandidate`.
-- `src/polymarket_trader/extension_api/context.py`: `AccountSnapshotView`, `StrategyContext`.
+- `src/polymarket_trader/extension_api/context.py`: `AccountSnapshotView`, `ExtensionContext`.
 
 Keep the existing field names and classmethod constructors so current call sites remain mechanically
 migratable.
@@ -236,7 +232,7 @@ class ClockPort(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class StrategyPorts:
+class ExtensionPorts:
     market: MarketReadPort | None = None
     orderbook: OrderbookReadPort | None = None
     account: AccountReadPort | None = None
@@ -302,12 +298,11 @@ from typing import Mapping, Protocol, runtime_checkable
 
 from polymarket_trader.domain.market import Market
 from polymarket_trader.extension_api.commands import ExtensionCommand
-from polymarket_trader.extension_api.context import AccountSnapshotView, StrategyContext
+from polymarket_trader.extension_api.context import AccountSnapshotView, ExtensionContext
 from polymarket_trader.extension_api.decisions import (
-    DiscoveryQuery,
     EntrySizing,
     RecoveryDecision,
-    StrategyDecision,
+    ExtensionDecision,
     UniverseDecision,
 )
 
@@ -320,13 +315,12 @@ class HookResult:
 
 @runtime_checkable
 class ExtensionHooks(Protocol):
-    def build_discovery_queries(self) -> tuple[DiscoveryQuery, ...]: ...
     def select_market(self, market: Market) -> UniverseDecision: ...
-    def size_entry(self, context: StrategyContext) -> EntrySizing: ...
-    def decide_entry(self, context: StrategyContext) -> StrategyDecision: ...
-    def decide_exit(self, context: StrategyContext) -> StrategyDecision: ...
-    def decide_recovery(self, context: StrategyContext) -> RecoveryDecision: ...
-    def decide_follow_up(self, context: StrategyContext) -> tuple[StrategyDecision, ...]: ...
+    def size_entry(self, context: ExtensionContext) -> EntrySizing: ...
+    def decide_entry(self, context: ExtensionContext) -> ExtensionDecision: ...
+    def decide_exit(self, context: ExtensionContext) -> ExtensionDecision: ...
+    def decide_recovery(self, context: ExtensionContext) -> RecoveryDecision: ...
+    def decide_follow_up(self, context: ExtensionContext) -> tuple[ExtensionDecision, ...]: ...
     def should_keep_tracking(self, market: Market, account_snapshot: AccountSnapshotView | None) -> bool: ...
     def build_filtered_tracking_market(self, candidate_market: Market, *, existing_market: Market, reason: str) -> Market: ...
 ```
@@ -340,7 +334,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from polymarket_trader.extension_api.hooks import ExtensionHooks
-from polymarket_trader.extension_api.ports import StrategyPorts
+from polymarket_trader.extension_api.ports import ExtensionPorts
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,7 +358,7 @@ class ExtensionFactory(Protocol):
     def __call__(
         self,
         *,
-        ports: StrategyPorts | None = None,
+        ports: ExtensionPorts | None = None,
         config_path: str | None = None,
     ) -> BusinessExtension: ...
 
@@ -378,8 +372,8 @@ class ExtensionManifest:
 - [ ] **Step 8: Export public API**
 
 Create `src/polymarket_trader/extension_api/__init__.py` that re-exports all public classes from the package.
-Include aliases only for concepts still intentionally named strategy, such as `StrategyDecision` and
-`StrategyContext`, because they describe trading strategy decisions rather than the package name.
+Include aliases only for concepts still intentionally named strategy, such as `ExtensionDecision` and
+`ExtensionContext`, because they describe trading strategy decisions rather than the package name.
 
 - [ ] **Step 9: Run focused test**
 
@@ -501,9 +495,9 @@ git commit -m "refactor: migrate strategy SDK to extension API"
 **Files:**
 - Modify: `src/polymarket_trader/config.py`
 - Modify: `src/polymarket_trader/main.py`
-- Modify: `src/polymarket_trader/app/strategy_host/loader.py`
-- Modify: `src/polymarket_trader/app/strategy_host/__init__.py`
-- Modify: `src/polymarket_trader/app/strategy_host/replay.py`
+- Modify: `src/polymarket_trader/app/extension_host/loader.py`
+- Modify: `src/polymarket_trader/app/extension_host/__init__.py`
+- Modify: `src/polymarket_trader/app/extension_host/replay.py`
 - Modify: docs and tests referencing old runtime module configuration
 
 - [ ] **Step 1: Write settings test**
@@ -564,14 +558,14 @@ if self.extension_module is None or not self.extension_module.strip():
 
 - [ ] **Step 5: Rename loader functions**
 
-In `src/polymarket_trader/app/strategy_host/loader.py`, rename public functions:
+In `src/polymarket_trader/app/extension_host/loader.py`, rename public functions:
 
 ```python
 def load_extension(...)
 def load_extension_manifest(...)
 ```
 
-Use `ExtensionLoadError`, `ExtensionManifest`, `BusinessExtension`, and `StrategyPorts` from
+Use `ExtensionLoadError`, `ExtensionManifest`, `BusinessExtension`, and `ExtensionPorts` from
 `polymarket_trader.extension_api`.
 
 The validation error should say:
@@ -603,7 +597,7 @@ if settings.extension_module is None:
     )
 extension = load_extension(
     module_path=settings.extension_module,
-    ports=strategy_ports,
+    ports=extension_ports,
     config_path=settings.extension_config_path,
 )
 ```
@@ -612,7 +606,7 @@ Pass `extension.hooks` to services that only need hooks.
 
 - [ ] **Step 7: Update replay default**
 
-In `src/polymarket_trader/app/strategy_host/replay.py`, rename parameters to `extension_module` and
+In `src/polymarket_trader/app/extension_host/replay.py`, rename parameters to `extension_module` and
 `extension_config_path`. Keep the replay helper default as `"strategies.current"` because replay is a
 developer example entry point, not framework startup policy.
 

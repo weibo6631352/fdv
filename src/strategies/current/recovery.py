@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.domain.order import OrderSide
-from polymarket_trader.extension_api import RecoveryDecision, StrategyContext, StrategyDecision
+from polymarket_trader.extension_api import RecoveryDecision, ExtensionContext, ExtensionDecision
 
 from strategies.current.config import CurrentStrategyConfig
 from strategies.current.outcomes import primary_token_id
@@ -14,7 +14,7 @@ from strategies.current.outcomes import primary_token_id
 
 def decide_recovery(
     config: CurrentStrategyConfig,
-    context: StrategyContext,
+    context: ExtensionContext,
 ) -> RecoveryDecision:
     if context.market is None:
         return RecoveryDecision(reason="missing_market_state")
@@ -43,13 +43,13 @@ def decide_recovery(
             managed_token_id,
         )
 
-    actions: list[StrategyDecision] = []
+    actions: list[ExtensionDecision] = []
     for order in open_orders:
         order_id = _order_identifier(order)
         if order_id is None or not _is_open_entry_order(order):
             continue
         actions.append(
-            StrategyDecision.cancel(
+            ExtensionDecision.cancel(
                 reason="open_entry_order_detected",
                 token_id=order.token_id,
                 order_id=order_id,
@@ -69,7 +69,7 @@ def decide_recovery(
         uncovered_shares = position.shares - open_exit_shares
         if uncovered_shares > Decimal("0"):
             actions.append(
-                StrategyDecision.sell(
+                ExtensionDecision.sell(
                     reason="recovery_exit_shortage",
                     token_id=position.token_id,
                     price=config.exit_no_price,

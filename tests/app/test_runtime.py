@@ -7,11 +7,9 @@ from types import SimpleNamespace
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.config import Settings
-from polymarket_trader.extension_api import DiscoveryEndpoint, DiscoveryQuery
 from polymarket_trader.main import (
     FullMarketDiscoveryState,
     _coalesce_reconcile_scope,
-    _execute_discovery_query,
     _handle_market_ws_message,
     _is_reconcile_trigger,
     _publish_reconcile_trigger,
@@ -209,94 +207,6 @@ def test_build_runtime_binds_strategy_orderbook_port() -> None:
         snapshot = ports.market.get_orderbook(market.require_token_id("NO"))
         assert snapshot is not None
         assert snapshot.best_ask == Decimal("0.43")
-
-    asyncio.run(run())
-
-
-def test_execute_discovery_query_uses_keyset_cursor_pagination() -> None:
-    class _StubGammaClient:
-        def __init__(self) -> None:
-            self.calls = []
-
-        async def list_events_keyset_by_params(self, params, *, timeout_s=None):
-            self.calls.append((dict(params), timeout_s))
-            if len(self.calls) == 1:
-                return (
-                    (
-                        SimpleNamespace(
-                            to_raw_market_events=lambda **kwargs: (
-                                SimpleNamespace(payload={"condition_id": "condition-1", "market_slug": "sample-market-a"}),
-                            )
-                        ),
-                    ),
-                    "cursor-2",
-                )
-            return (
-                (
-                    SimpleNamespace(
-                        to_raw_market_events=lambda **kwargs: (
-                            SimpleNamespace(payload={"condition_id": "condition-2", "market_slug": "sample-market-b"}),
-                        )
-                    ),
-                ),
-                None,
-            )
-
-    async def run() -> None:
-        gamma = _StubGammaClient()
-        payloads = await _execute_discovery_query(
-            gamma,
-            DiscoveryQuery(
-                endpoint=DiscoveryEndpoint.EVENTS_KEYSET,
-                params={"active": True, "closed": False, "title_search": "threshold", "limit": 100},
-                max_pages=2,
-            ),
-        )
-
-        assert [payload["condition_id"] for payload in payloads] == ["condition-1", "condition-2"]
-        assert gamma.calls[0][0]["title_search"] == "threshold"
-        assert "after_cursor" not in gamma.calls[0][0]
-        assert gamma.calls[1][0]["after_cursor"] == "cursor-2"
-
-    asyncio.run(run())
-
-
-def test_execute_discovery_query_uses_markets_keyset_cursor_pagination() -> None:
-    class _StubGammaClient:
-        def __init__(self) -> None:
-            self.calls = []
-
-        async def list_markets_keyset_by_params(self, params, *, timeout_s=None):
-            self.calls.append((dict(params), timeout_s))
-            if len(self.calls) == 1:
-                return (
-                    (
-                        SimpleNamespace(raw={"conditionId": "condition-1", "slug": "sample-market-a"}),
-                    ),
-                    "cursor-2",
-                )
-            return (
-                (
-                    SimpleNamespace(raw={"conditionId": "condition-2", "slug": "sample-market-b"}),
-                ),
-                None,
-            )
-
-    async def run() -> None:
-        gamma = _StubGammaClient()
-        payloads = await _execute_discovery_query(
-            gamma,
-            DiscoveryQuery(
-                endpoint=DiscoveryEndpoint.MARKETS_KEYSET,
-                params={"active": True, "closed": False, "limit": 100},
-                max_pages=2,
-            ),
-        )
-
-        assert [payload["slug"] for payload in payloads] == ["sample-market-a", "sample-market-b"]
-        assert gamma.calls[0][0]["limit"] == 100
-        assert "after_cursor" not in gamma.calls[0][0]
-        assert gamma.calls[1][0]["after_cursor"] == "cursor-2"
 
     asyncio.run(run())
 

@@ -34,7 +34,7 @@ class AccountSnapshotView(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class StrategyContext:
+class ExtensionContext:
     trace_id: str
     market: Market | None = None
     token_id: str | None = None

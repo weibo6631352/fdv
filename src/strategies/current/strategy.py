@@ -9,20 +9,18 @@ from __future__ import annotations
 from polymarket_trader.extension_api import (
     AccountSnapshotView,
     BusinessExtension,
-    DiscoveryQuery,
     EntrySizing,
     ExtensionSpec,
     RecoveryDecision,
-    StrategyContext,
-    StrategyDecision,
-    StrategyPorts,
+    ExtensionContext,
+    ExtensionDecision,
+    ExtensionPorts,
     UniverseDecision,
 )
 
 from polymarket_trader.domain.market import Market
 
 from strategies.current.config import CurrentStrategyConfig, load_current_strategy_config
-from strategies.current.discovery import build_discovery_queries
 from strategies.current.recovery import decide_recovery
 from strategies.current.tracking import build_filtered_tracking_market, should_keep_tracking
 from strategies.current.trading import decide_entry, decide_exit, size_entry
@@ -34,7 +32,6 @@ class CurrentStrategy:
 
     这个类本身尽量保持“薄”：
     - 配置定义在 ``config.py``
-    - 远端扫描定义在 ``discovery.py``
     - 市场筛选定义在 ``universe.py``
     - 分配、入场、退出定义在 ``trading.py``
     - 恢复定义在 ``recovery.py``
@@ -48,7 +45,7 @@ class CurrentStrategy:
         self,
         *,
         config: CurrentStrategyConfig,
-        ports: StrategyPorts | None = None,
+        ports: ExtensionPorts | None = None,
     ) -> None:
         """初始化当前策略。
 
@@ -62,14 +59,13 @@ class CurrentStrategy:
         """
 
         self._config = config
-        self._ports = ports or StrategyPorts()
+        self._ports = ports or ExtensionPorts()
         self._spec = ExtensionSpec(
             name="current",
             version="1",
             description="Current runtime strategy implementation",
             config_type=CurrentStrategyConfig,
             capabilities=(
-                "discovery",
                 "universe",
                 "sizing",
                 "entry",
@@ -95,46 +91,41 @@ class CurrentStrategy:
         return self
 
     @property
-    def ports(self) -> StrategyPorts:
+    def ports(self) -> ExtensionPorts:
         """暴露框架注入的应用层端口。
 
-        当前默认策略主要依赖传入的 ``StrategyContext``，
+        当前默认策略主要依赖传入的 ``ExtensionContext``，
         但其他策略可以在内部按需使用这些端口读取更多运行时信息。
         """
 
         return self._ports
-
-    def build_discovery_queries(self) -> tuple[DiscoveryQuery, ...]:
-        """返回远端 discovery 查询集合。"""
-
-        return build_discovery_queries(self._config)
 
     def select_market(self, market: Market) -> UniverseDecision:
         """判断 market 是否属于当前策略 universe。"""
 
         return select_market(self._config, market)
 
-    def size_entry(self, context: StrategyContext) -> EntrySizing:
+    def size_entry(self, context: ExtensionContext) -> EntrySizing:
         """为当前 market 生成入场预算分配结果。"""
 
         return size_entry(self._config, context)
 
-    def decide_entry(self, context: StrategyContext) -> StrategyDecision:
+    def decide_entry(self, context: ExtensionContext) -> ExtensionDecision:
         """根据盘口和预算生成 BUY 决策。"""
 
         return decide_entry(self._config, context)
 
-    def decide_exit(self, context: StrategyContext) -> StrategyDecision:
+    def decide_exit(self, context: ExtensionContext) -> ExtensionDecision:
         """根据持仓状态生成 SELL 决策。"""
 
         return decide_exit(self._config, context)
 
-    def decide_recovery(self, context: StrategyContext) -> RecoveryDecision:
+    def decide_recovery(self, context: ExtensionContext) -> RecoveryDecision:
         """根据热状态生成恢复语义。"""
 
         return decide_recovery(self._config, context)
 
-    def decide_follow_up(self, context: StrategyContext) -> tuple[StrategyDecision, ...]:
+    def decide_follow_up(self, context: ExtensionContext) -> tuple[ExtensionDecision, ...]:
         """根据成交结果生成后续动作。"""
 
         if context.order_result is None:
@@ -144,7 +135,7 @@ class CurrentStrategy:
         if context.order_result.matched_shares <= 0:
             return ()
         return (
-            StrategyDecision.sell(
+            ExtensionDecision.sell(
                 reason="strategy_exit",
                 token_id=context.order_result.token_id,
                 price=self._config.exit_no_price,
@@ -182,7 +173,7 @@ class CurrentStrategy:
 
 def build_strategy(
     *,
-    ports: StrategyPorts | None = None,
+    ports: ExtensionPorts | None = None,
     config_path: str | None = None,
 ) -> BusinessExtension:
     """构造当前策略实例。

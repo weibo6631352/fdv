@@ -29,8 +29,8 @@ from polymarket_trader.extension_api import (
     EntrySizing,
     ExtensionSpec,
     RecoveryDecision,
-    StrategyContext,
-    StrategyDecision,
+    ExtensionContext,
+    ExtensionDecision,
     UniverseDecision,
 )
 from polymarket_trader.runtime.account_state import AccountStateStore
@@ -135,26 +135,23 @@ class _ReplaceRecoveryStrategy:
             capabilities=("universe", "entry", "exit", "recovery"),
         )
 
-    def build_discovery_queries(self) -> tuple[object, ...]:
-        return ()
-
     def select_market(self, market: Market) -> UniverseDecision:
         return UniverseDecision.include(reason="selected")
 
-    def size_entry(self, context: StrategyContext):  # pragma: no cover - not used in this test
+    def size_entry(self, context: ExtensionContext):  # pragma: no cover - not used in this test
         raise AssertionError("size_entry should not be called in reconcile replace test")
 
-    def decide_entry(self, context: StrategyContext) -> StrategyDecision:  # pragma: no cover - not used
+    def decide_entry(self, context: ExtensionContext) -> ExtensionDecision:  # pragma: no cover - not used
         raise AssertionError("decide_entry should not be called in reconcile replace test")
 
-    def decide_exit(self, context: StrategyContext) -> StrategyDecision:
-        return StrategyDecision.skip(reason="no_missing_sell")
+    def decide_exit(self, context: ExtensionContext) -> ExtensionDecision:
+        return ExtensionDecision.skip(reason="no_missing_sell")
 
-    def decide_recovery(self, context: StrategyContext) -> RecoveryDecision:
+    def decide_recovery(self, context: ExtensionContext) -> RecoveryDecision:
         return RecoveryDecision(
             reason="replace_existing_sell",
             actions=(
-                StrategyDecision.replace(
+                ExtensionDecision.replace(
                     reason="repriced",
                     token_id=None if context.market is None else _no_token_id(context.market),
                     order_id="sell-1",
@@ -165,7 +162,7 @@ class _ReplaceRecoveryStrategy:
             ),
         )
 
-    def decide_follow_up(self, context: StrategyContext) -> tuple[StrategyDecision, ...]:
+    def decide_follow_up(self, context: ExtensionContext) -> tuple[ExtensionDecision, ...]:
         return ()
 
 
@@ -177,28 +174,25 @@ class _ReconcileHooks:
             capabilities=("universe", "entry", "exit", "recovery"),
         )
 
-    def build_discovery_queries(self) -> tuple[object, ...]:
-        return ()
-
     def select_market(self, market: Market) -> UniverseDecision:
         return UniverseDecision.include(reason="selected")
 
-    def size_entry(self, context: StrategyContext) -> EntrySizing:  # pragma: no cover - not used
+    def size_entry(self, context: ExtensionContext) -> EntrySizing:  # pragma: no cover - not used
         raise AssertionError("size_entry should not be called in reconcile tests")
 
-    def decide_entry(self, context: StrategyContext) -> StrategyDecision:  # pragma: no cover - not used
+    def decide_entry(self, context: ExtensionContext) -> ExtensionDecision:  # pragma: no cover - not used
         raise AssertionError("decide_entry should not be called in reconcile tests")
 
-    def decide_exit(self, context: StrategyContext) -> StrategyDecision:
-        return StrategyDecision.skip(reason="no_exit")
+    def decide_exit(self, context: ExtensionContext) -> ExtensionDecision:
+        return ExtensionDecision.skip(reason="no_exit")
 
-    def decide_recovery(self, context: StrategyContext) -> RecoveryDecision:
-        actions: list[StrategyDecision] = []
+    def decide_recovery(self, context: ExtensionContext) -> RecoveryDecision:
+        actions: list[ExtensionDecision] = []
         for order in context.open_orders:
             order_id = order.order_id or order.idempotency_key
             if order.side == OrderSide.BUY and order_id:
                 actions.append(
-                    StrategyDecision.cancel(
+                    ExtensionDecision.cancel(
                         reason="cancel_open_buy",
                         token_id=order.token_id,
                         order_id=order_id,
@@ -211,7 +205,7 @@ class _ReconcileHooks:
             if any(order.side == OrderSide.SELL for order in view.open_orders):
                 continue
             actions.append(
-                StrategyDecision.sell(
+                ExtensionDecision.sell(
                     reason="backfill_sell",
                     token_id=view.token_id,
                     price=Decimal("0.80"),
@@ -222,7 +216,7 @@ class _ReconcileHooks:
             )
         return RecoveryDecision(reason="reconcile_requested", actions=tuple(actions))
 
-    def decide_follow_up(self, context: StrategyContext) -> tuple[StrategyDecision, ...]:
+    def decide_follow_up(self, context: ExtensionContext) -> tuple[ExtensionDecision, ...]:
         return ()
 
     def should_keep_tracking(self, market: Market, account_snapshot: object | None) -> bool:

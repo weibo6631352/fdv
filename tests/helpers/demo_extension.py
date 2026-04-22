@@ -12,9 +12,9 @@ from polymarket_trader.extension_api import (
     ExtensionManifest,
     ExtensionSpec,
     RecoveryDecision,
-    StrategyContext,
-    StrategyDecision,
-    StrategyPorts,
+    ExtensionContext,
+    ExtensionDecision,
+    ExtensionPorts,
     UniverseDecision,
 )
 
@@ -23,7 +23,7 @@ class DemoExtension:
     def __init__(
         self,
         *,
-        ports: StrategyPorts | None = None,
+        ports: ExtensionPorts | None = None,
         config_path: str | None = None,
     ) -> None:
         self.ports = ports
@@ -40,13 +40,10 @@ class DemoExtension:
     def hooks(self) -> "DemoExtension":
         return self
 
-    def build_discovery_queries(self) -> tuple[object, ...]:
-        return ()
-
     def select_market(self, market: Market) -> UniverseDecision:
         return UniverseDecision.include(reason="demo_selected")
 
-    def size_entry(self, context: StrategyContext) -> EntrySizing:
+    def size_entry(self, context: ExtensionContext) -> EntrySizing:
         candidate = context.entry_candidates[0] if context.entry_candidates else None
         token_id = context.token_id or (None if candidate is None else candidate.token_id)
         market = context.market or (None if candidate is None else candidate.market)
@@ -77,10 +74,10 @@ class DemoExtension:
             reason="demo_entry_sized",
         )
 
-    def decide_entry(self, context: StrategyContext) -> StrategyDecision:
+    def decide_entry(self, context: ExtensionContext) -> ExtensionDecision:
         if context.orderbook is None or context.orderbook.best_ask is None:
-            return StrategyDecision.skip(reason="demo_missing_price")
-        return StrategyDecision.buy(
+            return ExtensionDecision.skip(reason="demo_missing_price")
+        return ExtensionDecision.buy(
             reason="demo_entry",
             token_id=context.token_id,
             price=context.orderbook.best_ask,
@@ -89,13 +86,13 @@ class DemoExtension:
             market_slug=None if context.market is None else context.market.market_slug,
         )
 
-    def decide_exit(self, context: StrategyContext) -> StrategyDecision:
-        return StrategyDecision.skip(reason="demo_no_exit")
+    def decide_exit(self, context: ExtensionContext) -> ExtensionDecision:
+        return ExtensionDecision.skip(reason="demo_no_exit")
 
-    def decide_recovery(self, context: StrategyContext) -> RecoveryDecision:
+    def decide_recovery(self, context: ExtensionContext) -> RecoveryDecision:
         return RecoveryDecision(reason="demo_no_recovery")
 
-    def decide_follow_up(self, context: StrategyContext) -> tuple[StrategyDecision, ...]:
+    def decide_follow_up(self, context: ExtensionContext) -> tuple[ExtensionDecision, ...]:
         return ()
 
     def should_keep_tracking(
@@ -117,7 +114,7 @@ class DemoExtension:
 
 def build_extension(
     *,
-    ports: StrategyPorts | None = None,
+    ports: ExtensionPorts | None = None,
     config_path: str | None = None,
 ) -> BusinessExtension:
     return DemoExtension(ports=ports, config_path=config_path)

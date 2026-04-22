@@ -8,7 +8,7 @@ from polymarket_trader.domain.order import Order
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.runtime.account_state import AccountSnapshot
 from polymarket_trader.runtime.registry import MarketRegistry
-from polymarket_trader.extension_api import StrategyPorts
+from polymarket_trader.extension_api import ExtensionPorts
 
 OrderbookReader = Callable[[str], OrderbookSnapshot | None]
 AccountSnapshotProvider = Callable[[], AccountSnapshot]
@@ -118,15 +118,16 @@ class UtcClockPort:
         return datetime.now(timezone.utc)
 
 
-def build_strategy_ports(
+def build_extension_ports(
     *,
     registry: MarketRegistry,
     snapshot_provider: AccountSnapshotProvider,
     orderbook_reader: OrderbookReader | None = None,
-) -> StrategyPorts:
+) -> ExtensionPorts:
     market_port = MarketDataPort(registry=registry, orderbook_reader=orderbook_reader)
-    return StrategyPorts(
+    return ExtensionPorts(
         market=market_port,
+        orderbook=market_port,
         account=AccountStatePort(snapshot_provider=snapshot_provider),
         runtime=RuntimeStatePort(snapshot_provider=snapshot_provider),
         history=OrderHistoryPort(snapshot_provider=snapshot_provider),
@@ -135,8 +136,8 @@ def build_strategy_ports(
     )
 
 
-def bind_strategy_orderbook_reader(
-    ports: StrategyPorts,
+def bind_extension_orderbook_reader(
+    ports: ExtensionPorts,
     orderbook_reader: OrderbookReader | None,
 ) -> None:
     market_port = ports.market

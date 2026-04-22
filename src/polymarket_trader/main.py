@@ -13,9 +13,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from polymarket_trader.app.market_service import MarketService
-from polymarket_trader.app.ports import bind_strategy_orderbook_reader, build_strategy_ports
+from polymarket_trader.app.ports import bind_extension_orderbook_reader, build_extension_ports
 from polymarket_trader.app.reconcile_service import ReconcileService
-from polymarket_trader.app.strategy_host import load_extension
+from polymarket_trader.app.extension_host import load_extension
 from polymarket_trader.app.strategy_service import StrategyService
 from polymarket_trader.app.trading_service import TradingService
 from polymarket_trader.config import ConfigIssue, ConfigLoadError, Settings, StartupReadiness, load_settings
@@ -50,7 +50,7 @@ from polymarket_trader.runtime import RuntimePhase, Scheduler, Supervisor, Worke
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
-from polymarket_trader.extension_api import BusinessExtension, DiscoveryEndpoint, DiscoveryQuery
+from polymarket_trader.extension_api import BusinessExtension
 from polymarket_trader.workers.market_discovery_worker import MarketDiscoveryWorker
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 from polymarket_trader.workers.persistence_worker import PersistenceWorker
@@ -216,7 +216,7 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         balance_usdc=settings.portfolio_budget_usdc,
         allowance_usdc=settings.portfolio_budget_usdc,
     )
-    strategy_ports = build_strategy_ports(
+    extension_ports = build_extension_ports(
         registry=registry,
         snapshot_provider=account_state_store.snapshot,
     )
@@ -232,7 +232,7 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         )
     extension = load_extension(
         module_path=settings.extension_module,
-        ports=strategy_ports,
+        ports=extension_ports,
         config_path=settings.extension_config_path,
     )
     execution_client = (
@@ -258,7 +258,7 @@ def build_runtime(settings: Settings | None = None) -> RuntimeComponents:
         registry=registry,
         rest_snapshot_loader=load_market_rest_snapshot,
     )
-    bind_strategy_orderbook_reader(strategy_ports, market_ws_worker.snapshot)
+    bind_extension_orderbook_reader(extension_ports, market_ws_worker.snapshot)
     market_service = MarketService(
         extension_hooks=extension.hooks,
         registry=registry,
@@ -1189,144 +1189,6 @@ async def _run_reconcile(runtime: RuntimeComponents) -> None:
             trigger_event=trigger,
             condition_ids=condition_ids,
         )
-
-
-def _discovery_source(query: DiscoveryQuery) -> str:
-    return f"gamma.{query.endpoint.value}"
-
-
-def _normalize_page_limit(query: DiscoveryQuery) -> int:
-    raw_limit = query.params.get("limit", 100)
-    try:
-        limit = int(raw_limit)
-    except (TypeError, ValueError):
-        return 100
-    return max(1, min(limit, 500))
-
-
-def _normalize_offset(value: Any) -> int:
-    try:
-        return max(0, int(value))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _normalize_discovery_params(params: Mapping[str, Any]) -> dict[str, Any]:
-    normalized = {}
-    for key, value in params.items():
-        if value is None:
-            continue
-        normalized[key] = value
-    return normalized
-
-
-async def _execute_discovery_query(
-    gamma_client: GammaClient,
-    query: DiscoveryQuery,
-) -> tuple[Mapping[str, Any], ...]:
-    if query.max_pages < 1:
-        return ()
-    if query.endpoint is DiscoveryEndpoint.EVENTS:
-        return await _execute_events_query(gamma_client, query)
-    if query.endpoint is DiscoveryEndpoint.EVENTS_KEYSET:
-        return await _execute_events_keyset_query(gamma_client, query)
-    if query.endpoint is DiscoveryEndpoint.MARKETS:
-        return await _execute_markets_query(gamma_client, query)
-    if query.endpoint is DiscoveryEndpoint.MARKETS_KEYSET:
-        return await _execute_markets_keyset_query(gamma_client, query)
-    raise ValueError(f"unsupported discovery endpoint: {query.endpoint!r}")
-
-
-async def _execute_events_query(
-    gamma_client: GammaClient,
-    query: DiscoveryQuery,
-) -> tuple[Mapping[str, Any], ...]:
-    params = _normalize_discovery_params(query.params)
-    limit = _normalize_page_limit(query)
-    base_offset = _normalize_offset(params.get("offset", 0))
-    payloads: list[Mapping[str, Any]] = []
-    for page_index in range(query.max_pages):
-        page_params = dict(params)
-        page_params["limit"] = limit
-        page_params["offset"] = base_offset + page_index * limit
-        events = await gamma_client.list_events_by_params(page_params, timeout_s=query.timeout_s)
-        for event in events:
-            payloads.extend(raw.payload for raw in event.to_raw_market_events(source=_discovery_source(query)))
-        if len(events) < limit:
-            break
-    return tuple(payloads)
-
-
-async def _execute_events_keyset_query(
-    gamma_client: GammaClient,
-    query: DiscoveryQuery,
-) -> tuple[Mapping[str, Any], ...]:
-    params = _normalize_discovery_params(query.params)
-    if "offset" in params:
-        raise ValueError("events_keyset discovery queries must not include offset")
-    limit = _normalize_page_limit(query)
-    after_cursor = params.get("after_cursor")
-    payloads: list[Mapping[str, Any]] = []
-    for _ in range(query.max_pages):
-        page_params = dict(params)
-        page_params["limit"] = limit
-        if after_cursor is not None:
-            page_params["after_cursor"] = after_cursor
-        events, next_cursor = await gamma_client.list_events_keyset_by_params(
-            page_params,
-            timeout_s=query.timeout_s,
-        )
-        for event in events:
-            payloads.extend(raw.payload for raw in event.to_raw_market_events(source=_discovery_source(query)))
-        if not events or not next_cursor:
-            break
-        after_cursor = next_cursor
-    return tuple(payloads)
-
-
-async def _execute_markets_query(
-    gamma_client: GammaClient,
-    query: DiscoveryQuery,
-) -> tuple[Mapping[str, Any], ...]:
-    params = _normalize_discovery_params(query.params)
-    limit = _normalize_page_limit(query)
-    base_offset = _normalize_offset(params.get("offset", 0))
-    payloads: list[Mapping[str, Any]] = []
-    for page_index in range(query.max_pages):
-        page_params = dict(params)
-        page_params["limit"] = limit
-        page_params["offset"] = base_offset + page_index * limit
-        markets = await gamma_client.list_markets_by_params(page_params, timeout_s=query.timeout_s)
-        payloads.extend(market.raw for market in markets)
-        if len(markets) < limit:
-            break
-    return tuple(payloads)
-
-
-async def _execute_markets_keyset_query(
-    gamma_client: GammaClient,
-    query: DiscoveryQuery,
-) -> tuple[Mapping[str, Any], ...]:
-    params = _normalize_discovery_params(query.params)
-    if "offset" in params:
-        raise ValueError("markets_keyset discovery queries must not include offset")
-    limit = _normalize_page_limit(query)
-    after_cursor = params.get("after_cursor")
-    payloads: list[Mapping[str, Any]] = []
-    for _ in range(query.max_pages):
-        page_params = dict(params)
-        page_params["limit"] = limit
-        if after_cursor is not None:
-            page_params["after_cursor"] = after_cursor
-        markets, next_cursor = await gamma_client.list_markets_keyset_by_params(
-            page_params,
-            timeout_s=query.timeout_s,
-        )
-        payloads.extend(market.raw for market in markets)
-        if not markets or not next_cursor:
-            break
-        after_cursor = next_cursor
-    return tuple(payloads)
 
 
 async def _run_reconcile_once(

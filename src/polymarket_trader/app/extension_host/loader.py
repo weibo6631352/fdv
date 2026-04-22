@@ -3,13 +3,13 @@ from __future__ import annotations
 from importlib import import_module
 from types import ModuleType
 
-from polymarket_trader.extension_api import BusinessExtension, ExtensionLoadError, ExtensionManifest, StrategyPorts
+from polymarket_trader.extension_api import BusinessExtension, ExtensionLoadError, ExtensionManifest, ExtensionPorts
 
 
 def load_extension(
     *,
     module_path: str,
-    ports: StrategyPorts | None = None,
+    ports: ExtensionPorts | None = None,
     config_path: str | None = None,
 ) -> BusinessExtension:
     manifest = load_extension_manifest(module_path)

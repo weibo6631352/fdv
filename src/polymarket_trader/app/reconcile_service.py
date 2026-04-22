@@ -22,7 +22,7 @@ from polymarket_trader.runtime.registry import MarketRegistrySnapshot
 from polymarket_trader.extension_api import (
     ExtensionHooks,
     MarketTokenView,
-    StrategyContext,
+    ExtensionContext,
 )
 
 
@@ -186,7 +186,7 @@ class ReconcileService:
             for outcome in market.outcomes
         )
         recovery = self._extension_hooks.decide_recovery(
-            StrategyContext(
+            ExtensionContext(
                 trace_id=trace_id,
                 market=market,
                 market_token_views=market_token_views,

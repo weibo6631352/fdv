@@ -16,9 +16,6 @@ class _RejectingStrategy:
     def spec(self):
         return ExtensionSpec(name="rejecting")
 
-    def build_discovery_queries(self):
-        return ()
-
     def select_market(self, market):
         return UniverseDecision.exclude(reason="strategy_filtered_out")
 
@@ -45,9 +42,6 @@ class _AcceptingStrategy:
     @property
     def spec(self):
         return ExtensionSpec(name="accepting")
-
-    def build_discovery_queries(self):
-        return ()
 
     def select_market(self, market):
         return UniverseDecision.include(reason="accepted")
@@ -79,9 +73,6 @@ class _SwitchingStrategy:
     @property
     def spec(self):
         return ExtensionSpec(name="switching")
-
-    def build_discovery_queries(self):
-        return ()
 
     def select_market(self, market):
         if self.selected:
