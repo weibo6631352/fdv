@@ -10,7 +10,7 @@
 - `/runtime` phase 停在 `recovering_snapshot`、`reconciling`、`workers_started` 或 `degraded`。
 
 处置：
-1. 先看 `/ready.blocking_issues` 和 `/runtime.runtime` 的 `blocking_reasons`。
+1. 先看 `/ready.blocking_reasons` 和 `/runtime.runtime.blocking_reasons`；配置问题再看 `/ready.blocking_issues`。
 2. 若是 `db_not_ready`，先修复 PostgreSQL 连通性。
 3. 若是 `trading_client_not_ready`，检查密钥、wallet signer 和运行环境。
 4. 若是 `user_ws_not_connected` 或 `market_ws_not_connected`，保持自动下单关闭，先做人工 reconcile。

@@ -133,6 +133,7 @@
 - `ready_to_trade`
 - `phase`
 - `blocking_issues`
+- `blocking_reasons`
 - `warnings`
 - `runtime.user_ws_connected`
 - `runtime.allow_new_entries`
@@ -142,7 +143,8 @@
 说明：
 
 - 该接口是运维判断“现在能不能自动下单”的首选入口。
-- `allow_new_entries=false` 会明确表现为阻塞项。
+- `blocking_reasons` 来自 Supervisor，是运行态阻塞判断的事实来源。
+- `blocking_issues` 只保留配置校验的结构化问题；没有配置问题时，会把运行态 reason 原样透出为通用 issue。
 
 ### 3.3 `GET /runtime`
 

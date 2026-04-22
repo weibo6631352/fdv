@@ -83,7 +83,7 @@ def test_market_model_to_domain_prefers_fee_schedule_rate_from_raw_payload() -> 
     assert market.fee_rate_bps == 72
 
 
-def test_market_persistence_worker_falls_back_to_parse_reason_in_market_data() -> None:
+def test_market_persistence_worker_skips_market_wide_record_without_structured_market() -> None:
     builder = PersistenceRecordBuilder()
     event = OutboxEvent(
         trace_id="trace-1",
@@ -110,10 +110,43 @@ def test_market_persistence_worker_falls_back_to_parse_reason_in_market_data() -
     )
 
     records = dict(builder.route_event(event))
+
+    assert set(records) == {"audit", "outbox"}
+    assert records["audit"]["source_event_type"] == "market_filtered_out"
+    assert records["outbox"]["outbox_payload"]["parse_reason"] == "missing_trading_conditions"
+
+
+def test_market_persistence_worker_materializes_explicit_market_snapshot() -> None:
+    builder = PersistenceRecordBuilder()
+    event = OutboxEvent(
+        trace_id="trace-1",
+        event_type=DomainEventType.MARKET_DISCOVERED.value,
+        idempotency_key="idempotency-key",
+        event_id="event-1",
+        condition_id="condition-1",
+        market_slug="sample-market-a",
+        payload={
+            "accepted": True,
+            "parse_status": "accepted",
+            "market": {
+                "condition_id": "condition-1",
+                "market_slug": "sample-market-a",
+                "token_ids": ["yes-token", "no-token"],
+                "outcomes": [
+                    {"token_id": "yes-token", "outcome": "YES"},
+                    {"token_id": "no-token", "outcome": "NO"},
+                ],
+                "tick_size": "0.01",
+                "min_order_size": "1",
+            },
+        },
+    )
+
+    records = dict(builder.route_event(event))
     record = records["market"]
 
-    assert record["parse_reason"] == "missing_trading_conditions"
-    assert record["market_data"]["reject_reason"] == "missing_trading_conditions"
+    assert record["parse_status"] == "accepted"
+    assert record["market_data"]["condition_id"] == "condition-1"
 
 
 def test_market_from_record_restores_parse_reason_reject_reason() -> None:

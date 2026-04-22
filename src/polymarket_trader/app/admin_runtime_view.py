@@ -22,148 +22,161 @@ class AdminRuntimeView:
         }
 
     def readiness_snapshot(self) -> dict[str, Any]:
+        supervisor = self._supervisor_snapshot()
+        readiness = self._readiness_payload(supervisor)
         config_readiness = self._config_readiness_snapshot()
-        runtime_snapshot = self._runtime_status_snapshot()
-        blocking_issues = self._runtime_blocking_issues(config_readiness, runtime_snapshot)
-        ready_to_trade = bool(runtime_snapshot.get("ready_to_trade")) and not blocking_issues
         return {
-            "ready_to_trade": ready_to_trade,
-            "phase": runtime_snapshot["phase"],
-            "blocking_issues": blocking_issues,
-            "warnings": list(config_readiness.get("warnings", [])),
-            "runtime": runtime_snapshot,
+            "ready_to_trade": bool(readiness.get("ready")),
+            "phase": self._phase_text(supervisor, readiness),
+            "blocking_issues": self._blocking_issues(config_readiness, readiness),
+            "blocking_reasons": list(readiness.get("blocking_reasons", ())),
+            "warnings": list(readiness.get("warnings") or config_readiness.get("warnings", ())),
+            "runtime": self._runtime_status_snapshot(supervisor, readiness),
         }
 
     def runtime_snapshot(self) -> dict[str, Any]:
-        runtime_status = self._runtime_status_snapshot()
+        supervisor = self._supervisor_snapshot()
+        readiness = self._readiness_payload(supervisor)
+        runtime_status = self._runtime_status_snapshot(supervisor, readiness)
         account = self._account_snapshot()
         registry = self._registry_snapshot()
-        market_discovery = self._market_discovery_snapshot()
-        event_bus = self._event_bus_snapshot()
-        persistence = self._persistence_snapshot()
         markets = [self._serializer().market_view(market) for market in registry.markets]
         return {
             "phase": runtime_status["phase"],
             "ready_to_trade": runtime_status["ready_to_trade"],
-            "readiness": self._readiness_summary(),
+            "readiness": readiness,
             "settings": self._settings_snapshot(),
             "identity": self._identity_snapshot(),
             "runtime": runtime_status,
             "bootstrap_summary": jsonable(getattr(self.runtime, "bootstrap_summary", {})),
-            "market_discovery": market_discovery,
+            "market_discovery": self._market_discovery_snapshot(),
             "registry": {
                 "market_count": len(registry.markets),
                 "markets": [jsonable(market) for market in markets],
             },
             "account": self._serializer().account_snapshot(account),
-            "event_bus": jsonable(event_bus) if event_bus is not None else None,
-            "persistence": jsonable(persistence) if persistence is not None else None,
+            "event_bus": jsonable(self._event_bus_snapshot()),
+            "persistence": jsonable(self._persistence_snapshot()),
             "markets": markets,
             "portfolio": self._serializer().portfolio_snapshot(account),
         }
 
     def workers_snapshot(self) -> dict[str, Any]:
-        supervisor = getattr(self.runtime, "supervisor", None)
-        if supervisor is not None and hasattr(supervisor, "snapshot"):
-            snapshot = supervisor.snapshot()
-            payload = snapshot.as_dict() if hasattr(snapshot, "as_dict") else jsonable(snapshot)
-            return {
-                "phase": payload.get("phase", "starting"),
-                "automatic_trading_enabled": bool(payload.get("automatic_trading_enabled")),
-                "status_reason": payload.get("status_reason"),
-                "queue_depths": payload.get("queue_depths"),
-                "scheduler": payload.get("scheduler"),
-                "workers": list(payload.get("worker_health", ())),
-            }
-
-        runtime_status = self._runtime_status_snapshot()
+        supervisor = self._supervisor_snapshot()
+        runtime_status = self._runtime_status_snapshot(supervisor, self._readiness_payload(supervisor))
         return {
             "phase": runtime_status["phase"],
-            "automatic_trading_enabled": bool(runtime_status.get("automatic_trading_enabled")),
-            "status_reason": None,
-            "queue_depths": runtime_status.get("queue_depth"),
-            "scheduler": None,
-            "workers": [],
+            "automatic_trading_enabled": bool(supervisor.get("automatic_trading_enabled")),
+            "status_reason": supervisor.get("status_reason"),
+            "queue_depths": supervisor.get("queue_depths"),
+            "scheduler": supervisor.get("scheduler"),
+            "workers": list(supervisor.get("worker_health", ())),
         }
 
     def metrics_snapshot(self) -> dict[str, Any]:
-        supervisor = getattr(self.runtime, "supervisor", None)
-        if supervisor is not None and hasattr(supervisor, "snapshot"):
-            snapshot = supervisor.snapshot()
-            payload = snapshot.as_dict() if hasattr(snapshot, "as_dict") else jsonable(snapshot)
-            return {
-                "phase": payload.get("phase", "starting"),
-                "automatic_trading_enabled": bool(payload.get("automatic_trading_enabled")),
-                "status_reason": payload.get("status_reason"),
-                "queue_depths": payload.get("queue_depths"),
-                "metrics": payload.get("metrics"),
-            }
-
-        metrics = getattr(self.runtime, "metrics", None)
-        metrics_payload = None
-        if metrics is not None and hasattr(metrics, "snapshot"):
-            snapshot = metrics.snapshot()
-            metrics_payload = snapshot.as_dict() if hasattr(snapshot, "as_dict") else jsonable(snapshot)
-        runtime_status = self._runtime_status_snapshot()
+        supervisor = self._supervisor_snapshot()
+        runtime_status = self._runtime_status_snapshot(supervisor, self._readiness_payload(supervisor))
         return {
             "phase": runtime_status["phase"],
-            "automatic_trading_enabled": bool(runtime_status.get("automatic_trading_enabled")),
-            "status_reason": None,
-            "queue_depths": runtime_status.get("queue_depth"),
-            "metrics": metrics_payload,
+            "automatic_trading_enabled": bool(supervisor.get("automatic_trading_enabled")),
+            "status_reason": supervisor.get("status_reason"),
+            "queue_depths": supervisor.get("queue_depths"),
+            "metrics": supervisor.get("metrics"),
         }
 
-    def _runtime_status_snapshot(self) -> dict[str, Any]:
+    def _supervisor_snapshot(self) -> dict[str, Any]:
         supervisor = getattr(self.runtime, "supervisor", None)
-        if supervisor is not None and hasattr(supervisor, "snapshot"):
-            snapshot = supervisor.snapshot()
-            payload = snapshot.as_dict() if hasattr(snapshot, "as_dict") else jsonable(snapshot)
-            readiness = payload.get("readiness") or {}
-            user_ws = payload.get("user_ws") or {}
-            account = payload.get("account") or {}
-            return {
-                "phase": payload.get("phase", "starting"),
-                "ready_to_trade": bool(readiness.get("ready")),
-                "automatic_trading_enabled": bool(payload.get("automatic_trading_enabled")),
-                "user_ws_connected": bool(user_ws.get("connected", account.get("user_ws_connected", False))),
-                "allow_new_entries": bool(account.get("allow_new_entries", False)),
-                "last_reconcile_at": readiness.get("last_reconcile_at") or account.get("last_reconcile_at"),
-                "portfolio_budget_usdc": decimal_text(getattr(self._settings(), "portfolio_budget_usdc", None)),
-                "queue_depth": payload.get("queue_depths"),
-                "persistence": payload.get("persistence"),
-                "blocking_reasons": tuple(readiness.get("blocking_reasons", ())),
-                "warnings": tuple(readiness.get("warnings", ())),
-            }
+        snapshot = getattr(supervisor, "snapshot", None)
+        if not callable(snapshot):
+            return {}
+        value = snapshot()
+        payload = value.as_dict() if hasattr(value, "as_dict") else jsonable(value)
+        return dict(payload) if isinstance(payload, Mapping) else {}
 
-        readiness = self._config_readiness_snapshot()
+    def _readiness_payload(self, supervisor: Mapping[str, Any]) -> dict[str, Any]:
+        readiness = supervisor.get("readiness")
+        if isinstance(readiness, Mapping):
+            return dict(readiness)
+        return self._fallback_readiness_payload()
+
+    def _fallback_readiness_payload(self) -> dict[str, Any]:
+        config = self._config_readiness_snapshot()
         account = self._account_snapshot()
-        persistence = self._persistence_snapshot()
-        event_bus = self._event_bus_snapshot()
-        raw_low_priority_paused = getattr(event_bus, "low_priority_paused", False) if event_bus is not None else False
-        low_priority_paused = bool(raw_low_priority_paused() if callable(raw_low_priority_paused) else raw_low_priority_paused)
-        phase = "starting"
-        ready_to_trade = bool(readiness.get("ready_to_trade"))
+        reasons: list[str] = []
+        if not bool(config.get("ready_to_trade")):
+            reasons.append("config_not_ready")
+        if not account.user_ws_connected:
+            reasons.append("user_ws_not_connected")
         if account.last_reconcile_at is None:
-            phase = "recovering_snapshot"
-        elif not account.user_ws_connected or not account.allow_new_entries:
-            phase = "paused"
-        elif persistence is not None and (
-            getattr(persistence, "last_error", None) is not None
-            or (getattr(persistence, "outbox_depth", 0) > 0 and low_priority_paused)
-        ):
-            phase = "degraded"
-        elif ready_to_trade:
-            phase = "trading_enabled"
+            reasons.append("reconcile_not_fresh")
+        if not account.allow_new_entries:
+            reasons.append("allow_new_entries_closed")
         return {
-            "phase": phase,
-            "ready_to_trade": ready_to_trade and account.user_ws_connected and account.allow_new_entries,
+            "phase": "trading_enabled" if not reasons else "recovering_snapshot",
+            "live": True,
+            "ready": not reasons,
+            "automatic_trading_enabled": not reasons,
+            "config_ready": bool(config.get("ready_to_trade")),
             "user_ws_connected": account.user_ws_connected,
-            "allow_new_entries": account.allow_new_entries,
-            "last_reconcile_at": jsonable(account.last_reconcile_at),
-            "portfolio_budget_usdc": decimal_text(getattr(self._settings(), "portfolio_budget_usdc", None)),
-            "queue_depth": jsonable(event_bus) if event_bus is not None else None,
-            "persistence": jsonable(persistence) if persistence is not None else None,
+            "reconcile_fresh": account.last_reconcile_at is not None,
+            "low_priority_paused": False,
+            "blocking_reasons": tuple(reasons),
+            "warnings": tuple(config.get("warnings", ())),
+            "last_reconcile_at": account.last_reconcile_at,
         }
+
+    def _runtime_status_snapshot(
+        self,
+        supervisor: Mapping[str, Any],
+        readiness: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        account_payload = supervisor.get("account") if isinstance(supervisor.get("account"), Mapping) else {}
+        user_ws = supervisor.get("user_ws") if isinstance(supervisor.get("user_ws"), Mapping) else {}
+        fallback_account = self._account_snapshot() if not account_payload else None
+        fallback_user_ws_connected = False if fallback_account is None else fallback_account.user_ws_connected
+        fallback_allow_entries = True if fallback_account is None else fallback_account.allow_new_entries
+        fallback_reconcile_at = None if fallback_account is None else fallback_account.last_reconcile_at
+        return {
+            "phase": self._phase_text(supervisor, readiness),
+            "ready_to_trade": bool(readiness.get("ready")),
+            "automatic_trading_enabled": bool(supervisor.get("automatic_trading_enabled", readiness.get("ready"))),
+            "user_ws_connected": bool(
+                readiness.get(
+                    "user_ws_connected",
+                    user_ws.get("connected", account_payload.get("user_ws_connected", fallback_user_ws_connected)),
+                )
+            ),
+            "allow_new_entries": bool(account_payload.get("allow_new_entries", fallback_allow_entries)),
+            "last_reconcile_at": readiness.get("last_reconcile_at")
+            or account_payload.get("last_reconcile_at")
+            or fallback_reconcile_at,
+            "portfolio_budget_usdc": decimal_text(getattr(self._settings(), "portfolio_budget_usdc", None)),
+            "queue_depth": supervisor.get("queue_depths") or jsonable(self._event_bus_snapshot()),
+            "persistence": supervisor.get("persistence") or jsonable(self._persistence_snapshot()),
+            "blocking_reasons": tuple(readiness.get("blocking_reasons", ())),
+            "warnings": tuple(readiness.get("warnings", ())),
+        }
+
+    def _phase_text(self, supervisor: Mapping[str, Any], readiness: Mapping[str, Any]) -> str:
+        phase = supervisor.get("phase") or readiness.get("phase") or "starting"
+        return str(phase)
+
+    def _blocking_issues(
+        self,
+        config_readiness: Mapping[str, Any],
+        readiness: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        config_issues = config_readiness.get("blocking_issues", ())
+        if config_issues:
+            return [jsonable(issue) for issue in config_issues if isinstance(issue, Mapping)]
+        return [
+            {
+                "field": "runtime",
+                "code": str(reason),
+                "message": str(reason),
+            }
+            for reason in readiness.get("blocking_reasons", ())
+        ]
 
     def _config_readiness_snapshot(self) -> dict[str, Any]:
         settings = getattr(self.runtime, "readiness", None)
@@ -173,145 +186,6 @@ class AdminRuntimeView:
             "ready_to_trade": False,
             "blocking_issues": [],
             "warnings": [],
-        }
-
-    def _runtime_blocking_issues(
-        self,
-        config_readiness: dict[str, Any],
-        runtime_snapshot: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        blocking_issues = list(config_readiness.get("blocking_issues", []))
-        has_config_blockers = bool(blocking_issues)
-        runtime_blocking_reason_list = tuple(str(reason) for reason in runtime_snapshot.get("blocking_reasons", ()))
-        runtime_blocking_reasons = set(runtime_blocking_reason_list)
-        seen_issue_keys = {
-            (str(issue.get("field", "")), str(issue.get("code", "")))
-            for issue in blocking_issues
-            if isinstance(issue, Mapping)
-        }
-
-        def append_issue(field: str, code: str, message: str) -> None:
-            issue_key = (field, code)
-            if issue_key in seen_issue_keys:
-                return
-            seen_issue_keys.add(issue_key)
-            blocking_issues.append(
-                {
-                    "field": field,
-                    "code": code,
-                    "message": message,
-                }
-            )
-
-        for reason in runtime_blocking_reason_list:
-            issue = self._runtime_blocking_issue_from_reason(reason, has_config_blockers=has_config_blockers)
-            if issue is None:
-                continue
-            append_issue(str(issue["field"]), str(issue["code"]), str(issue["message"]))
-
-        user_ws_connected = bool(runtime_snapshot.get("user_ws_connected"))
-        last_reconcile_at = runtime_snapshot.get("last_reconcile_at")
-        allow_new_entries = bool(runtime_snapshot.get("allow_new_entries"))
-        has_runtime_client_blocker = {
-            "trading_client_not_ready",
-            "trading_client_unavailable",
-        }.intersection(runtime_blocking_reasons)
-        expose_runtime_account_blockers = not has_config_blockers and not has_runtime_client_blocker
-        if expose_runtime_account_blockers and not user_ws_connected:
-            append_issue(
-                "user_ws_connected",
-                "ws_disconnected",
-                "用户行情连接未连接，暂停自动下单",
-            )
-        if expose_runtime_account_blockers and last_reconcile_at is None:
-            append_issue(
-                "last_reconcile_at",
-                "reconcile_pending",
-                "首次 reconcile 未完成，禁止自动下单",
-            )
-        if expose_runtime_account_blockers and not allow_new_entries and user_ws_connected and last_reconcile_at is not None:
-            append_issue(
-                "allow_new_entries",
-                "buy_gate_closed",
-                "自动买入闸门关闭",
-            )
-        return blocking_issues
-
-    def _runtime_blocking_issue_from_reason(
-        self,
-        reason: str,
-        *,
-        has_config_blockers: bool,
-    ) -> dict[str, str] | None:
-        if reason in {
-            "config_not_ready",
-            "user_ws_not_connected",
-            "reconcile_not_fresh",
-        }:
-            return None
-        if reason.startswith("phase="):
-            return None
-        if reason == "db_not_ready" or reason == "database_unavailable":
-            return {
-                "field": "database",
-                "code": "database_unavailable",
-                "message": "数据库连接未就绪，暂停自动下单",
-            }
-        if reason == "market_ws_not_connected":
-            return {
-                "field": "market_ws_connected",
-                "code": "ws_disconnected",
-                "message": "市场行情连接未连接，暂停自动下单",
-            }
-        if reason == "outbox_backlog_high":
-            return {
-                "field": "outbox_depth",
-                "code": "backlog_high",
-                "message": "外发队列积压过高，暂停自动下单",
-            }
-        if reason == "trading_client_not_ready":
-            if has_config_blockers:
-                return None
-            return {
-                "field": "trading_client",
-                "code": "client_not_ready",
-                "message": "交易客户端未就绪，暂停自动下单",
-            }
-        if reason == "trading_client_unavailable":
-            if has_config_blockers:
-                return None
-            return {
-                "field": "trading_client",
-                "code": "client_unavailable",
-                "message": "交易客户端不可用，暂停自动下单",
-            }
-        if reason.startswith("startup_reconcile_failed:"):
-            detail = reason.split(":", 1)[1].strip()
-            message = "启动对账失败，暂停自动下单"
-            if detail:
-                message = f"{message}：{detail}"
-            return {
-                "field": "startup_reconcile",
-                "code": "startup_reconcile_failed",
-                "message": message,
-            }
-        return None
-
-    def _readiness_summary(self) -> dict[str, Any]:
-        supervisor = getattr(self.runtime, "supervisor", None)
-        if supervisor is not None and hasattr(supervisor, "snapshot"):
-            snapshot = supervisor.snapshot()
-            readiness = snapshot.readiness
-            if readiness is not None:
-                return readiness.as_dict() if hasattr(readiness, "as_dict") else jsonable(readiness)
-        config_readiness = self._config_readiness_snapshot()
-        runtime_snapshot = self._runtime_status_snapshot()
-        blocking_issues = self._runtime_blocking_issues(config_readiness, runtime_snapshot)
-        return {
-            "ready_to_trade": bool(config_readiness.get("ready_to_trade")) and not blocking_issues,
-            "phase": runtime_snapshot["phase"],
-            "blocking_issues": blocking_issues,
-            "warnings": list(config_readiness.get("warnings", [])),
         }
 
     def _settings_snapshot(self) -> dict[str, Any]:

@@ -7,7 +7,7 @@
 - 生成并传播 `trace_id`。
 - 构建结构化审计事件。
 - 记录交易延迟、队列深度、锁等待、执行器等待等指标。
-- 通过内存型 `MetricsRegistry` 向 Supervisor、`/ready` 和 Admin API 暴露轻量快照。
+- 通过内存型 `MetricsRegistry` 向 Supervisor、`/ready` 和 Admin API 暴露轻量快照；指标注册表只保留运行时快照，不承载业务含义。
 - 通过异步队列日志输出结构化、脱敏后的日志记录。
 - 为 outbox 和 Persistence Worker 提供统一事件模型。
 

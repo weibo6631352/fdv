@@ -404,4 +404,12 @@ def _extract_metric_value(metrics: Mapping[str, Any], metric_name: str) -> int |
             return int(value)
         except (TypeError, ValueError):
             return None
+    if isinstance(gauges, list):
+        for gauge in gauges:
+            if not isinstance(gauge, Mapping) or gauge.get("name") != metric_name:
+                continue
+            try:
+                return int(gauge.get("value"))
+            except (TypeError, ValueError):
+                return None
     return None

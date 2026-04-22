@@ -71,13 +71,19 @@ class PersistenceRecordBuilder:
             records.append(("allocation", record))
 
         if event_type in _MARKET_EVENT_TYPES:
-            records.append(("market", self._build_market_record(event, payload)))
+            market_record = self._build_market_record(event, payload)
+            if market_record is not None:
+                records.append(("market", market_record))
         if event_type in _ACCOUNT_EVENT_TYPES:
             records.append(("account", self._build_account_record(event, payload)))
         if event_type in _ORDERBOOK_EVENT_TYPES:
-            records.append(("orderbook", self._build_orderbook_record(event, payload)))
+            orderbook_record = self._build_orderbook_record(event, payload)
+            if orderbook_record is not None:
+                records.append(("orderbook", orderbook_record))
         if event_type in _ORDER_EVENT_TYPES:
-            records.append(("order", self._build_order_record(event, payload)))
+            order_record = self._build_order_record(event, payload)
+            if order_record is not None:
+                records.append(("order", order_record))
         if event_type in _FILL_EVENT_TYPES:
             records.extend(("fill", record) for record in self._build_fill_records(event, payload))
         if event_type in _POSITION_EVENT_TYPES:
@@ -113,37 +119,11 @@ class PersistenceRecordBuilder:
         record["source_payload"] = jsonable(payload)
         return jsonable(record)
 
-    def _build_market_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any]:
-        market = _mapping(payload, "market", "market_snapshot")
-        fees = _mapping(market or {}, "fees") or {}
+    def _build_market_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any] | None:
+        market = _mapping(payload, "market", "market_snapshot", "tracked_market")
         if market is None:
-            fees = {
-                "enabled": _first(payload, "fees_enabled"),
-                "maker_base_fee_bps": _first(payload, "maker_base_fee_bps"),
-                "taker_base_fee_bps": _first(payload, "taker_base_fee_bps"),
-                "fee_rate_bps": _first(payload, "fee_rate_bps"),
-                "fee_rate_updated_at": _first(payload, "fee_rate_updated_at"),
-            }
-            market = {
-                "condition_id": event.condition_id,
-                "market_slug": event.market_slug,
-                "event_id": _first(payload, "event_id", "source_event_id"),
-                "event_title": _first(payload, "event_title", "title"),
-                "event_slug": _first(payload, "event_slug", "slug"),
-                "icon_url": _first(payload, "icon_url", "icon"),
-                "end_date": _first(payload, "end_date", "endDate"),
-                "token_ids": _first(payload, "token_ids"),
-                "outcomes": _first(payload, "outcomes"),
-                "tick_size": _first(payload, "tick_size"),
-                "min_order_size": _first(payload, "min_order_size"),
-                "neg_risk": _first(payload, "neg_risk"),
-                "fees": fees,
-                "category": _first(payload, "category"),
-                "tags": _first(payload, "tags"),
-                "matched_keywords": _first(payload, "matched_keywords"),
-                "trading_status": "rejected" if _first(payload, "accepted") is False else _first(payload, "trading_status"),
-                "reject_reason": _first(payload, "reject_reason", "parse_reason", "classification_reason"),
-            }
+            return None
+        fees = _mapping(market or {}, "fees") or {}
 
         record = _base_meta(event)
         record.update(
@@ -189,24 +169,10 @@ class PersistenceRecordBuilder:
         record.update(jsonable(account))
         return record
 
-    def _build_orderbook_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def _build_orderbook_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any] | None:
         snapshot = _mapping(payload, "snapshot", "orderbook", "book")
         if snapshot is None:
-            snapshot = {
-                "token_id": event.token_id,
-                "market_slug": event.market_slug,
-                "condition_id": event.condition_id,
-                "best_bid": _first(payload, "best_bid"),
-                "best_ask": _first(payload, "best_ask"),
-                "best_bid_size": _first(payload, "best_bid_size"),
-                "best_ask_size": _first(payload, "best_ask_size"),
-                "last_trade_price": _first(payload, "last_trade_price"),
-                "tick_size": _first(payload, "tick_size"),
-                "spread": _first(payload, "spread"),
-                "buyable_no_depth": _first(payload, "buyable_no_depth"),
-                "snapshot_time": _first(payload, "snapshot_time"),
-                "needs_rest_snapshot": _first(payload, "needs_rest_snapshot"),
-            }
+            return None
 
         record = _base_meta(event)
         record.update(
@@ -223,24 +189,12 @@ class PersistenceRecordBuilder:
         record.update(jsonable(snapshot))
         return record
 
-    def _build_order_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any]:
-        order = _mapping(payload, "order")
+    def _build_order_record(self, event: OutboxEvent, payload: Mapping[str, Any]) -> dict[str, Any] | None:
+        order = _mapping(payload, "order", "order_result", "intent")
         if order is None:
-            order = {
-                "order_id": _first(payload, "order_id"),
-                "trade_id": _first(payload, "trade_id"),
-                "side": _first(payload, "side"),
-                "order_type": _first(payload, "order_type"),
-                "price": _first(payload, "price"),
-                "amount_usdc": _first(payload, "amount_usdc"),
-                "size_shares": _first(payload, "size_shares"),
-                "filled_shares": _first(payload, "filled_shares"),
-                "remaining_shares": _first(payload, "remaining_shares"),
-                "notional_usdc": _first(payload, "notional_usdc"),
-                "status": _first(payload, "status"),
-                "reason": _first(payload, "reason"),
-                "post_only": _first(payload, "post_only"),
-            }
+            order = _nested_mapping(payload, ("review", "order_result"), ("execution", "order_result"))
+        if order is None:
+            return None
 
         record = _base_meta(event)
         record.update(
@@ -255,40 +209,13 @@ class PersistenceRecordBuilder:
     def _build_fill_records(self, event: OutboxEvent, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
         fills = _mapping_list(payload, "fill", "fills")
         if not fills:
-            fills = [
-                {
-                    "event_id": event.event_id,
-                    "trade_id": _first(payload, "trade_id"),
-                    "order_id": _first(payload, "order_id"),
-                    "side": _first(payload, "side"),
-                    "price": _first(payload, "price"),
-                    "size": _first(payload, "size"),
-                    "notional_usdc": _first(payload, "notional_usdc"),
-                    "status": _first(payload, "status"),
-                    "confirmed_at": _first(payload, "confirmed_at"),
-                }
-            ]
+            return []
         return [_indexed_record(event, "fill", index, "fill_data", fill) for index, fill in enumerate(fills)]
 
     def _build_position_records(self, event: OutboxEvent, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
         positions = _mapping_list(payload, "position", "positions")
         if not positions:
-            positions = [
-                {
-                    "condition_id": event.condition_id,
-                    "token_id": event.token_id,
-                    "market_slug": event.market_slug,
-                    "shares": _first(payload, "shares"),
-                    "cost_usdc": _first(payload, "cost_usdc"),
-                    "open_buy_shares": _first(payload, "open_buy_shares"),
-                    "open_sell_shares": _first(payload, "open_sell_shares"),
-                    "pending_buy_shares": _first(payload, "pending_buy_shares"),
-                    "confirmed_shares": _first(payload, "confirmed_shares"),
-                    "last_order_id": _first(payload, "last_order_id"),
-                    "last_trade_id": _first(payload, "last_trade_id"),
-                    "confirmation_status": _first(payload, "confirmation_status"),
-                }
-            ]
+            return []
         return [_indexed_record(event, "position", index, "position_data", item) for index, item in enumerate(positions)]
 
     def _build_allocation_records(self, event: OutboxEvent, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -403,6 +330,17 @@ def _first(payload: Mapping[str, Any], *keys: str) -> Any | None:
 def _mapping(payload: Mapping[str, Any], *keys: str) -> dict[str, Any] | None:
     for key in keys:
         value = payload.get(key)
+        if isinstance(value, Mapping):
+            return dict(value)
+    return None
+
+
+def _nested_mapping(payload: Mapping[str, Any], *paths: tuple[str, str]) -> dict[str, Any] | None:
+    for parent_key, child_key in paths:
+        parent = payload.get(parent_key)
+        if not isinstance(parent, Mapping):
+            continue
+        value = parent.get(child_key)
         if isinstance(value, Mapping):
             return dict(value)
     return None

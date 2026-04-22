@@ -570,7 +570,7 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
     return runtime
 
 
-def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
+def run_admin_api_exposes_hot_state_and_readiness_routes() -> None:
     runtime = _build_runtime(ready=True)
     app = create_app(runtime=runtime, admin_service=AdminService())
 
@@ -702,7 +702,7 @@ def test_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert portfolio["position_count"] == 1
 
 
-def test_create_app_registers_expected_routes() -> None:
+def run_create_app_registers_expected_routes() -> None:
     app = create_app(runtime=_build_runtime(ready=True), admin_service=AdminService())
 
     actual_routes = {
@@ -715,7 +715,7 @@ def test_create_app_registers_expected_routes() -> None:
     assert actual_routes == EXPECTED_ADMIN_ROUTES
 
 
-def test_admin_api_exposes_openapi_and_docs_routes() -> None:
+def run_admin_api_exposes_openapi_and_docs_routes() -> None:
     app = create_app(runtime=_build_runtime(ready=True), admin_service=AdminService())
 
     with TestClient(app) as client:
@@ -746,7 +746,7 @@ def test_admin_api_exposes_openapi_and_docs_routes() -> None:
         assert "ReDoc" in redoc_response.text
 
 
-def test_admin_api_supports_reconcile_and_replace_routes() -> None:
+def run_admin_api_supports_reconcile_and_replace_routes() -> None:
     runtime = _build_runtime(ready=True)
     app = create_app(runtime=runtime, admin_service=AdminService())
 
@@ -788,7 +788,7 @@ def test_admin_api_supports_reconcile_and_replace_routes() -> None:
         assert updated_portfolio["open_order_count"] == 2
 
 
-def test_admin_api_supports_fee_filters_and_sorting() -> None:
+def run_admin_api_supports_fee_filters_and_sorting() -> None:
     runtime = _build_runtime(ready=True)
     runtime.db_session_factory = object()
     second_market = replace(
@@ -840,7 +840,7 @@ def test_admin_api_supports_fee_filters_and_sorting() -> None:
         ]
 
 
-def test_markets_orderbook_falls_back_to_clob_when_hot_snapshot_missing() -> None:
+def run_markets_orderbook_falls_back_to_clob_when_hot_snapshot_missing() -> None:
     runtime = _build_runtime(ready=True)
     runtime.market_ws_worker._snapshots.clear()
     app = create_app(runtime=runtime, admin_service=AdminService())
@@ -857,7 +857,7 @@ def test_markets_orderbook_falls_back_to_clob_when_hot_snapshot_missing() -> Non
         assert runtime.clob_client.orderbook_calls[0]["token_id"] == "no-token-500m"
 
 
-def test_markets_midpoint_falls_back_to_clob_when_hot_snapshot_missing() -> None:
+def run_markets_midpoint_falls_back_to_clob_when_hot_snapshot_missing() -> None:
     runtime = _build_runtime(ready=True)
     runtime.market_ws_worker._snapshots.clear()
     app = create_app(runtime=runtime, admin_service=AdminService())
@@ -874,7 +874,7 @@ def test_markets_midpoint_falls_back_to_clob_when_hot_snapshot_missing() -> None
         assert runtime.clob_client.midpoint_calls[0]["token_id"] == "no-token-500m"
 
 
-def test_admin_ready_route_reports_blockers_when_runtime_is_not_ready() -> None:
+def run_admin_ready_route_reports_blockers_when_runtime_is_not_ready() -> None:
     runtime = _build_runtime(ready=False)
     app = create_app(runtime=runtime, admin_service=AdminService())
 
@@ -890,7 +890,7 @@ def test_admin_ready_route_reports_blockers_when_runtime_is_not_ready() -> None:
         assert runtime_payload["readiness"]["ready"] is False
 
 
-def test_admin_ready_route_only_exposes_user_facing_root_blockers() -> None:
+def run_admin_ready_route_exposes_config_blockers_without_runtime_translation() -> None:
     runtime = _build_runtime(ready=False)
     runtime.readiness = FakeConfigReadiness(
         ready_to_trade=False,
@@ -931,22 +931,21 @@ def test_admin_ready_route_only_exposes_user_facing_root_blockers() -> None:
     assert all("trading_client_unavailable" not in message for message in messages)
 
 
-def test_admin_ready_route_exposes_runtime_account_blockers_after_config_is_ready() -> None:
+def run_admin_ready_route_exposes_runtime_blocking_reasons_after_config_is_ready() -> None:
     runtime = _build_runtime(ready=False)
     app = create_app(runtime=runtime, admin_service=AdminService())
 
     with TestClient(app) as client:
         payload = client.get("/ready").json()
 
-    fields = [issue["field"] for issue in payload["blocking_issues"]]
-    messages = [issue["message"] for issue in payload["blocking_issues"]]
+    assert payload["blocking_reasons"] == ["user_ws_not_connected", "reconcile_pending"]
+    assert [issue["code"] for issue in payload["blocking_issues"]] == [
+        "user_ws_not_connected",
+        "reconcile_pending",
+    ]
 
-    assert fields == ["user_ws_connected", "last_reconcile_at"]
-    assert "用户行情连接未连接，暂停自动下单" in messages
-    assert "首次 reconcile 未完成，禁止自动下单" in messages
 
-
-def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypatch) -> None:
+def run_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypatch) -> None:
     runtime = _build_runtime(ready=True)
     runtime.outbox = LocalOutbox(max_size=8)
     runtime.outbox.put_nowait(
@@ -1086,7 +1085,7 @@ def test_admin_api_exposes_audit_allocations_outbox_and_order_id_filter(monkeypa
         assert filtered_orders["items"][0]["order_id"] == "buy-1"
 
 
-def test_admin_api_outbox_pending_prefers_live_runtime_queue() -> None:
+def run_admin_api_outbox_pending_prefers_live_runtime_queue() -> None:
     runtime = _build_runtime(ready=True)
     runtime.outbox = LocalOutbox(max_size=8)
     runtime.outbox.put_nowait(
