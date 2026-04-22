@@ -6,6 +6,8 @@ from pathlib import Path
 import tomllib
 from typing import Any, TypeVar
 
+from pydantic import TypeAdapter, ValidationError
+
 from polymarket_trader.extension_api.errors import ExtensionLoadError
 
 T = TypeVar("T")
@@ -36,4 +38,9 @@ def load_extension_config(config_type: type[T], config_path: str | None) -> T | 
     data = load_mapping_file(config_path)
     allowed = {field.name for field in fields(config_type)}
     values = {key: value for key, value in data.items() if key in allowed}
-    return config_type(**values)
+    try:
+        return TypeAdapter(config_type).validate_python(values)
+    except ValidationError as exc:
+        raise ExtensionLoadError(
+            f"failed to build config {config_type.__name__} from {config_path}: {exc}"
+        ) from exc
