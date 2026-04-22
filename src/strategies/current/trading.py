@@ -11,13 +11,13 @@ from decimal import Decimal
 
 from polymarket_trader.domain.allocation import (
     Allocation,
-    AllocationMarketSnapshot,
     AllocationPlan,
     current_exposure_usdc,
 )
 from polymarket_trader.domain.market import TradingStatus
 from polymarket_trader.extension_api import EntryCandidate, EntrySizing, StrategyContext, StrategyDecision
 
+from strategies.current.allocation import AllocationMarketSnapshot, equal_weight_plan
 from strategies.current.config import CurrentStrategyConfig
 from strategies.current.outcomes import is_primary_token
 from strategies.current.universe import select_market
@@ -98,7 +98,7 @@ def size_entry(config: CurrentStrategyConfig, context: StrategyContext) -> Entry
             continue
         eligible_snapshots.append(replace(snapshot, liquidity_usdc=buyable_liquidity_usdc))
 
-    eligible_plan = AllocationPlan.equal_weight(
+    eligible_plan = equal_weight_plan(
         trace_id=context.trace_id,
         portfolio_budget_usdc=portfolio_budget_usdc,
         markets=tuple(eligible_snapshots),

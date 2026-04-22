@@ -4,11 +4,15 @@
 
 ## 覆盖范围
 
-- `allocation.py`：等权预算、剩余资金释放、单 market 上限。
-- `classifier.py`：交易字段解析、候选 market 接收与拒绝。
+- `allocation.py`：框架分配 DTO 契约、已持仓和 open BUY exposure 计算。
+- `events.py`：审计事件、outbox 事件和外部响应脱敏。
+- `fees.py`：Polymarket 费用公式和 taker fee 预估。
 - `risk.py`：价格、notional、tick size、min order、集中度和 open BUY 异常。
-- `orderbook.py`：best bid / ask、spread、可成交深度。
-- `state_machine.py`：market 生命周期和异常状态。
+- `domain_import_boundaries.py`：Domain 不持有外部 market payload parser。
+- `registry.py`：运行时 market 索引快照和 fee schedule 更新。
+
+策略化的资金分配策略不属于 domain 测试范围；例如当前策略的等权分配测试放在
+`tests/strategies/current/`。
 
 ## 必须保持的边界
 

@@ -4,9 +4,9 @@ from decimal import Decimal
 
 from datetime import datetime, timezone
 
-from polymarket_trader.domain.allocation import AllocationMarketSnapshot, AllocationPlan, equal_weight_budget
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
+from strategies.current.allocation import AllocationMarketSnapshot, equal_weight_budget, equal_weight_plan
 from tests.helpers.markets import build_binary_market
 
 
@@ -60,7 +60,7 @@ def test_equal_weight_plan_respects_per_market_cap_and_releases_budget() -> None
     first = _snapshot(_market("condition-1", "token-1", "no-1"))
     second = _snapshot(_market("condition-2", "token-2", "no-2"))
 
-    plan = AllocationPlan.equal_weight(
+    plan = equal_weight_plan(
         trace_id="trace",
         portfolio_budget_usdc=Decimal("100"),
         markets=(first, second),
