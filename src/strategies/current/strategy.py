@@ -109,10 +109,33 @@ class CurrentStrategy:
     def discovery_queries(self) -> tuple[DiscoveryQuery, ...]:
         """返回当前策略希望远端 discovery 使用的粗筛查询。"""
 
-        return tuple(
-            DiscoveryQuery.title_search(title_search)
+        title_searches = tuple(
+            title_search.strip()
             for title_search in self._config.discovery_title_searches
             if title_search.strip()
+        )
+        tag_slugs = tuple(
+            tag_slug.strip()
+            for tag_slug in self._config.discovery_tag_slugs
+            if tag_slug.strip()
+        )
+        if not tag_slugs:
+            return tuple(DiscoveryQuery.title_search(title_search) for title_search in title_searches)
+        if not title_searches:
+            return tuple(
+                DiscoveryQuery(
+                    name=f"tag_slug:{tag_slug}",
+                    params={"tag_slug": tag_slug},
+                )
+                for tag_slug in tag_slugs
+            )
+        return tuple(
+            DiscoveryQuery(
+                name=f"title_search:{title_search}|tag_slug:{tag_slug}",
+                params={"title_search": title_search, "tag_slug": tag_slug},
+            )
+            for title_search in title_searches
+            for tag_slug in tag_slugs
         )
 
     def size_entry(self, context: ExtensionContext) -> EntrySizing:

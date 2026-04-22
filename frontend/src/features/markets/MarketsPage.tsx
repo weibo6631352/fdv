@@ -18,6 +18,15 @@ import {
   getString,
 } from '../../shared/utils/format'
 import { formatTradingStatusLabel } from '../../shared/utils/labels'
+import {
+  getMarketOpenOrderCount,
+  getMarketPosition,
+  getMarketTokenId,
+  getOutcomeTokenView,
+  getPrimaryTokenView,
+  getSecondaryTokenView,
+  marketHasToken,
+} from '../../shared/utils/marketViews'
 import { resolveExtensionPresentation } from '../../extensions/registry'
 
 const tradingStatusTone = (status: string): 'neutral' | 'success' | 'warning' | 'danger' => {
@@ -126,17 +135,19 @@ const formatFeePreviewSummary = (preview: TakerFeePreview | null | undefined): s
   `买${formatFeeValue(resolveFeePerTradeDollar(preview, 'buy'))} / 卖${formatFeeValue(resolveFeePerTradeDollar(preview, 'sell'))}`
 
 const renderBinaryQuoteSummary = (row: MarketView) => {
-  const noBuyPrice = row.best_ask ?? row.orderbook?.best_ask ?? null
-  const noSellPrice = row.best_bid ?? row.orderbook?.best_bid ?? null
-  const yesBuyPrice = row.yes_best_ask ?? row.yes_orderbook?.best_ask ?? null
-  const yesSellPrice = row.yes_best_bid ?? row.yes_orderbook?.best_bid ?? null
+  const noView = getOutcomeTokenView(row, 'NO') ?? getPrimaryTokenView(row)
+  const yesView = getOutcomeTokenView(row, 'YES') ?? getSecondaryTokenView(row)
+  const noBuyPrice = noView?.best_ask ?? noView?.orderbook?.best_ask ?? null
+  const noSellPrice = noView?.best_bid ?? noView?.orderbook?.best_bid ?? null
+  const yesBuyPrice = yesView?.best_ask ?? yesView?.orderbook?.best_ask ?? null
+  const yesSellPrice = yesView?.best_bid ?? yesView?.orderbook?.best_bid ?? null
 
   return (
     <div className="table-primary">
       <div>{`YES ${formatOutcomeBuySell(yesBuyPrice, yesSellPrice)}`}</div>
-      <span>{`YES 手续费 ${formatFeePreviewSummary(row.yes_fee_preview)}`}</span>
+      <span>{`YES 手续费 ${formatFeePreviewSummary(yesView?.fee_preview)}`}</span>
       <div>{`NO ${formatOutcomeBuySell(noBuyPrice, noSellPrice)}`}</div>
-      <span>{`NO 手续费 ${formatFeePreviewSummary(row.fee_preview)}`}</span>
+      <span>{`NO 手续费 ${formatFeePreviewSummary(noView?.fee_preview)}`}</span>
     </div>
   )
 }
@@ -204,14 +215,14 @@ export const MarketsPage = () => {
 
   const activeTokenId = useMemo(() => {
     if (selectedTokenParam) {
-      return filteredMarkets.some((item) => item.market.no_token_id === selectedTokenParam)
+      return filteredMarkets.some((item) => marketHasToken(item, selectedTokenParam))
         ? selectedTokenParam
         : null
     }
-    return filteredMarkets[0]?.market.no_token_id ?? null
+    return filteredMarkets[0] ? getMarketTokenId(filteredMarkets[0]) : null
   }, [filteredMarkets, selectedTokenParam])
 
-  const selectedMarket = filteredMarkets.find((item) => item.market.no_token_id === activeTokenId) ?? null
+  const selectedMarket = filteredMarkets.find((item) => marketHasToken(item, activeTokenId)) ?? null
   const selectionMissing = Boolean(selectedTokenParam) && !selectedMarket
 
   const detailQuery = useQuery({
@@ -239,8 +250,9 @@ export const MarketsPage = () => {
       }),
     enabled: Boolean(activeTokenId),
   })
-  const selectedNoFeePreview = detailQuery.data?.fee_preview ?? selectedMarket?.fee_preview ?? null
-  const selectedYesFeePreview = detailQuery.data?.yes_fee_preview ?? selectedMarket?.yes_fee_preview ?? null
+  const selectedMarketView = detailQuery.data ?? selectedMarket
+  const selectedNoFeePreview = selectedMarketView ? getOutcomeTokenView(selectedMarketView, 'NO')?.fee_preview : null
+  const selectedYesFeePreview = selectedMarketView ? getOutcomeTokenView(selectedMarketView, 'YES')?.fee_preview : null
 
   const columns: Array<DataColumn<MarketView>> = [
     {
@@ -308,7 +320,7 @@ export const MarketsPage = () => {
       key: 'spread',
       header: '价差',
       align: 'right',
-      cell: (row) => formatDecimal(row.spread),
+      cell: (row) => formatDecimal(getPrimaryTokenView(row)?.spread),
     },
     {
       key: 'quotes',
@@ -320,13 +332,13 @@ export const MarketsPage = () => {
       key: 'position',
       header: '持仓份额',
       align: 'right',
-      cell: (row) => formatDecimal(row.position?.shares),
+      cell: (row) => formatDecimal(getMarketPosition(row)?.shares),
     },
     {
       key: 'orders',
       header: '挂单数',
       align: 'right',
-      cell: (row) => row.open_order_count,
+      cell: (row) => getMarketOpenOrderCount(row),
     },
   ]
 
@@ -411,10 +423,10 @@ export const MarketsPage = () => {
         <DataTable
           columns={columns}
           rows={filteredMarkets}
-          rowKey={(row) => row.market.no_token_id}
+          rowKey={(row) => getMarketTokenId(row)}
       emptyTitle="没有可展示的市场"
       emptyDescription="请调整筛选条件后重试。"
-      onRowClick={(row) => selectMarket(row.market.no_token_id)}
+      onRowClick={(row) => selectMarket(getMarketTokenId(row))}
       selectedRowKey={activeTokenId}
     />
   </SectionCard>
@@ -546,11 +558,11 @@ export const MarketsPage = () => {
               </div>
               <div>
                 <dt>持仓份额</dt>
-                <dd>{formatDecimal(selectedMarket.position?.shares)}</dd>
+                <dd>{formatDecimal(getMarketPosition(selectedMarket)?.shares)}</dd>
               </div>
               <div>
                 <dt>未完成订单数</dt>
-                <dd>{selectedMarket.open_order_count}</dd>
+                <dd>{getMarketOpenOrderCount(selectedMarket)}</dd>
               </div>
               <div>
                 <dt>最小下单量</dt>

@@ -21,6 +21,7 @@ import {
   formatWorkerStateLabel,
 } from '../../shared/utils/labels'
 import { hasPositiveShares } from '../../shared/utils/markets'
+import { getMarketPosition, getMarketTokenId } from '../../shared/utils/marketViews'
 import { resolveExtensionPresentation } from '../../extensions/registry'
 
 const boolTone = (value: boolean): 'success' | 'danger' => (value ? 'success' : 'danger')
@@ -108,7 +109,7 @@ export const DashboardPage = () => {
     [marketItems],
   )
   const positionMarkets = useMemo(
-    () => sortByEndDate(marketItems.filter((item) => hasPositiveShares(item.position?.shares))),
+    () => sortByEndDate(marketItems.filter((item) => hasPositiveShares(getMarketPosition(item)?.shares))),
     [marketItems],
   )
   const trackedPreview = trackedMarkets.slice(0, 6)
@@ -269,7 +270,7 @@ export const DashboardPage = () => {
                 {trackedPreview.map((item) => {
                   const title = item.market.event_title ?? item.market.market_slug
                   return (
-                    <li key={item.market.no_token_id} className="market-list__item">
+                    <li key={getMarketTokenId(item)} className="market-list__item">
                       <div className="market-list__main">
                         <EntityAvatar label={title} imageUrl={item.market.icon_url} size="sm" />
                         <div className="market-list__text">
@@ -320,7 +321,7 @@ export const DashboardPage = () => {
                 {positionPreview.map((item) => {
                   const title = item.market.event_title ?? item.market.market_slug
                   return (
-                    <li key={item.market.no_token_id} className="market-list__item">
+                    <li key={getMarketTokenId(item)} className="market-list__item">
                       <div className="market-list__main">
                         <EntityAvatar label={title} imageUrl={item.market.icon_url} size="sm" />
                         <div className="market-list__text">
@@ -341,7 +342,7 @@ export const DashboardPage = () => {
                         </div>
                       </div>
                       <div className="market-list__meta">
-                        <span>持仓 {formatDecimal(item.position?.shares)}</span>
+                        <span>持仓 {formatDecimal(getMarketPosition(item)?.shares)}</span>
                         <span>封盘 {formatFullDateTime(item.market.end_date)}</span>
                       </div>
                     </li>

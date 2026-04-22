@@ -12,7 +12,8 @@ from polymarket_trader.extension_api import (
     ExtensionContext,
 )
 from polymarket_trader.domain.account import AccountSnapshot
-from strategies.current.strategy import build_strategy
+from strategies.current.config import CurrentStrategyConfig
+from strategies.current.strategy import CurrentStrategy, build_strategy
 from tests.helpers.markets import build_binary_market
 
 
@@ -29,6 +30,22 @@ def test_current_strategy_exposes_remote_discovery_title_search_queries() -> Non
     assert [query.params for query in queries] == [
         {"title_search": "fdv"},
         {"title_search": "fully diluted valuation"},
+    ]
+
+
+def test_current_strategy_can_push_tag_slug_to_remote_discovery_queries() -> None:
+    strategy = CurrentStrategy(
+        config=CurrentStrategyConfig(
+            discovery_title_searches=("fdv",),
+            discovery_tag_slugs=("crypto",),
+        )
+    )
+
+    queries = strategy.discovery_queries()
+
+    assert [query.name for query in queries] == ["title_search:fdv|tag_slug:crypto"]
+    assert [query.params for query in queries] == [
+        {"title_search": "fdv", "tag_slug": "crypto"},
     ]
 
 

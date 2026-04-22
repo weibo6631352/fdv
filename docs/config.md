@@ -58,6 +58,7 @@
 - manifest：`src/strategies/current/manifest.py`
 - 入口：`src/strategies/current/strategy.py`
 - 配置：`src/strategies/current/config.py`
+- 远端 discovery 粗筛输入：`src/strategies/current/config.py` 的 `discovery_title_searches` / `discovery_tag_slugs`；官方 Gamma Events keyset 文档：<https://docs.polymarket.com/api-reference/events/list-events-keyset-pagination>
 - 市场筛选：`src/strategies/current/universe.py`
 - 交易决策：`src/strategies/current/trading.py`
 - 恢复与跟踪：`src/strategies/current/recovery.py` / `src/strategies/current/tracking.py`

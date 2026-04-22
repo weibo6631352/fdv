@@ -1,6 +1,7 @@
 # Python cache and test artifacts
 __pycache__/
 .pytest_cache/
+output/
 *.py[cod]
 *.egg-info/
 build/
@@ -16,6 +17,7 @@ frontend/dist/
 .dev-runtime/
 .playwright-cli/
 .worktrees/
+.frontend-test-build/
 
 # Local build packages
 .dist-packages/

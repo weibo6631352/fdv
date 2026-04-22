@@ -9,6 +9,7 @@ import { formatAddressShort, formatCompact, getString } from '../utils/format'
 import { formatPhaseLabel, formatSignatureTypeLabel } from '../utils/labels'
 import { StatusPill } from '../ui/StatusPill'
 import { hasPositiveShares } from '../utils/markets'
+import { getMarketPosition } from '../utils/marketViews'
 
 interface AppShellProps {
   children: ReactNode
@@ -79,7 +80,7 @@ export const AppShell = ({ children }: AppShellProps) => {
     runtimeQuery.data?.market_discovery.markets_seen_in_round ||
     0
   const positionMarketCount =
-    marketsQuery.data?.items.filter((item) => hasPositiveShares(item.position?.shares)).length ?? 0
+    marketsQuery.data?.items.filter((item) => hasPositiveShares(getMarketPosition(item)?.shares)).length ?? 0
 
   return (
     <div className="app-shell">

@@ -136,8 +136,8 @@ export interface MarketSummary {
   event_slug: string | null
   event_id: string | null
   event_title: string | null
-  no_token_id: string
-  yes_token_id: string | null
+  token_ids: string[]
+  outcomes: MarketOutcomeSummary[]
   icon_url: string | null
   end_date: string | null
   tick_size: string | null
@@ -155,6 +155,11 @@ export interface MarketSummary {
   matched_keywords: string[]
   trading_status: string
   reject_reason: string | null
+}
+
+export interface MarketOutcomeSummary {
+  token_id: string
+  outcome: string
 }
 
 export interface OrderbookLevel {
@@ -307,8 +312,13 @@ export interface TakerFeePreview {
 export interface MarketView {
   market: MarketSummary
   tracked: boolean
+  token_views: MarketTokenView[]
+}
+
+export interface MarketTokenView {
+  token_id: string
+  outcome: string
   orderbook: OrderbookSnapshot | null
-  yes_orderbook: OrderbookSnapshot | null
   position: PositionRecord | null
   open_orders: OrderRecord[]
   open_order_count: number
@@ -316,11 +326,6 @@ export interface MarketView {
   best_bid: string | null
   spread: string | null
   fee_preview: TakerFeePreview | null
-  yes_best_ask: string | null
-  yes_best_bid: string | null
-  yes_spread: string | null
-  yes_fee_preview: TakerFeePreview | null
-  entry_price_touched: boolean
 }
 
 export interface MidpointPayload {

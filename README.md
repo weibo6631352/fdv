@@ -7,7 +7,7 @@
 
 先看这几个文件：
 
-- 改 discovery 查询：[src/strategies/current/strategy.py](./src/strategies/current/strategy.py) 的 `discovery_queries()`，或 [src/strategies/current/config.py](./src/strategies/current/config.py) 的 `discovery_title_searches`
+- 改 discovery 粗筛：[src/strategies/current/config.py](./src/strategies/current/config.py) 的 `discovery_title_searches` / `discovery_tag_slugs`，或 [src/strategies/current/strategy.py](./src/strategies/current/strategy.py) 的 `discovery_queries()`；官方 Gamma Events keyset 文档见 <https://docs.polymarket.com/api-reference/events/list-events-keyset-pagination>
 - 改市场筛选：[src/strategies/current/universe.py](./src/strategies/current/universe.py)
 - 改策略配置：[src/strategies/current/config.py](./src/strategies/current/config.py)
 - 改分配、入场、退出：[src/strategies/current/trading.py](./src/strategies/current/trading.py)
