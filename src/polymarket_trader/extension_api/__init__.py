@@ -15,7 +15,6 @@ from polymarket_trader.extension_api.decisions import (
     UniverseDecision,
 )
 from polymarket_trader.extension_api.errors import ExtensionLoadError
-from polymarket_trader.extension_api.events import AuditEvent, DomainEventType, Fill, OutboxEvent
 from polymarket_trader.extension_api.hooks import ExtensionHooks, HookResult
 from polymarket_trader.extension_api.manifest import (
     BusinessExtension,
@@ -34,6 +33,7 @@ from polymarket_trader.extension_api.ports import (
     StrategyPorts,
     TelemetryPort,
 )
+from polymarket_trader.domain.events import AuditEvent, DomainEventType, Fill
 
 __all__ = (
     "AccountReadPort",
@@ -62,7 +62,6 @@ __all__ = (
     "MarketReadPort",
     "MarketTokenView",
     "OrderbookReadPort",
-    "OutboxEvent",
     "RecoveryDecision",
     "RuntimeReadPort",
     "StrategyAction",

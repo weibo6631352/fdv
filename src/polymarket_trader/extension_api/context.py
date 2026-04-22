@@ -3,16 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Mapping, Protocol, TYPE_CHECKING
+from typing import Any, Mapping, Protocol
 
 from polymarket_trader.domain.allocation import Allocation, AllocationPlan
 from polymarket_trader.domain.market import Market
 from polymarket_trader.domain.order import Order, OrderResult
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.domain.position import Position
-
-if TYPE_CHECKING:
-    from polymarket_trader.extension_api.decisions import EntryCandidate, MarketTokenView
+from polymarket_trader.extension_api.decisions import EntryCandidate, MarketTokenView
 
 
 class AccountSnapshotView(Protocol):
