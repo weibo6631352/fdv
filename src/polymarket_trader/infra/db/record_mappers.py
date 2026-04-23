@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 import logging
 from typing import Any, Mapping, Sequence
 
-from polymarket_trader.domain.account import AccountSnapshot, MarketPause, MarketPauseReason
+from polymarket_trader.domain.account import AccountSnapshot, MarketPause
 from polymarket_trader.domain.allocation import Allocation
 from polymarket_trader.domain.events import AuditEvent, Fill, OutboxEvent
 from polymarket_trader.domain.market import Market, MarketOutcome, TradingStatus
@@ -153,58 +153,31 @@ def _mapping(value: Any | None) -> dict[str, Any]:
     return {}
 
 
-def _pair_tuple(value: Any | None) -> tuple[tuple[str, str], ...]:
-    if not isinstance(value, (list, tuple)):
+def _market_pauses_from_record(market_pauses: Any | None) -> tuple[MarketPause, ...]:
+    if not isinstance(market_pauses, (list, tuple)):
         return ()
-    pairs: list[tuple[str, str]] = []
-    for item in value:
-        if isinstance(item, (list, tuple)) and len(item) >= 2:
-            first = _text(item[0])
-            second = _text(item[1]) or ""
-            if first is not None:
-                pairs.append((first, second))
-    return tuple(pairs)
-
-
-def _market_pauses_from_record(
-    market_pauses: Any | None,
-    paused_markets: Any | None,
-    pause_reasons: Any | None,
-) -> tuple[MarketPause, ...]:
-    if isinstance(market_pauses, (list, tuple)):
-        pauses: list[MarketPause] = []
-        for item in market_pauses:
-            if not isinstance(item, Mapping):
-                continue
-            condition_id = _text(item.get("condition_id"))
-            if condition_id is None:
-                continue
+    pauses: list[MarketPause] = []
+    for item in market_pauses:
+        if not isinstance(item, Mapping):
+            continue
+        condition_id = _text(item.get("condition_id"))
+        reason = _text(item.get("reason"))
+        source = _text(item.get("source"))
+        recoverable = _bool_or_none(item.get("recoverable"))
+        if condition_id is None or reason is None or source is None or recoverable is None:
+            continue
+        try:
             pauses.append(
                 MarketPause.build(
                     condition_id=condition_id,
-                    reason=_text(item.get("reason")) or MarketPauseReason.MANUAL_PAUSE,
-                    source=_text(item.get("source")),
-                    recoverable=_bool_or_none(item.get("recoverable")),
+                    reason=reason,
+                    source=source,
+                    recoverable=recoverable,
                 )
             )
-        if pauses:
-            return tuple(pauses)
-
-    reasons_by_condition_id = dict(_pair_tuple(pause_reasons))
-    condition_ids = list(_string_tuple(paused_markets))
-    for condition_id in reasons_by_condition_id:
-        if condition_id not in condition_ids:
-            condition_ids.append(condition_id)
-    return tuple(
-        MarketPause.build(
-            condition_id=condition_id,
-            reason=reasons_by_condition_id.get(
-                condition_id,
-                MarketPauseReason.MANUAL_PAUSE,
-            ),
-        )
-        for condition_id in condition_ids
-    )
+        except ValueError:
+            continue
+    return tuple(pauses)
 
 
 def _price_levels(value: Any | None) -> tuple[PriceLevel, ...]:
@@ -505,11 +478,7 @@ def account_snapshot_from_record(record: Mapping[str, Any]) -> AccountSnapshot |
         allowance_usdc=allowance_usdc,
         user_ws_connected=_bool(record.get("user_ws_connected"), False),
         allow_new_entries=_bool(record.get("allow_new_entries"), False),
-        market_pauses=_market_pauses_from_record(
-            record.get("market_pauses"),
-            record.get("paused_markets"),
-            record.get("pause_reasons"),
-        ),
+        market_pauses=_market_pauses_from_record(record.get("market_pauses")),
         last_reconcile_at=_datetime(record.get("last_reconcile_at")),
     )
 

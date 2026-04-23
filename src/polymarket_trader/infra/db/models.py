@@ -15,7 +15,7 @@ from polymarket_trader.domain.market import Market, MarketOutcome, TradingStatus
 from polymarket_trader.domain.order import Order, OrderResult, OrderSide, OrderStatus, OrderType
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
-from polymarket_trader.domain.account import AccountSnapshot, MarketPause, MarketPauseReason
+from polymarket_trader.domain.account import AccountSnapshot, MarketPause
 
 JsonValue = Any
 JsonMapping = Mapping[str, Any]
@@ -122,40 +122,35 @@ def _tuple_from_sequence(value: Any) -> tuple[str, ...]:
     return (text_value,) if text_value else ()
 
 
-def _pair_tuple_from_sequence(value: Any) -> tuple[tuple[str, str], ...]:
-    if not value:
+def _market_pause_payloads(pauses: tuple[MarketPause, ...]) -> list[dict[str, JsonValue]]:
+    return [_json_safe(pause.as_payload()) for pause in pauses]
+
+
+def _market_pauses_from_payload(value: Any) -> tuple[MarketPause, ...]:
+    if not isinstance(value, (list, tuple)):
         return ()
-    if not isinstance(value, (list, tuple, set, frozenset)):
-        return ()
-    pairs: list[tuple[str, str]] = []
+    pauses: list[MarketPause] = []
     for item in value:
-        if isinstance(item, (list, tuple)) and len(item) >= 2:
-            first = str(item[0]).strip()
-            second = str(item[1]).strip()
-            if first:
-                pairs.append((first, second))
-    return tuple(pairs)
-
-
-def _market_pauses_from_sequences(
-    paused_markets: Any,
-    pause_reasons: Any,
-) -> tuple[MarketPause, ...]:
-    reasons_by_condition_id = dict(_pair_tuple_from_sequence(pause_reasons))
-    condition_ids = list(_tuple_from_sequence(paused_markets))
-    for condition_id in reasons_by_condition_id:
-        if condition_id not in condition_ids:
-            condition_ids.append(condition_id)
-    return tuple(
-        MarketPause.build(
-            condition_id=condition_id,
-            reason=reasons_by_condition_id.get(
-                condition_id,
-                MarketPauseReason.MANUAL_PAUSE,
-            ),
-        )
-        for condition_id in condition_ids
-    )
+        if not isinstance(item, Mapping):
+            continue
+        condition_id = _text(item.get("condition_id"))
+        reason = _text(item.get("reason"))
+        source = _text(item.get("source"))
+        recoverable = item.get("recoverable")
+        if condition_id is None or reason is None or source is None or not isinstance(recoverable, bool):
+            continue
+        try:
+            pauses.append(
+                MarketPause.build(
+                    condition_id=condition_id,
+                    reason=reason,
+                    source=source,
+                    recoverable=recoverable,
+                )
+            )
+        except ValueError:
+            continue
+    return tuple(pauses)
 
 
 def _level_to_json(level: PriceLevel) -> dict[str, str]:
@@ -971,13 +966,7 @@ class AccountSnapshotModel(Base, TimestampMixin):
     allowance_usdc: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False, default=Decimal("0"))
     user_ws_connected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     allow_new_entries: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    paused_markets: Mapped[list[str]] = mapped_column(
-        JSONB,
-        nullable=False,
-        default=list,
-        server_default=text("'[]'::jsonb"),
-    )
-    pause_reasons: Mapped[list[list[str]]] = mapped_column(
+    market_pauses: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB,
         nullable=False,
         default=list,
@@ -1014,7 +1003,6 @@ class AccountSnapshotModel(Base, TimestampMixin):
             "market_pauses": [pause.as_payload() for pause in snapshot.market_pauses],
             "last_reconcile_at": _json_safe(snapshot.last_reconcile_at),
         }
-        pause_reason_pairs = [list(pause.as_reason_pair()) for pause in snapshot.market_pauses]
         return cls(
             account_key=account_key,
             trace_id=trace_id,
@@ -1022,8 +1010,7 @@ class AccountSnapshotModel(Base, TimestampMixin):
             allowance_usdc=snapshot.allowance_usdc,
             user_ws_connected=snapshot.user_ws_connected,
             allow_new_entries=snapshot.allow_new_entries,
-            paused_markets=[pause.condition_id for pause in snapshot.market_pauses],
-            pause_reasons=pause_reason_pairs,
+            market_pauses=_market_pause_payloads(snapshot.market_pauses),
             last_reconcile_at=snapshot.last_reconcile_at,
             raw_payload=payload,
         )
@@ -1034,10 +1021,7 @@ class AccountSnapshotModel(Base, TimestampMixin):
             allowance_usdc=_decimal(self.allowance_usdc) or Decimal("0"),
             user_ws_connected=bool(self.user_ws_connected),
             allow_new_entries=bool(self.allow_new_entries),
-            market_pauses=_market_pauses_from_sequences(
-                self.paused_markets,
-                self.pause_reasons,
-            ),
+            market_pauses=_market_pauses_from_payload(self.market_pauses),
             last_reconcile_at=(
                 None if self.last_reconcile_at is None else _ensure_aware(self.last_reconcile_at)
             ),

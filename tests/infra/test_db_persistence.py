@@ -3,9 +3,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from polymarket_trader.domain.account import (
+    AccountSnapshot,
+    MarketPause,
+    MarketPauseReason,
+    MarketPauseSource,
+)
 from polymarket_trader.domain.events import DomainEventType, OutboxEvent
 from polymarket_trader.domain.market import TradingStatus
-from polymarket_trader.infra.db.models import MarketModel
+from polymarket_trader.infra.db.models import AccountSnapshotModel, MarketModel
 from polymarket_trader.infra.db.record_mappers import (
     audit_event_from_record,
     fill_from_record,
@@ -100,6 +106,24 @@ def test_market_model_to_domain_prefers_fee_schedule_rate_from_raw_payload() -> 
 
     assert market.taker_base_fee_bps == 72
     assert market.fee_rate_bps == 72
+
+
+def test_account_snapshot_model_preserves_structured_market_pause_roundtrip() -> None:
+    pause = MarketPause.build(
+        condition_id="condition-1",
+        reason=MarketPauseReason.MARKET_NOT_TRADABLE,
+        source=MarketPauseSource.RISK,
+        recoverable=False,
+    )
+    snapshot = AccountSnapshot(
+        balance_usdc=Decimal("1"),
+        allowance_usdc=Decimal("1"),
+        market_pauses=(pause,),
+    )
+
+    restored = AccountSnapshotModel.from_domain(snapshot).to_domain()
+
+    assert restored.market_pauses == (pause,)
 
 
 def test_market_persistence_worker_skips_market_wide_record_without_structured_market() -> None:
