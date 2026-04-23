@@ -18,11 +18,13 @@ const WORKER_STATE_LABELS: Record<string, string> = {
   starting: '启动中',
   stopped: '已停止',
   idle: '空闲',
+  degraded: '降级运行',
   failed: '异常',
 }
 
 const TRADING_STATUS_LABELS: Record<string, string> = {
   active: '交易中',
+  candidate: '候选中',
   paused: '已暂停',
   closed: '已关闭',
   resolved: '已结算',
@@ -38,8 +40,15 @@ const ORDER_SIDE_LABELS: Record<string, string> = {
 const ORDER_STATUS_LABELS: Record<string, string> = {
   ok: '完成',
   success: '完成',
+  created: '已创建',
+  signed: '已签名',
+  submitted: '已提交',
+  cancel_requested: '撤单中',
   matched: '已成交',
+  full_fill: '已成交',
+  partial_fill: '部分成交',
   partially_filled: '部分成交',
+  no_fill: '未成交',
   live: '挂单中',
   placed: '已提交',
   failed: '失败',
@@ -50,6 +59,16 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
 const CONFIRMATION_STATUS_LABELS: Record<string, string> = {
   confirmed: '已确认',
   pending: '待确认',
+  matched: '已成交',
+  full_fill: '已成交',
+  partial_fill: '部分成交',
+  partially_filled: '部分成交',
+  no_fill: '未成交',
+  live: '挂单中',
+  rejected: '已拒绝',
+  failed: '失败',
+  cancelled: '已取消',
+  unknown_timeout: '超时未知',
   unknown: '未知',
 }
 
@@ -71,51 +90,68 @@ const ISSUE_FIELD_LABELS: Record<string, string> = {
   last_reconcile_at: '最近一次对账',
 }
 
-export const formatPhaseLabel = (value: string | null | undefined): string => {
+const normalizeLabelKey = (value: string | null | undefined): string | null => {
   if (!value) {
+    return null
+  }
+  const normalized = value.trim().toLowerCase()
+  return normalized || null
+}
+
+export const formatPhaseLabel = (value: string | null | undefined): string => {
+  const normalized = normalizeLabelKey(value)
+  if (!normalized) {
     return '—'
   }
-  return PHASE_LABELS[value] ?? value
+  return PHASE_LABELS[normalized] ?? value
 }
 
 export const formatWorkerStateLabel = (value: string | null | undefined): string => {
-  if (!value) {
+  const normalized = normalizeLabelKey(value)
+  if (!normalized) {
     return '未知'
   }
-  return WORKER_STATE_LABELS[value] ?? value
+  return WORKER_STATE_LABELS[normalized] ?? value
 }
 
 export const formatTradingStatusLabel = (value: string | null | undefined): string => {
-  if (!value) {
+  const normalized = normalizeLabelKey(value)
+  if (!normalized) {
     return '未知'
   }
-  return TRADING_STATUS_LABELS[value] ?? value
+  return TRADING_STATUS_LABELS[normalized] ?? value
 }
 
+export const isSellOrderSide = (value: string | null | undefined): boolean => normalizeLabelKey(value) === 'sell'
+
 export const formatOrderSideLabel = (value: string | null | undefined): string => {
-  if (!value) {
+  const normalized = normalizeLabelKey(value)
+  if (!normalized) {
     return '未知'
   }
-  return ORDER_SIDE_LABELS[value] ?? value
+  return ORDER_SIDE_LABELS[normalized] ?? value
 }
 
 export const formatOrderStatusLabel = (value: string | null | undefined): string => {
-  if (!value) {
+  const normalized = normalizeLabelKey(value)
+  if (!normalized) {
     return '未知'
   }
-  return ORDER_STATUS_LABELS[value] ?? value
+  return ORDER_STATUS_LABELS[normalized] ?? value
 }
 
 export const formatConfirmationStatusLabel = (value: string | null | undefined): string => {
-  if (!value) {
+  const normalized = normalizeLabelKey(value)
+  if (!normalized) {
     return '未知'
   }
-  return CONFIRMATION_STATUS_LABELS[value] ?? value
+  return CONFIRMATION_STATUS_LABELS[normalized] ?? value
 }
 
 export const formatIssueFieldLabel = (value: string | null | undefined): string => {
-  if (!value) {
+  const normalized = normalizeLabelKey(value)
+  if (!normalized) {
     return '未知字段'
   }
-  return ISSUE_FIELD_LABELS[value] ?? value
+  return ISSUE_FIELD_LABELS[normalized] ?? value
 }

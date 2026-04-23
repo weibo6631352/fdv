@@ -1,5 +1,6 @@
 import type { MarketTokenView, MarketView, OrderRecord, PositionRecord } from '../../core/api/types'
 import { hasPositiveShares } from './markets'
+import { isSellOrderSide } from './labels'
 
 const normalizeOutcome = (outcome: string): string => outcome.trim().toLowerCase()
 
@@ -52,4 +53,4 @@ export const getMarketOpenOrderCount = (market: MarketView): number =>
   )
 
 export const hasOpenSellOrders = (market: MarketView): boolean =>
-  getMarketOpenOrders(market).some((order) => order.side === 'sell')
+  getMarketOpenOrders(market).some((order) => isSellOrderSide(order.side))

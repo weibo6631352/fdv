@@ -85,7 +85,7 @@ const market = {
           token_id: 'no-token',
           market_slug: 'market-slug',
           event_slug: 'event-slug',
-          side: 'sell',
+          side: 'SELL',
           order_type: 'limit',
           price: '0.99',
           amount_usdc: null,

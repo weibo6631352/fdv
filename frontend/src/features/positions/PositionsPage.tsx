@@ -7,7 +7,7 @@ import { DataTable, type DataColumn } from '../../shared/ui/DataTable'
 import { MarketExternalLink } from '../../shared/ui/MarketExternalLink'
 import { StatusPill } from '../../shared/ui/StatusPill'
 import { formatDateTime, formatDecimal } from '../../shared/utils/format'
-import { formatConfirmationStatusLabel, formatOrderSideLabel } from '../../shared/utils/labels'
+import { formatConfirmationStatusLabel, formatOrderSideLabel, isSellOrderSide } from '../../shared/utils/labels'
 
 export const PositionsPage = () => {
   const [conditionId, setConditionId] = useState('')
@@ -91,7 +91,7 @@ export const PositionsPage = () => {
       key: 'side',
       header: '方向',
       cell: (row) => (
-        <StatusPill label={formatOrderSideLabel(row.side)} tone={row.side === 'sell' ? 'warning' : 'neutral'} />
+        <StatusPill label={formatOrderSideLabel(row.side)} tone={isSellOrderSide(row.side) ? 'warning' : 'neutral'} />
       ),
     },
     { key: 'price', header: '价格', align: 'right', cell: (row) => formatDecimal(row.price) },

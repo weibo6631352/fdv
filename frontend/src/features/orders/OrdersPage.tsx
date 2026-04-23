@@ -9,16 +9,24 @@ import { JsonPanel } from '../../shared/ui/JsonPanel'
 import { MarketExternalLink } from '../../shared/ui/MarketExternalLink'
 import { StatusPill } from '../../shared/ui/StatusPill'
 import { formatDateTime, formatDecimal } from '../../shared/utils/format'
-import { formatOrderSideLabel, formatOrderStatusLabel } from '../../shared/utils/labels'
+import { formatOrderSideLabel, formatOrderStatusLabel, isSellOrderSide } from '../../shared/utils/labels'
 
 const orderTone = (status: string): 'neutral' | 'success' | 'warning' | 'danger' => {
-  if (status === 'matched' || status === 'partially_filled') {
+  const normalized = status.trim().toLowerCase()
+  if (normalized === 'matched' || normalized === 'partially_filled') {
     return 'success'
   }
-  if (status === 'live' || status === 'placed') {
+  if (
+    normalized === 'created' ||
+    normalized === 'signed' ||
+    normalized === 'submitted' ||
+    normalized === 'cancel_requested' ||
+    normalized === 'live' ||
+    normalized === 'placed'
+  ) {
     return 'warning'
   }
-  if (status === 'failed' || status === 'rejected' || status === 'cancelled') {
+  if (normalized === 'failed' || normalized === 'rejected' || normalized === 'cancelled') {
     return 'danger'
   }
   return 'neutral'
@@ -88,7 +96,7 @@ export const OrdersPage = () => {
         header: '方向',
         cell: (row) => (
           <div className="badge-row">
-            <StatusPill label={formatOrderSideLabel(row.side)} tone={row.side === 'sell' ? 'warning' : 'neutral'} />
+            <StatusPill label={formatOrderSideLabel(row.side)} tone={isSellOrderSide(row.side) ? 'warning' : 'neutral'} />
             <StatusPill label={formatOrderStatusLabel(row.status)} tone={orderTone(row.status)} />
           </div>
         ),
