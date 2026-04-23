@@ -21,7 +21,7 @@ export interface RuntimeStatus {
   ready_to_trade: boolean
   automatic_trading_enabled?: boolean
   user_ws_connected: boolean
-  allow_new_buys: boolean
+  allow_new_entries: boolean
   last_reconcile_at: string | null
   portfolio_budget_usdc?: string | null
   queue_depth?: JsonValue
@@ -96,7 +96,7 @@ export interface PortfolioSnapshot {
   pause_count: number
   last_reconcile_at: string | null
   user_ws_connected: boolean
-  allow_new_buys: boolean
+  allow_new_entries: boolean
   markets_tracked: number
   recent_allocations: AllocationRecord[]
 }

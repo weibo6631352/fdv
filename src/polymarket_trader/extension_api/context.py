@@ -21,6 +21,9 @@ class AccountSnapshotView(Protocol):
     def allowance_usdc(self) -> Decimal: ...
 
     @property
+    def available_usdc(self) -> Decimal: ...
+
+    @property
     def positions(self) -> tuple[Position, ...]: ...
 
     @property

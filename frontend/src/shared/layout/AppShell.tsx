@@ -5,7 +5,7 @@ import { NavLink } from 'react-router-dom'
 import { adminApi } from '../../core/api/resources'
 import { resolveExtensionPresentation } from '../../extensions/registry'
 import { EntityAvatar } from '../ui/EntityAvatar'
-import { formatAddressShort, formatCompact, getString } from '../utils/format'
+import { formatAddressShort, formatAllowance, formatCompact, getString } from '../utils/format'
 import { formatPhaseLabel, formatSignatureTypeLabel } from '../utils/labels'
 import { StatusPill } from '../ui/StatusPill'
 import { hasPositiveShares } from '../utils/markets'
@@ -150,7 +150,7 @@ export const AppShell = ({ children }: AppShellProps) => {
               </div>
               <div className="top-metric">
                 <span>授权额度</span>
-                <strong>{formatCompact(portfolioQuery.data?.allowance_usdc)}</strong>
+                <strong>{formatAllowance(portfolioQuery.data?.allowance_usdc)}</strong>
               </div>
             </div>
           </div>

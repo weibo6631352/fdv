@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import StrEnum
@@ -26,11 +26,20 @@ from polymarket_trader.extension_api import (
 )
 
 
+_AUTO_RECOVERABLE_ACCOUNT_PAUSE_REASONS = frozenset(
+    {
+        "market_not_tradable",
+        "missing_primary_outcome",
+    }
+)
+
+
 class ReconcileActionType(StrEnum):
     CANCEL_ORDER = "cancel_order"
     SUBMIT_ORDER = "submit_order"
     REPLACE_ORDER = "replace_order"
     PAUSE_TRADING = "pause_trading"
+    RESUME_TRADING = "resume_trading"
 
 
 def _utc_now() -> datetime:
@@ -70,7 +79,7 @@ class ReconcileAction:
 
     @property
     def priority(self) -> int:
-        return 1 if self.action_type == ReconcileActionType.PAUSE_TRADING else 2
+        return 1 if self.action_type in {ReconcileActionType.PAUSE_TRADING, ReconcileActionType.RESUME_TRADING} else 2
 
     @property
     def merge_key(self) -> str:
@@ -185,29 +194,57 @@ class ReconcileService:
             )
             for outcome in market.outcomes
         )
+        account_pause_reason = _account_pause_reason(market, account_snapshot)
+        recovery_account_snapshot = _account_snapshot_for_recovery(
+            account_snapshot,
+            condition_id=market.condition_id,
+            account_pause_reason=account_pause_reason,
+        )
         recovery = self._extension_hooks.decide_recovery(
             ExtensionContext(
                 trace_id=trace_id,
                 market=market,
                 market_token_views=market_token_views,
-                account_snapshot=account_snapshot,
+                account_snapshot=recovery_account_snapshot,
                 position=position,
                 open_orders=open_orders,
             )
         )
 
+        sticky_account_pause = bool(account_pause_reason) and not _is_auto_recoverable_pause_reason(
+            account_pause_reason
+        )
         pause_trading = (
             market.trading_status in {TradingStatus.PAUSED, TradingStatus.CLOSED, TradingStatus.RESOLVED}
-            or account_snapshot.is_market_paused(market.condition_id)
+            or sticky_account_pause
             or recovery.pause_trading
         )
-        pause_reason = recovery.pause_reason or _pause_reason(market, account_snapshot)
+        pause_reason = _resolved_pause_reason(
+            market=market,
+            account_snapshot=account_snapshot,
+            account_pause_reason=account_pause_reason,
+            sticky_account_pause=sticky_account_pause,
+            recovery_pause_reason=recovery.pause_reason,
+            pause_trading=pause_trading,
+        )
 
         order_index = {
             _normalize_order_id(order): order
             for order in open_orders
         }
         actions: list[ReconcileAction] = []
+        if account_pause_reason and not pause_trading:
+            actions.append(
+                ReconcileAction(
+                    action_type=ReconcileActionType.RESUME_TRADING,
+                    trace_id=trace_id,
+                    condition_id=market.condition_id,
+                    token_id=None,
+                    market_slug=market.market_slug,
+                    reason="stale_pause_cleared",
+                    pause_reason=account_pause_reason,
+                )
+            )
         for decision in recovery.actions:
             intent = decision_to_managed_intent(
                 trace_id=trace_id,
@@ -316,4 +353,53 @@ def _pause_reason(market: Market, account_snapshot: AccountSnapshot) -> str:
         return market.reject_reason or "market_resolved"
     if account_snapshot.is_market_paused(market.condition_id):
         return dict(account_snapshot.pause_reasons).get(market.condition_id, "manual_pause")
+    return ""
+
+
+def _account_pause_reason(market: Market, account_snapshot: AccountSnapshot) -> str:
+    return dict(account_snapshot.pause_reasons).get(market.condition_id, "")
+
+
+def _is_auto_recoverable_pause_reason(reason: str) -> bool:
+    return reason in _AUTO_RECOVERABLE_ACCOUNT_PAUSE_REASONS
+
+
+def _account_snapshot_for_recovery(
+    account_snapshot: AccountSnapshot,
+    *,
+    condition_id: str,
+    account_pause_reason: str,
+) -> AccountSnapshot:
+    if not _is_auto_recoverable_pause_reason(account_pause_reason):
+        return account_snapshot
+    return replace(
+        account_snapshot,
+        paused_markets=tuple(
+            paused_condition_id
+            for paused_condition_id in account_snapshot.paused_markets
+            if paused_condition_id != condition_id
+        ),
+        pause_reasons=tuple(
+            item
+            for item in account_snapshot.pause_reasons
+            if item[0] != condition_id
+        ),
+    )
+
+
+def _resolved_pause_reason(
+    *,
+    market: Market,
+    account_snapshot: AccountSnapshot,
+    account_pause_reason: str,
+    sticky_account_pause: bool,
+    recovery_pause_reason: str | None,
+    pause_trading: bool,
+) -> str:
+    if sticky_account_pause and account_pause_reason:
+        return account_pause_reason
+    if recovery_pause_reason:
+        return recovery_pause_reason
+    if pause_trading:
+        return _pause_reason(market, account_snapshot)
     return ""

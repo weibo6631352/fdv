@@ -381,7 +381,7 @@ def _entry_account_inputs(
     if account_snapshot is None:
         return available_usdc, positions, open_orders
     if available_usdc is None:
-        available_usdc = account_snapshot.balance_usdc
+        available_usdc = account_snapshot.available_usdc
     positions = account_snapshot.positions if not positions else positions
     open_orders = account_snapshot.open_orders if not open_orders else open_orders
     return available_usdc, positions, open_orders

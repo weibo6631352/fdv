@@ -98,6 +98,8 @@ class AccountStateStore:
             if not connected:
                 self._last_reconcile_at = None
                 self._allow_new_entries = False
+            else:
+                self._allow_new_entries = self._entry_gate_can_open_locked()
             return self._publish_snapshot_locked()
 
     def set_allow_new_entries(self, allowed: bool) -> AccountSnapshot:

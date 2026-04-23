@@ -61,7 +61,7 @@ const ISSUE_FIELD_LABELS: Record<string, string> = {
   startup_reconcile: '启动对账',
   runtime: '运行态',
   user_ws_connected: '用户行情连接',
-  allow_new_buys: '允许新买入',
+  allow_new_entries: '允许新买入',
   last_reconcile_at: '最近一次对账',
 }
 

@@ -9,6 +9,8 @@ const compactFormatter = new Intl.NumberFormat('zh-CN', {
   maximumFractionDigits: 2,
 })
 
+const unlimitedAllowanceThreshold = 1_000_000_000_000
+
 export const formatDecimal = (value: string | number | null | undefined): string => {
   if (value === null || value === undefined || value === '') {
     return '—'
@@ -29,6 +31,20 @@ export const formatCompact = (value: string | number | null | undefined): string
     return String(value)
   }
   return compactFormatter.format(numericValue)
+}
+
+export const formatAllowance = (value: string | number | null | undefined): string => {
+  if (value === null || value === undefined || value === '') {
+    return '—'
+  }
+  const numericValue = Number(value)
+  if (Number.isNaN(numericValue)) {
+    return String(value)
+  }
+  if (numericValue >= unlimitedAllowanceThreshold) {
+    return '无限授权'
+  }
+  return numberFormatter.format(numericValue)
 }
 
 export const formatDateTime = (value: string | null | undefined): string => {

@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Callable, Protocol, cast
+from typing import Any, Awaitable, Callable, Protocol, TypeVar, cast
 
 from polymarket_trader.domain.events import Fill
 from polymarket_trader.domain.market import Market, TradingStatus
@@ -16,6 +16,8 @@ from polymarket_trader.runtime.registry import MarketRegistry, MarketRegistrySna
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 
 RegistrySnapshotProvider = Callable[[], MarketRegistrySnapshot]
+_AUTHORITY_CALL_TIMEOUT_S = 5.0
+_T = TypeVar("_T")
 
 
 class MarketAuthorityClient(Protocol):
@@ -324,25 +326,28 @@ class ReconcileAuthorityRefresher:
         for slug in (market.market_slug, market.event_slug):
             if not slug:
                 continue
-            try:
-                candidates = await self._gamma_client.list_markets(
+            candidates = await _await_authority(
+                f"gamma:{market.condition_id}:{slug}",
+                failures,
+                self._gamma_client.list_markets(
                     slug=str(slug),
                     active=None,
                     closed=None,
                     limit=25,
-                )
-                gamma_market = _pick_gamma_market(candidates, market)
-                if gamma_market is None:
-                    failures.append(f"gamma:{market.condition_id}:{slug}:not_found")
-                    continue
-                refreshed_market = self._merge_gamma_market(
-                    market,
-                    gamma_market.to_market(),
-                    gamma_market.clob_enabled,
-                )
-                return refreshed_market
-            except Exception as exc:  # pragma: no cover - external SDK failure path
-                failures.append(f"gamma:{market.condition_id}:{slug}:{exc}")
+                ),
+            )
+            if candidates is None:
+                continue
+            gamma_market = _pick_gamma_market(candidates, market)
+            if gamma_market is None:
+                failures.append(f"gamma:{market.condition_id}:{slug}:not_found")
+                continue
+            refreshed_market = self._merge_gamma_market(
+                market,
+                gamma_market.to_market(),
+                gamma_market.clob_enabled,
+            )
+            return refreshed_market
         return None
 
     async def _fetch_orderbook_snapshots(
@@ -354,14 +359,16 @@ class ReconcileAuthorityRefresher:
             return ()
         snapshots: list[OrderbookSnapshot] = []
         for token_id in market.token_ids:
-            try:
-                orderbook = await self._clob_client.get_orderbook(
+            orderbook = await _await_authority(
+                f"clob:{market.condition_id}:{token_id}",
+                failures,
+                self._clob_client.get_orderbook(
                     token_id,
                     market_slug=market.market_slug,
                     condition_id=market.condition_id,
-                )
-            except Exception as exc:  # pragma: no cover - external SDK failure path
-                failures.append(f"clob:{market.condition_id}:{token_id}:{exc}")
+                ),
+            )
+            if orderbook is None:
                 continue
             snapshots.append(orderbook.to_snapshot())
         return tuple(snapshots)
@@ -445,11 +452,11 @@ class ReconcileAuthorityRefresher:
         token_id = next(iter(market.token_ids), None)
         if token_id is None:
             return None
-        try:
-            return await self._clob_client.get_fee_rate(token_id)
-        except Exception as exc:  # pragma: no cover - external SDK failure path
-            failures.append(f"clob:fee_rate:{market.condition_id}:{token_id}:{exc}")
-            return None
+        return await _await_authority(
+            f"clob:fee_rate:{market.condition_id}:{token_id}",
+            failures,
+            self._clob_client.get_fee_rate(token_id),
+        )
 
     async def _fetch_positions(
         self,
@@ -457,10 +464,12 @@ class ReconcileAuthorityRefresher:
     ) -> tuple[Position, ...] | None:
         if self._data_client is None:
             return None
-        try:
-            positions = await self._data_client.list_positions()
-        except Exception as exc:  # pragma: no cover - external SDK failure path
-            failures.append(f"data:positions:{exc}")
+        positions = await _await_authority(
+            "data:positions",
+            failures,
+            self._data_client.list_positions(),
+        )
+        if positions is None:
             return None
         return tuple(position.to_position() for position in positions)
 
@@ -470,10 +479,12 @@ class ReconcileAuthorityRefresher:
     ) -> tuple[OrderRecord, ...] | None:
         if self._clob_client is None:
             return None
-        try:
-            orders = await self._clob_client.list_open_orders()
-        except Exception as exc:  # pragma: no cover - external SDK failure path
-            failures.append(f"clob:open_orders:{exc}")
+        orders = await _await_authority(
+            "clob:open_orders",
+            failures,
+            self._clob_client.list_open_orders(),
+        )
+        if orders is None:
             return None
         return tuple(order.to_order_record() for order in orders)
 
@@ -483,10 +494,12 @@ class ReconcileAuthorityRefresher:
     ) -> tuple[Fill, ...] | None:
         if self._clob_client is None:
             return None
-        try:
-            fills = await self._clob_client.list_fills()
-        except Exception as exc:  # pragma: no cover - external SDK failure path
-            failures.append(f"clob:fills:{exc}")
+        fills = await _await_authority(
+            "clob:fills",
+            failures,
+            self._clob_client.list_fills(),
+        )
+        if fills is None:
             return None
         return tuple(fill.to_fill() for fill in fills)
 
@@ -496,16 +509,32 @@ class ReconcileAuthorityRefresher:
     ) -> tuple[Decimal, Decimal, bool, bool]:
         if self._clob_client is None:
             return Decimal("0"), Decimal("0"), False, False
-        try:
-            balance = await self._clob_client.get_balance_allowance()
-        except Exception as exc:  # pragma: no cover - external SDK failure path
-            failures.append(f"clob:balance_allowance:{exc}")
+        balance = await _await_authority(
+            "clob:balance_allowance",
+            failures,
+            self._clob_client.get_balance_allowance(),
+        )
+        if balance is None:
             return Decimal("0"), Decimal("0"), False, False
         return balance.balance_usdc, balance.allowance_usdc, True, True
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+async def _await_authority(
+    label: str,
+    failures: list[str],
+    awaitable: Awaitable[_T],
+) -> _T | None:
+    try:
+        return await asyncio.wait_for(awaitable, timeout=_AUTHORITY_CALL_TIMEOUT_S)
+    except TimeoutError:
+        failures.append(f"{label}:timeout")
+    except Exception as exc:  # pragma: no cover - external SDK failure path
+        failures.append(f"{label}:{exc}")
+    return None
 
 
 def _pick_gamma_market(

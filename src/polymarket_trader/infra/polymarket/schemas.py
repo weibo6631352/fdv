@@ -34,6 +34,7 @@ from polymarket_trader.infra.polymarket.base_client import (
 )
 
 _FEE_RATE_DENOMINATOR = Decimal("1000")
+_USDC_BASE_UNITS = Decimal("1000000")
 
 
 def _utc_now() -> datetime:
@@ -114,6 +115,30 @@ def _coerce_decimal(value: Any | None) -> Decimal | None:
     return None
 
 
+def _coerce_collateral_usdc(value: Any | None) -> Decimal | None:
+    amount = _coerce_decimal(value)
+    if amount is None:
+        return None
+    return amount / _USDC_BASE_UNITS
+
+
+def _coerce_allowance_usdc(payload: Mapping[str, Any]) -> Decimal | None:
+    allowance = _coerce_collateral_usdc(_first_value(payload, "allowance"))
+    if allowance is not None:
+        return allowance
+    allowances = payload.get("allowances")
+    if not isinstance(allowances, Mapping):
+        return None
+    values = [
+        value
+        for value in (_coerce_collateral_usdc(raw_value) for raw_value in allowances.values())
+        if value is not None
+    ]
+    if not values:
+        return None
+    return max(values)
+
+
 def _coerce_int(value: Any | None) -> int | None:
     number = _coerce_decimal(value)
     if number is None:
@@ -182,6 +207,9 @@ def _string_tuple(value: Any | None) -> tuple[str, ...]:
         return ()
     if isinstance(value, str):
         value_text = value.strip()
+        if value_text and value_text[0] in '[{"':
+            with contextlib.suppress(TypeError, ValueError):
+                return _string_tuple(loads(value_text))
         return (value_text,) if value_text else ()
     if isinstance(value, Mapping):
         mapping_items: list[str] = []
@@ -1160,8 +1188,8 @@ def normalize_position_payload(payload: Mapping[str, Any]) -> DataPositionDTO:
 
 def normalize_balance_allowance_payload(payload: Mapping[str, Any]) -> BalanceAllowanceDTO:
     normalized = _unwrap_mapping(payload)
-    balance = _coerce_decimal(_first_value(normalized, "balance"))
-    allowance = _coerce_decimal(_first_value(normalized, "allowance"))
+    balance = _coerce_collateral_usdc(_first_value(normalized, "balance"))
+    allowance = _coerce_allowance_usdc(normalized)
     return BalanceAllowanceDTO(
         raw=normalized,
         balance_usdc=balance or Decimal("0"),

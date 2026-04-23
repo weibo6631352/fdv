@@ -47,6 +47,9 @@ class ReconcileActionApplier:
     ) -> None:
         if action.action_type == ReconcileActionType.PAUSE_TRADING:
             return
+        if action.action_type == ReconcileActionType.RESUME_TRADING:
+            await self._apply_resume(action)
+            return
         if action.action_type == ReconcileActionType.CANCEL_ORDER:
             await self._apply_cancel(action, account_snapshot)
             return
@@ -57,6 +60,10 @@ class ReconcileActionApplier:
             await self._apply_submit_order(action, market, account_snapshot)
             return
         raise RuntimeError(f"unsupported reconcile action: {action.action_type}")
+
+    async def _apply_resume(self, action: ReconcileAction) -> None:
+        if self._account_state_store is not None:
+            self._account_state_store.resume_market(action.condition_id)
 
     async def _apply_cancel(self, action: ReconcileAction, account_snapshot: AccountSnapshot) -> None:
         cancel_intent = action.intent

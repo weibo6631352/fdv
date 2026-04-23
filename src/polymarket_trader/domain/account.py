@@ -22,6 +22,10 @@ class AccountSnapshot:
     pause_reasons: tuple[tuple[str, str], ...] = ()
     last_reconcile_at: datetime | None = None
 
+    @property
+    def available_usdc(self) -> Decimal:
+        return min(self.balance_usdc, self.allowance_usdc)
+
     def get_position(self, condition_id: str, token_id: str) -> Position | None:
         for position in self.positions:
             if position.condition_id == condition_id and position.token_id == token_id:

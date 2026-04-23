@@ -513,7 +513,7 @@ class AdminService:
             return {
                 "balance_usdc": decimal_text(account.balance_usdc),
                 "allowance_usdc": decimal_text(account.allowance_usdc),
-                "available_usdc": decimal_text(account.balance_usdc),
+                "available_usdc": decimal_text(account.available_usdc),
                 "position_count": len(account.positions),
                 "open_order_count": len(account.open_orders),
                 "fill_count": len(account.fills),
@@ -532,7 +532,7 @@ class AdminService:
         return {
             "balance_usdc": decimal_text(account.balance_usdc),
             "allowance_usdc": decimal_text(account.allowance_usdc),
-            "available_usdc": decimal_text(account.balance_usdc),
+            "available_usdc": decimal_text(account.available_usdc),
             "position_count": len(account.positions),
             "open_order_count": len(account.open_orders),
             "fill_count": len(account.fills),

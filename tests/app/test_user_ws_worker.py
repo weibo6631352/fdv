@@ -81,6 +81,24 @@ def test_user_ws_worker_requires_reconcile_after_reconnect_before_buying_resumes
     asyncio.run(run())
 
 
+def test_user_ws_worker_opens_entry_gate_when_first_connection_follows_reconcile() -> None:
+    async def run() -> None:
+        store = AccountStateStore()
+        worker = UserWsWorker(account_state_store=store)
+
+        store.mark_reconciled()
+        assert store.snapshot().user_ws_connected is False
+        assert store.snapshot().allow_new_entries is False
+
+        reconnected = await worker.set_connection_state(True, trace_id="trace-connect-after-reconcile")
+
+        assert reconnected.snapshot.user_ws_connected is True
+        assert reconnected.snapshot.last_reconcile_at is not None
+        assert reconnected.snapshot.allow_new_entries is True
+
+    asyncio.run(run())
+
+
 def test_user_ws_worker_builds_official_subscription_payload_and_processes_official_messages() -> None:
     async def run() -> None:
         store = AccountStateStore()

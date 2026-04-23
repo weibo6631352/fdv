@@ -37,8 +37,10 @@ from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.runtime.registry import MarketRegistry
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
+import polymarket_trader.workers.reconcile_authority_refresher as reconcile_authority_refresher_module
 from polymarket_trader.workers.reconcile_authority_refresher import ReconcileAuthorityRefresher
 from polymarket_trader.workers.reconcile_worker import ReconcileWorker
+from strategies.current.strategy import build_strategy
 from tests.helpers.markets import build_binary_market
 
 
@@ -237,6 +239,78 @@ def _reconcile_service() -> ReconcileService:
     return ReconcileService(extension_hooks=_ReconcileHooks())
 
 
+def test_reconcile_worker_resumes_stale_strategy_pause_when_market_recovers() -> None:
+    async def run() -> None:
+        registry = MarketRegistry()
+        market = build_binary_market(
+            condition_id="condition",
+            market_slug="token-threshold-market",
+            no_token_id="token",
+            yes_token_id="yes-token",
+            tick_size=Decimal("0.01"),
+            min_order_size=Decimal("1"),
+            event_title="Will token reach a threshold?",
+            market_question="Will this project hit the target threshold?",
+            category="Crypto",
+            trading_status=TradingStatus.ELIGIBLE,
+        )
+        registry.upsert(market)
+
+        account_state_store = AccountStateStore()
+        account_state_store.pause_market("condition", reason="missing_primary_outcome")
+
+        worker = ReconcileWorker(
+            reconcile_service=_reconcile_service(),
+            registry_snapshot_provider=registry.snapshot,
+            account_state_store=account_state_store,
+        )
+
+        result = await worker.reconcile_once(trace_id="trace-resume-stale-pause")
+
+        action_types = {action.action_type for action in result.plan.market_plans[0].actions}
+        assert ReconcileActionType.RESUME_TRADING in action_types
+        assert not account_state_store.snapshot().is_market_paused("condition")
+
+    asyncio.run(run())
+
+
+def test_reconcile_worker_resumes_stale_missing_primary_pause_with_current_strategy() -> None:
+    async def run() -> None:
+        registry = MarketRegistry()
+        market = build_binary_market(
+            condition_id="condition",
+            market_slug="token-threshold-market",
+            no_token_id="token",
+            yes_token_id="yes-token",
+            tick_size=Decimal("0.01"),
+            min_order_size=Decimal("1"),
+            event_title="Will token reach a threshold?",
+            market_question="Will this project hit the target threshold?",
+            category="Crypto",
+            trading_status=TradingStatus.ELIGIBLE,
+        )
+        registry.upsert(market)
+
+        account_state_store = AccountStateStore()
+        account_state_store.pause_market("condition", reason="missing_primary_outcome")
+
+        worker = ReconcileWorker(
+            reconcile_service=ReconcileService(extension_hooks=build_strategy().hooks),
+            registry_snapshot_provider=registry.snapshot,
+            account_state_store=account_state_store,
+        )
+
+        result = await worker.reconcile_once(trace_id="trace-current-resume-stale-pause")
+
+        market_plan = result.plan.market_plans[0]
+        action_types = {action.action_type for action in market_plan.actions}
+        assert market_plan.pause_trading is False
+        assert ReconcileActionType.RESUME_TRADING in action_types
+        assert not account_state_store.snapshot().is_market_paused("condition")
+
+    asyncio.run(run())
+
+
 class _StubGammaMarket:
     def __init__(self, market: Market) -> None:
         self.condition_id = market.condition_id
@@ -301,6 +375,29 @@ class _StubAccountClobClient:
             balance_usdc=self._balance,
             allowance_usdc=self._allowance,
         )
+
+
+class _SlowAccountClobClient:
+    async def list_open_orders(self) -> tuple[OrderRecord, ...]:
+        await asyncio.sleep(1)
+        return ()
+
+    async def list_fills(self) -> tuple[object, ...]:
+        await asyncio.sleep(1)
+        return ()
+
+    async def get_balance_allowance(self) -> SimpleNamespace:
+        await asyncio.sleep(1)
+        return SimpleNamespace(
+            balance_usdc=Decimal("0"),
+            allowance_usdc=Decimal("0"),
+        )
+
+
+class _SlowPositionsDataClient:
+    async def list_positions(self) -> tuple[Position, ...]:
+        await asyncio.sleep(1)
+        return ()
 
 
 def test_reconcile_worker_cancels_open_buy_and_recovers_missing_sell() -> None:
@@ -672,6 +769,38 @@ def test_reconcile_authority_refresher_refreshes_account_balance_from_clob_balan
         assert snapshot.allowance_usdc == Decimal("90")
         assert summary.refreshed_balance is True
         assert summary.refreshed_allowance is True
+
+    asyncio.run(run())
+
+
+def test_reconcile_authority_refresher_times_out_slow_account_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(reconcile_authority_refresher_module, "_AUTHORITY_CALL_TIMEOUT_S", 0.01)
+
+    async def run() -> None:
+        account_state_store = AccountStateStore()
+        refresher = ReconcileAuthorityRefresher(
+            account_state_store=account_state_store,
+            data_client=_SlowPositionsDataClient(),
+            clob_client=_SlowAccountClobClient(),
+            trading_client=object(),
+        )
+
+        summary = await refresher.refresh_account(
+            trace_id="trace-reconcile-timeout",
+            markets=(),
+        )
+
+        assert summary.refreshed_positions == 0
+        assert summary.refreshed_open_orders == 0
+        assert summary.refreshed_fills == 0
+        assert summary.refreshed_balance is False
+        assert summary.refreshed_allowance is False
+        assert set(summary.failures) == {
+            "data:positions:timeout",
+            "clob:open_orders:timeout",
+            "clob:fills:timeout",
+            "clob:balance_allowance:timeout",
+        }
 
     asyncio.run(run())
 

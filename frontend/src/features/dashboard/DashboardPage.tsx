@@ -11,6 +11,7 @@ import {
   formatDateTime,
   formatFullDateTime,
   formatDecimal,
+  formatAllowance,
   getString,
 } from '../../shared/utils/format'
 import {
@@ -144,7 +145,7 @@ export const DashboardPage = () => {
         <div className="stat-card">
           <span>组合余额</span>
           <strong>{formatCompact(portfolioQuery.data?.balance_usdc)}</strong>
-          <small>授权额度 {formatCompact(portfolioQuery.data?.allowance_usdc)}</small>
+          <small>授权额度 {formatAllowance(portfolioQuery.data?.allowance_usdc)}</small>
         </div>
         <div className="stat-card">
           <span>全量扫描面</span>
@@ -182,8 +183,8 @@ export const DashboardPage = () => {
               <dt>允许新买入</dt>
               <dd>
                 <StatusPill
-                  label={readyQuery.data?.runtime.allow_new_buys ? '打开' : '关闭'}
-                  tone={boolTone(readyQuery.data?.runtime.allow_new_buys ?? false)}
+                  label={readyQuery.data?.runtime.allow_new_entries ? '打开' : '关闭'}
+                  tone={boolTone(readyQuery.data?.runtime.allow_new_entries ?? false)}
                 />
               </dd>
             </div>
@@ -223,7 +224,7 @@ export const DashboardPage = () => {
             </div>
             <div>
               <dt>授权额度</dt>
-              <dd>{formatDecimal(portfolioQuery.data?.allowance_usdc)}</dd>
+              <dd>{formatAllowance(portfolioQuery.data?.allowance_usdc)}</dd>
             </div>
             <div>
               <dt>可用余额</dt>

@@ -703,6 +703,9 @@ def run_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert portfolio["allow_new_entries"] is True
         assert portfolio["markets_tracked"] == 1
         assert portfolio["position_count"] == 1
+        assert portfolio["balance_usdc"] == "100"
+        assert portfolio["allowance_usdc"] == "90"
+        assert portfolio["available_usdc"] == "90"
 
 
 def run_create_app_registers_expected_routes() -> None:
