@@ -71,9 +71,12 @@ export const AppShell = ({ children }: AppShellProps) => {
 
   const ready = readyQuery.data?.ready_to_trade ?? false
   const phase = readyQuery.data?.phase ?? runtimeQuery.data?.phase ?? 'starting'
-  const walletAddress = runtimeQuery.data?.identity.wallet_address ?? null
-  const funderAddress = runtimeQuery.data?.identity.funder_address ?? null
   const identityDisplay = resolvePolymarketIdentityDisplay(runtimeQuery.data?.identity)
+  const identityDetailParts = [
+    identityDisplay.walletAddress ? `钱包 ${formatAddressShort(identityDisplay.walletAddress)}` : null,
+    identityDisplay.funderAddress ? `出资 ${formatAddressShort(identityDisplay.funderAddress)}` : null,
+    formatSignatureTypeLabel(runtimeQuery.data?.identity.signature_type),
+  ].filter((item): item is string => Boolean(item))
   const trackedMarketCount = runtimeQuery.data?.registry.market_count ?? marketsQuery.data?.total ?? 0
   const fullScanMarketCount =
     runtimeQuery.data?.market_discovery.last_completed_round_markets ||
@@ -128,11 +131,7 @@ export const AppShell = ({ children }: AppShellProps) => {
                   {identityDisplay.title}
                   {identityDisplay.verified ? <span className="top-account__verified">已认证</span> : null}
                 </strong>
-                <span>
-                  Polymarket {formatAddressShort(identityDisplay.profileAddress)} · 钱包{' '}
-                  {formatAddressShort(walletAddress)} · 出资 {formatAddressShort(funderAddress)} ·{' '}
-                  {formatSignatureTypeLabel(runtimeQuery.data?.identity.signature_type)}
-                </span>
+                <span>{identityDetailParts.join(' · ')}</span>
               </div>
             </div>
             <div className="top-metric-list" aria-label="运行概览">

@@ -21,6 +21,8 @@ const profileDisplay = resolvePolymarketIdentityDisplay({
 assert(profileDisplay.title === 'FDV Trader', 'profile display should use the Polymarket username')
 assert(profileDisplay.imageUrl === 'https://example.com/avatar.png', 'profile display should use the Polymarket avatar')
 assert(profileDisplay.verified, 'profile display should expose verified profile state')
+assert(profileDisplay.walletAddress === '0x1111111111111111111111111111111111111111', 'wallet address should remain visible')
+assert(profileDisplay.funderAddress === null, 'funder address should not repeat when it is the profile address')
 
 const pseudonymDisplay = resolvePolymarketIdentityDisplay({
   wallet_address: '0x1111111111111111111111111111111111111111',

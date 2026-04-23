@@ -1,5 +1,6 @@
 import type { PortfolioSnapshot, ReadyPayload, RuntimeStatus } from '../src/core/api/types'
 import { formatAllowance } from '../src/shared/utils/format'
+import { formatPhaseLabel } from '../src/shared/utils/labels'
 
 const assert = (condition: unknown, message: string): void => {
   if (!condition) {
@@ -43,6 +44,12 @@ const portfolio = {
 
 assert(readyPayload.runtime.allow_new_entries, 'ready runtime should expose allow_new_entries')
 assert(portfolio.allow_new_entries, 'portfolio should expose allow_new_entries')
+assert(formatPhaseLabel('trading_enabled') === '交易已启用', 'trading_enabled should render as Chinese')
+assert(formatPhaseLabel('config_loading') === '读取配置中', 'config_loading should render as Chinese')
+assert(formatPhaseLabel('infra_ready') === '基础设施已就绪', 'infra_ready should render as Chinese')
+assert(formatPhaseLabel('reconciling') === '启动对账中', 'reconciling should render as Chinese')
+assert(formatPhaseLabel('stopping') === '停止中', 'stopping should render as Chinese')
+assert(formatPhaseLabel('stopped') === '已停止', 'stopped should render as Chinese')
 assert(formatAllowance('5') === '5', 'finite allowance should display as a number')
 assert(
   formatAllowance('115792089237316195423570985008687907853269984665640564039457584007.913129639935') ===

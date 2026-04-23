@@ -1,9 +1,15 @@
 const PHASE_LABELS: Record<string, string> = {
+  config_loading: '读取配置中',
+  infra_ready: '基础设施已就绪',
   starting: '启动中',
+  reconciling: '启动对账中',
   workers_started: '后台线程已启动',
+  trading_enabled: '交易已启用',
   degraded: '降级运行',
   recovering_snapshot: '恢复快照中',
   paused: '已暂停',
+  stopping: '停止中',
+  stopped: '已停止',
 }
 
 const WORKER_STATE_LABELS: Record<string, string> = {
