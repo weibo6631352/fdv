@@ -14,9 +14,8 @@ export interface PolymarketIdentityDisplay {
   title: string
   imageUrl: string | null
   verified: boolean
-  profileAddress: string | null
-  walletAddress: string | null
-  funderAddress: string | null
+  tradingAccountAddress: string | null
+  signingWalletAddress: string | null
   xUsername: string | null
 }
 
@@ -37,14 +36,14 @@ export const resolvePolymarketIdentityDisplay = (
   const profileAddress = cleanText(identity?.profile_address)
   const walletAddress = cleanText(identity?.wallet_address)
   const funderAddress = cleanText(identity?.funder_address)
+  const tradingAccountAddress = funderAddress ?? profileAddress
 
   return {
     title: profileName ?? pseudonym ?? 'Polymarket 资料未解析',
     imageUrl: cleanText(identity?.profile_image),
     verified: identity?.profile_verified === true,
-    profileAddress,
-    walletAddress,
-    funderAddress: sameAddress(funderAddress, profileAddress) ? null : funderAddress,
+    tradingAccountAddress,
+    signingWalletAddress: sameAddress(walletAddress, tradingAccountAddress) ? null : walletAddress,
     xUsername: cleanText(identity?.profile_x_username),
   }
 }

@@ -75,12 +75,6 @@ const STATUS_REASON_LABELS: Record<string, string> = {
   background_workers_started: '后台线程已启动',
 }
 
-const SIGNATURE_TYPE_LABELS: Record<number, string> = {
-  0: 'EOA 直签',
-  1: '代理钱包',
-  2: 'Safe',
-}
-
 export const formatPhaseLabel = (value: string | null | undefined): string => {
   if (!value) {
     return '—'
@@ -135,11 +129,4 @@ export const formatStatusReasonLabel = (value: string | null | undefined): strin
     return '—'
   }
   return STATUS_REASON_LABELS[value] ?? value
-}
-
-export const formatSignatureTypeLabel = (value: number | null | undefined): string => {
-  if (value === null || value === undefined) {
-    return '—'
-  }
-  return SIGNATURE_TYPE_LABELS[value] ?? String(value)
 }

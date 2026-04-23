@@ -7,7 +7,7 @@ import { resolveExtensionPresentation } from '../../extensions/registry'
 import { EntityAvatar } from '../ui/EntityAvatar'
 import { formatAddressShort, formatAllowance, formatCompact, getString } from '../utils/format'
 import { resolvePolymarketIdentityDisplay } from '../utils/identity'
-import { formatPhaseLabel, formatSignatureTypeLabel } from '../utils/labels'
+import { formatPhaseLabel } from '../utils/labels'
 import { StatusPill } from '../ui/StatusPill'
 import { hasPositiveShares } from '../utils/markets'
 import { getMarketPosition } from '../utils/marketViews'
@@ -73,9 +73,8 @@ export const AppShell = ({ children }: AppShellProps) => {
   const phase = readyQuery.data?.phase ?? runtimeQuery.data?.phase ?? 'starting'
   const identityDisplay = resolvePolymarketIdentityDisplay(runtimeQuery.data?.identity)
   const identityDetailParts = [
-    identityDisplay.walletAddress ? `钱包 ${formatAddressShort(identityDisplay.walletAddress)}` : null,
-    identityDisplay.funderAddress ? `出资 ${formatAddressShort(identityDisplay.funderAddress)}` : null,
-    formatSignatureTypeLabel(runtimeQuery.data?.identity.signature_type),
+    identityDisplay.tradingAccountAddress ? `交易账户 ${formatAddressShort(identityDisplay.tradingAccountAddress)}` : null,
+    identityDisplay.signingWalletAddress ? `签名钱包 ${formatAddressShort(identityDisplay.signingWalletAddress)}` : null,
   ].filter((item): item is string => Boolean(item))
   const trackedMarketCount = runtimeQuery.data?.registry.market_count ?? marketsQuery.data?.total ?? 0
   const fullScanMarketCount =
