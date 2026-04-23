@@ -586,7 +586,6 @@
 
 - `phase`
 - `automatic_trading_enabled`
-- `status_reason`
 - `queue_depths`
 - `scheduler`
 - `workers`
@@ -601,7 +600,6 @@
 
 - `phase`
 - `automatic_trading_enabled`
-- `status_reason`
 - `queue_depths`
 - `metrics`
 

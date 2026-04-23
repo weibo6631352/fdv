@@ -110,7 +110,6 @@ class Supervisor:
         self._outbox_depth_warn = max(1, outbox_depth_warn)
         self._reconcile_stale_after = timedelta(seconds=max(1, reconcile_stale_after_seconds))
         self._phase = RuntimePhase.CONFIG_LOADING
-        self._status_reason = "initializing"
         self._manual_pause_reason: str | None = None
         self._degraded_reason: str | None = None
         self._db_ready = False
@@ -169,9 +168,8 @@ class Supervisor:
             last_error=last_error,
         )
 
-    def set_phase(self, phase: RuntimePhase, *, reason: str = "") -> None:
+    def set_phase(self, phase: RuntimePhase) -> None:
         self._phase = phase
-        self._status_reason = reason or phase.value
 
     def mark_db_ready(self, ready: bool, *, reason: str = "") -> None:
         self._db_ready = ready
@@ -186,24 +184,20 @@ class Supervisor:
     def pause_trading(self, reason: str) -> None:
         self._manual_pause_reason = reason or "manual_pause"
         self._phase = RuntimePhase.PAUSED
-        self._status_reason = self._manual_pause_reason
 
     def resume_trading(self) -> None:
         self._manual_pause_reason = None
         if self._phase == RuntimePhase.PAUSED:
             self._phase = RuntimePhase.TRADING_ENABLED
-            self._status_reason = "trading_resumed"
 
     def mark_degraded(self, reason: str) -> None:
         self._degraded_reason = reason or "runtime_degraded"
         self._phase = RuntimePhase.DEGRADED
-        self._status_reason = self._degraded_reason
 
     def clear_degraded(self) -> None:
         self._degraded_reason = None
         if self._phase == RuntimePhase.DEGRADED:
             self._phase = RuntimePhase.WORKERS_STARTED
-            self._status_reason = "degradation_cleared"
 
     async def refresh(self) -> RuntimeSnapshot:
         queue_depths = _as_mapping(self._event_bus.snapshot())
@@ -215,20 +209,17 @@ class Supervisor:
                 self._degraded_reason = "p0_backpressure"
             if self._phase == RuntimePhase.TRADING_ENABLED:
                 self._phase = RuntimePhase.DEGRADED
-                self._status_reason = self._degraded_reason
         elif self._event_bus.low_priority_paused():
             await self._event_bus.resume_low_priority()
             if self._degraded_reason == "p0_backpressure":
                 self._degraded_reason = None
                 if self._manual_pause_reason is None:
                     self._phase = RuntimePhase.WORKERS_STARTED
-                    self._status_reason = "p0_backpressure_cleared"
 
         snapshot = self.snapshot()
         readiness = snapshot.readiness
         if readiness is not None and readiness.ready and self._manual_pause_reason is None:
             self._phase = RuntimePhase.TRADING_ENABLED
-            self._status_reason = "trading_enabled"
             snapshot = self.snapshot()
         return snapshot
 
@@ -263,7 +254,6 @@ class Supervisor:
             automatic_trading_enabled=automatic_trading_enabled,
             low_priority_paused=self._event_bus.low_priority_paused(),
             live=self._phase not in {RuntimePhase.STOPPING, RuntimePhase.STOPPED},
-            status_reason=self._status_reason,
             manual_pause_reason=self._manual_pause_reason,
             degraded_reason=self._degraded_reason,
             readiness=readiness,

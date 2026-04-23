@@ -122,7 +122,6 @@ export interface WorkerSnapshot {
 export interface WorkersPayload {
   phase: string
   automatic_trading_enabled: boolean
-  status_reason: string | null
   queue_depths: JsonValue
   scheduler: JsonValue
   workers: WorkerSnapshot[]
@@ -131,7 +130,6 @@ export interface WorkersPayload {
 export interface MetricsPayload {
   phase: string
   automatic_trading_enabled: boolean
-  status_reason: string | null
   queue_depths: JsonValue
   metrics: JsonValue
 }

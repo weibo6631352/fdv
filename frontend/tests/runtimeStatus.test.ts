@@ -1,4 +1,4 @@
-import type { PortfolioSnapshot, ReadyPayload, RuntimeStatus } from '../src/core/api/types'
+import type { PortfolioSnapshot, ReadyPayload, RuntimeStatus, WorkersPayload } from '../src/core/api/types'
 import { formatAllowance } from '../src/shared/utils/format'
 import { formatPhaseLabel } from '../src/shared/utils/labels'
 
@@ -27,6 +27,14 @@ const readyPayload = {
   runtime: runtimeStatus,
 } satisfies ReadyPayload
 
+const workersPayload = {
+  phase: 'trading_enabled',
+  automatic_trading_enabled: true,
+  queue_depths: {},
+  scheduler: null,
+  workers: [],
+} satisfies WorkersPayload
+
 const portfolio = {
   balance_usdc: '5',
   allowance_usdc: '5',
@@ -43,6 +51,7 @@ const portfolio = {
 } satisfies PortfolioSnapshot
 
 assert(readyPayload.runtime.allow_new_entries, 'ready runtime should expose allow_new_entries')
+assert(workersPayload.automatic_trading_enabled, 'workers payload should expose trading gate state')
 assert(portfolio.allow_new_entries, 'portfolio should expose allow_new_entries')
 assert(formatPhaseLabel('trading_enabled') === '交易已启用', 'trading_enabled should render as Chinese')
 assert(formatPhaseLabel('config_loading') === '读取配置中', 'config_loading should render as Chinese')

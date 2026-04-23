@@ -45,7 +45,13 @@ from polymarket_trader.infra.polymarket.order_executor import (
 )
 from polymarket_trader.logging import LoggingRuntime, configure_logging
 from polymarket_trader.observability.metrics import MetricsRegistry
-from polymarket_trader.runtime import RuntimePhase, Scheduler, Supervisor, WorkerLifecycleState
+from polymarket_trader.runtime import (
+    RuntimePhase,
+    Scheduler,
+    Supervisor,
+    WorkerLifecycleState,
+    trading_gate_reason,
+)
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.discovery_runner import (
     FullMarketDiscoveryState,
@@ -320,7 +326,7 @@ async def create_runtime(settings: Settings | None = None) -> RuntimeComponents:
 
 
 async def bootstrap_runtime(runtime: RuntimeComponents) -> RuntimeComponents:
-    runtime.supervisor.set_phase(RuntimePhase.CONFIG_LOADING, reason="loading_settings")
+    runtime.supervisor.set_phase(RuntimePhase.CONFIG_LOADING)
     _register_runtime_workers(runtime)
     _seed_default_metrics(runtime)
     _sync_runtime_metrics(runtime)
@@ -332,12 +338,12 @@ async def bootstrap_runtime(runtime: RuntimeComponents) -> RuntimeComponents:
         reason="trading_client_unavailable",
     )
 
-    runtime.supervisor.set_phase(RuntimePhase.INFRA_READY, reason="infra_initialized")
-    runtime.supervisor.set_phase(RuntimePhase.RECOVERING_SNAPSHOT, reason="loading_reference_state")
+    runtime.supervisor.set_phase(RuntimePhase.INFRA_READY)
+    runtime.supervisor.set_phase(RuntimePhase.RECOVERING_SNAPSHOT)
     loaded_reference = await _load_reference_state(runtime)
 
     reconcile_summary: dict[str, Any]
-    runtime.supervisor.set_phase(RuntimePhase.RECONCILING, reason="startup_reconcile")
+    runtime.supervisor.set_phase(RuntimePhase.RECONCILING)
     try:
         result = await _run_reconcile_once(runtime, source="startup")
         reconcile_summary = {
@@ -358,12 +364,12 @@ async def bootstrap_runtime(runtime: RuntimeComponents) -> RuntimeComponents:
     _start_background_tasks(runtime)
     _register_scheduler_jobs(runtime)
     runtime.scheduler.start_all()
-    runtime.supervisor.set_phase(RuntimePhase.WORKERS_STARTED, reason="background_workers_started")
+    runtime.supervisor.set_phase(RuntimePhase.WORKERS_STARTED)
     _sync_runtime_metrics(runtime)
     snapshot = await runtime.supervisor.refresh()
     runtime.metrics.set_trading_gate(
         snapshot.automatic_trading_enabled,
-        reason=snapshot.status_reason,
+        reason=trading_gate_reason(snapshot),
         source="supervisor",
     )
     runtime.bootstrap_summary.update(
@@ -381,7 +387,7 @@ async def bootstrap_runtime(runtime: RuntimeComponents) -> RuntimeComponents:
 
 
 async def shutdown_runtime(runtime: RuntimeComponents) -> None:
-    runtime.supervisor.set_phase(RuntimePhase.STOPPING, reason="shutdown_requested")
+    runtime.supervisor.set_phase(RuntimePhase.STOPPING)
     runtime.metrics.set_trading_gate(False, reason="shutdown", source="runtime")
     await runtime.scheduler.shutdown()
 
@@ -406,7 +412,7 @@ async def shutdown_runtime(runtime: RuntimeComponents) -> None:
     runtime.maintenance_thread_pool.shutdown(wait=False, cancel_futures=True)
     runtime.maintenance_process_pool.shutdown(wait=False, cancel_futures=True)
     runtime.logging_runtime.shutdown()
-    runtime.supervisor.set_phase(RuntimePhase.STOPPED, reason="shutdown_complete")
+    runtime.supervisor.set_phase(RuntimePhase.STOPPED)
 
 
 async def run() -> RuntimeComponents:
@@ -724,7 +730,7 @@ async def _run_supervisor_refresh(runtime: RuntimeComponents) -> None:
     snapshot = await runtime.supervisor.refresh()
     runtime.metrics.set_trading_gate(
         snapshot.automatic_trading_enabled,
-        reason=snapshot.status_reason,
+        reason=trading_gate_reason(snapshot),
         source="supervisor",
     )
 

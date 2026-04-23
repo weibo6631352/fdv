@@ -9,7 +9,7 @@ from polymarket_trader.domain.events import DomainEvent, DomainEventType
 from polymarket_trader.observability.metrics import MetricsRegistry
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
-from polymarket_trader.runtime.status import RuntimePhase
+from polymarket_trader.runtime.status import RuntimePhase, trading_gate_reason
 from polymarket_trader.runtime.supervisor import Supervisor
 
 
@@ -52,7 +52,7 @@ def _build_ready_runtime(
     )
     supervisor.mark_db_ready(True)
     supervisor.mark_trading_client_ready(True)
-    supervisor.set_phase(RuntimePhase.WORKERS_STARTED, reason="ready")
+    supervisor.set_phase(RuntimePhase.WORKERS_STARTED)
     return _ReadyRuntimeContext(
         event_bus=event_bus,
         supervisor=supervisor,
@@ -96,6 +96,7 @@ def test_supervisor_pauses_low_priority_when_trading_queue_backlog_exceeds_thres
         assert snapshot.readiness.ready is False
         assert "p0_backpressure" in snapshot.readiness.blocking_reasons
         assert snapshot.degraded_reason == "p0_backpressure"
+        assert trading_gate_reason(snapshot) == "p0_backpressure"
 
         assert await context.event_bus.next_trading_event()
 
@@ -106,6 +107,7 @@ def test_supervisor_pauses_low_priority_when_trading_queue_backlog_exceeds_thres
         assert resumed_snapshot.readiness.ready is True
         assert resumed_snapshot.automatic_trading_enabled is True
         assert resumed_snapshot.degraded_reason is None
+        assert trading_gate_reason(resumed_snapshot) is None
 
     asyncio.run(run())
 

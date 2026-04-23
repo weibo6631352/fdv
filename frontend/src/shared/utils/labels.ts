@@ -71,10 +71,6 @@ const ISSUE_FIELD_LABELS: Record<string, string> = {
   last_reconcile_at: '最近一次对账',
 }
 
-const STATUS_REASON_LABELS: Record<string, string> = {
-  background_workers_started: '后台线程已启动',
-}
-
 export const formatPhaseLabel = (value: string | null | undefined): string => {
   if (!value) {
     return '—'
@@ -122,11 +118,4 @@ export const formatIssueFieldLabel = (value: string | null | undefined): string 
     return '未知字段'
   }
   return ISSUE_FIELD_LABELS[value] ?? value
-}
-
-export const formatStatusReasonLabel = (value: string | null | undefined): string => {
-  if (!value) {
-    return '—'
-  }
-  return STATUS_REASON_LABELS[value] ?? value
 }

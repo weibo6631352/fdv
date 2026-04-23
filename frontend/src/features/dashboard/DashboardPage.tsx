@@ -17,7 +17,6 @@ import {
 import {
   formatIssueFieldLabel,
   formatPhaseLabel,
-  formatStatusReasonLabel,
   formatTradingStatusLabel,
   formatWorkerStateLabel,
 } from '../../shared/utils/labels'
@@ -217,10 +216,6 @@ export const DashboardPage = () => {
             <div>
               <dt>线程总数</dt>
               <dd>{workers.length}</dd>
-            </div>
-            <div>
-              <dt>状态原因</dt>
-              <dd>{formatStatusReasonLabel(workersQuery.data?.status_reason)}</dd>
             </div>
             <div>
               <dt>授权额度</dt>

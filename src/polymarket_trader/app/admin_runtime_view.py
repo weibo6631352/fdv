@@ -77,7 +77,6 @@ class AdminRuntimeView:
         return {
             "phase": runtime_status["phase"],
             "automatic_trading_enabled": bool(supervisor.get("automatic_trading_enabled")),
-            "status_reason": supervisor.get("status_reason"),
             "queue_depths": supervisor.get("queue_depths"),
             "scheduler": supervisor.get("scheduler"),
             "workers": list(supervisor.get("worker_health", ())),
@@ -89,7 +88,6 @@ class AdminRuntimeView:
         return {
             "phase": runtime_status["phase"],
             "automatic_trading_enabled": bool(supervisor.get("automatic_trading_enabled")),
-            "status_reason": supervisor.get("status_reason"),
             "queue_depths": supervisor.get("queue_depths"),
             "metrics": supervisor.get("metrics"),
         }

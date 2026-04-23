@@ -9,6 +9,7 @@ from polymarket_trader.runtime.status import (
     SchedulerSnapshot,
     WorkerHealth,
     WorkerLifecycleState,
+    trading_gate_reason,
 )
 from polymarket_trader.runtime.supervisor import Supervisor
 
@@ -22,4 +23,5 @@ __all__ = [
     "Supervisor",
     "WorkerHealth",
     "WorkerLifecycleState",
+    "trading_gate_reason",
 ]

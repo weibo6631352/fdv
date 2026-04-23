@@ -104,7 +104,6 @@ class RuntimeSnapshot:
     automatic_trading_enabled: bool
     low_priority_paused: bool
     live: bool
-    status_reason: str = ""
     manual_pause_reason: str | None = None
     degraded_reason: str | None = None
     readiness: ReadinessSnapshot | None = None
@@ -122,3 +121,15 @@ class RuntimeSnapshot:
 
     def as_dict(self) -> dict[str, Any]:
         return jsonable(self)
+
+
+def trading_gate_reason(snapshot: RuntimeSnapshot) -> str | None:
+    if snapshot.automatic_trading_enabled:
+        return None
+    if snapshot.manual_pause_reason:
+        return snapshot.manual_pause_reason
+    if snapshot.degraded_reason:
+        return snapshot.degraded_reason
+    if snapshot.readiness is not None and snapshot.readiness.blocking_reasons:
+        return snapshot.readiness.blocking_reasons[0]
+    return snapshot.phase.value

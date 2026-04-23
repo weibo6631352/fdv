@@ -532,7 +532,6 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
         automatic_trading_enabled=ready,
         low_priority_paused=False,
         live=True,
-        status_reason="trading_enabled" if ready else "recovering_snapshot",
         manual_pause_reason=None,
         degraded_reason=None,
         readiness=runtime_readiness,
@@ -661,6 +660,8 @@ def run_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert runtime_no_view["fee_preview"]["sell"]["fee_usdc"] == "3.09375"
         assert runtime_no_view["fee_preview"]["sell"]["price_source"] == "best_bid"
         assert workers["phase"] == "trading_enabled"
+        assert "status_reason" not in workers
+        assert "status_reason" not in metrics
         assert isinstance(workers["workers"], list)
         assert metrics["metrics"]["gauges"]["entry_signal_to_submit_ms"] == 42
 
