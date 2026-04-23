@@ -13,7 +13,7 @@ from polymarket_trader.app.reconcile_service import (
     ReconcileService,
 )
 from polymarket_trader.app.trading_service import TradingService
-from polymarket_trader.domain.account import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot, MarketPauseSource
 from polymarket_trader.domain.events import DomainEvent, DomainEventType, OutboxPriority
 from polymarket_trader.domain.market import Market, TradingStatus
 from polymarket_trader.runtime.account_state import AccountStateStore
@@ -22,6 +22,7 @@ from polymarket_trader.runtime.registry import MarketRegistry, MarketRegistrySna
 from polymarket_trader.workers.market_ws_worker import MarketWsWorker
 from polymarket_trader.workers.reconcile_action_applier import ReconcileActionApplier
 from polymarket_trader.workers.reconcile_authority_refresher import (
+    AuthoritativeRefreshFailure,
     AuthoritativeRefreshSummary,
     DataAuthorityClient,
     MarketAuthorityClient,
@@ -60,7 +61,7 @@ class ReconcileWorkerResultSummary:
     action_count: int
     applied_action_count: int
     failed_action_count: int
-    refresh_failures: tuple[str, ...]
+    refresh_failures: tuple[AuthoritativeRefreshFailure, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,7 +236,7 @@ class ReconcileWorker:
                 created_at=_utc_now(),
                 payload={
                     "market_count": len(plan.market_plans),
-                    "paused_markets": plan.paused_markets,
+                    "paused_market_count": plan.paused_market_count,
                     "diff_count": plan.diff_count,
                     "trigger_event_type": None if trigger_event is None else str(trigger_event.event_type),
                     "refresh_summary": refresh_summary.as_payload(),
@@ -270,6 +271,7 @@ class ReconcileWorker:
                     self._account_state_store.pause_market(
                         market_plan.market.condition_id,
                         reason=market_plan.pause_reason or "market_not_tradable",
+                        source=MarketPauseSource.RECONCILE,
                     )
                     working_snapshot = self._account_state_store.snapshot()
 

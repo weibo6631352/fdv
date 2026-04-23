@@ -795,12 +795,49 @@ def test_reconcile_authority_refresher_times_out_slow_account_refresh(monkeypatc
         assert summary.refreshed_fills == 0
         assert summary.refreshed_balance is False
         assert summary.refreshed_allowance is False
-        assert set(summary.failures) == {
-            "data:positions:timeout",
-            "clob:open_orders:timeout",
-            "clob:fills:timeout",
-            "clob:balance_allowance:timeout",
+        assert {
+            (failure.component, failure.operation, failure.reason)
+            for failure in summary.failures
+        } == {
+            ("data", "positions", "timeout"),
+            ("clob", "open_orders", "timeout"),
+            ("clob", "fills", "timeout"),
+            ("clob", "balance_allowance", "timeout"),
         }
+        assert summary.as_payload()["failures"] == [
+            {
+                "component": "data",
+                "operation": "positions",
+                "target": None,
+                "reason": "timeout",
+                "detail": "",
+                "retryable": True,
+            },
+            {
+                "component": "clob",
+                "operation": "open_orders",
+                "target": None,
+                "reason": "timeout",
+                "detail": "",
+                "retryable": True,
+            },
+            {
+                "component": "clob",
+                "operation": "fills",
+                "target": None,
+                "reason": "timeout",
+                "detail": "",
+                "retryable": True,
+            },
+            {
+                "component": "clob",
+                "operation": "balance_allowance",
+                "target": None,
+                "reason": "timeout",
+                "detail": "",
+                "retryable": True,
+            },
+        ]
 
     asyncio.run(run())
 

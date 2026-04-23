@@ -43,8 +43,7 @@ class AdminSerializer:
             "positions": len(account.positions),
             "open_orders": len(account.open_orders),
             "fills": len(account.fills),
-            "paused_markets": list(account.paused_markets),
-            "pause_reasons": [list(item) for item in account.pause_reasons],
+            "market_pauses": [pause.as_payload() for pause in account.market_pauses],
             "allow_new_entries": account.allow_new_entries,
             "user_ws_connected": account.user_ws_connected,
             "last_reconcile_at": jsonable(account.last_reconcile_at),
@@ -60,8 +59,7 @@ class AdminSerializer:
             "fills": [jsonable(fill) for fill in account.fills],
             "user_ws_connected": account.user_ws_connected,
             "allow_new_entries": account.allow_new_entries,
-            "paused_markets": list(account.paused_markets),
-            "pause_reasons": [list(item) for item in account.pause_reasons],
+            "market_pauses": [pause.as_payload() for pause in account.market_pauses],
             "last_reconcile_at": jsonable(account.last_reconcile_at),
         }
 
@@ -511,7 +509,7 @@ class AdminSerializer:
                 "trace_id": plan.trace_id,
                 "generated_at": jsonable(plan.generated_at),
                 "total_actions": plan.total_actions,
-                "paused_markets": plan.paused_markets,
+                "paused_market_count": plan.paused_market_count,
                 "diff_count": plan.diff_count,
                 "has_changes": plan.has_changes,
                 "market_plans": [

@@ -15,7 +15,7 @@ from polymarket_trader.domain.market import Market, MarketOutcome, TradingStatus
 from polymarket_trader.domain.order import Order, OrderResult, OrderSide, OrderStatus, OrderType
 from polymarket_trader.domain.orderbook import OrderbookSnapshot, PriceLevel
 from polymarket_trader.domain.position import Position
-from polymarket_trader.domain.account import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot, MarketPause, MarketPauseReason
 
 JsonValue = Any
 JsonMapping = Mapping[str, Any]
@@ -135,6 +135,27 @@ def _pair_tuple_from_sequence(value: Any) -> tuple[tuple[str, str], ...]:
             if first:
                 pairs.append((first, second))
     return tuple(pairs)
+
+
+def _market_pauses_from_sequences(
+    paused_markets: Any,
+    pause_reasons: Any,
+) -> tuple[MarketPause, ...]:
+    reasons_by_condition_id = dict(_pair_tuple_from_sequence(pause_reasons))
+    condition_ids = list(_tuple_from_sequence(paused_markets))
+    for condition_id in reasons_by_condition_id:
+        if condition_id not in condition_ids:
+            condition_ids.append(condition_id)
+    return tuple(
+        MarketPause.build(
+            condition_id=condition_id,
+            reason=reasons_by_condition_id.get(
+                condition_id,
+                MarketPauseReason.MANUAL_PAUSE,
+            ),
+        )
+        for condition_id in condition_ids
+    )
 
 
 def _level_to_json(level: PriceLevel) -> dict[str, str]:
@@ -990,10 +1011,10 @@ class AccountSnapshotModel(Base, TimestampMixin):
             "allowance_usdc": str(snapshot.allowance_usdc),
             "user_ws_connected": snapshot.user_ws_connected,
             "allow_new_entries": snapshot.allow_new_entries,
-            "paused_markets": list(snapshot.paused_markets),
-            "pause_reasons": [list(item) for item in snapshot.pause_reasons],
+            "market_pauses": [pause.as_payload() for pause in snapshot.market_pauses],
             "last_reconcile_at": _json_safe(snapshot.last_reconcile_at),
         }
+        pause_reason_pairs = [list(pause.as_reason_pair()) for pause in snapshot.market_pauses]
         return cls(
             account_key=account_key,
             trace_id=trace_id,
@@ -1001,8 +1022,8 @@ class AccountSnapshotModel(Base, TimestampMixin):
             allowance_usdc=snapshot.allowance_usdc,
             user_ws_connected=snapshot.user_ws_connected,
             allow_new_entries=snapshot.allow_new_entries,
-            paused_markets=list(snapshot.paused_markets),
-            pause_reasons=[list(item) for item in snapshot.pause_reasons],
+            paused_markets=[pause.condition_id for pause in snapshot.market_pauses],
+            pause_reasons=pause_reason_pairs,
             last_reconcile_at=snapshot.last_reconcile_at,
             raw_payload=payload,
         )
@@ -1013,8 +1034,10 @@ class AccountSnapshotModel(Base, TimestampMixin):
             allowance_usdc=_decimal(self.allowance_usdc) or Decimal("0"),
             user_ws_connected=bool(self.user_ws_connected),
             allow_new_entries=bool(self.allow_new_entries),
-            paused_markets=_tuple_from_sequence(self.paused_markets),
-            pause_reasons=_pair_tuple_from_sequence(self.pause_reasons),
+            market_pauses=_market_pauses_from_sequences(
+                self.paused_markets,
+                self.pause_reasons,
+            ),
             last_reconcile_at=(
                 None if self.last_reconcile_at is None else _ensure_aware(self.last_reconcile_at)
             ),

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import StrEnum
@@ -17,20 +17,12 @@ from polymarket_trader.domain.order import (
     SellOrderIntent,
 )
 from polymarket_trader.domain.position import Position
-from polymarket_trader.domain.account import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot, MarketPause
 from polymarket_trader.runtime.registry import MarketRegistrySnapshot
 from polymarket_trader.extension_api import (
     ExtensionHooks,
     MarketTokenView,
     ExtensionContext,
-)
-
-
-_AUTO_RECOVERABLE_ACCOUNT_PAUSE_REASONS = frozenset(
-    {
-        "market_not_tradable",
-        "missing_primary_outcome",
-    }
 )
 
 
@@ -115,7 +107,7 @@ class ReconcilePlan:
     generated_at: datetime
     market_plans: tuple[ReconcileMarketPlan, ...]
     total_actions: int
-    paused_markets: int
+    paused_market_count: int
 
     @property
     def diff_count(self) -> int:
@@ -123,7 +115,7 @@ class ReconcilePlan:
 
     @property
     def has_changes(self) -> bool:
-        return self.total_actions > 0 or self.paused_markets > 0
+        return self.total_actions > 0 or self.paused_market_count > 0
 
 
 class ReconcileService:
@@ -159,13 +151,13 @@ class ReconcileService:
             for market in markets
         )
         total_actions = sum(len(plan.actions) for plan in market_plans)
-        paused_markets = sum(1 for plan in market_plans if plan.pause_trading)
+        paused_market_count = sum(1 for plan in market_plans if plan.pause_trading)
         return ReconcilePlan(
             trace_id=trace_id,
             generated_at=_utc_now(),
             market_plans=market_plans,
             total_actions=total_actions,
-            paused_markets=paused_markets,
+            paused_market_count=paused_market_count,
         )
 
     def build_market_plan(
@@ -194,11 +186,11 @@ class ReconcileService:
             )
             for outcome in market.outcomes
         )
-        account_pause_reason = _account_pause_reason(market, account_snapshot)
+        account_pause = account_snapshot.pause_for_market(market.condition_id)
         recovery_account_snapshot = _account_snapshot_for_recovery(
             account_snapshot,
             condition_id=market.condition_id,
-            account_pause_reason=account_pause_reason,
+            account_pause=account_pause,
         )
         recovery = self._extension_hooks.decide_recovery(
             ExtensionContext(
@@ -211,9 +203,7 @@ class ReconcileService:
             )
         )
 
-        sticky_account_pause = bool(account_pause_reason) and not _is_auto_recoverable_pause_reason(
-            account_pause_reason
-        )
+        sticky_account_pause = account_pause is not None and not account_pause.recoverable
         pause_trading = (
             market.trading_status in {TradingStatus.PAUSED, TradingStatus.CLOSED, TradingStatus.RESOLVED}
             or sticky_account_pause
@@ -222,7 +212,7 @@ class ReconcileService:
         pause_reason = _resolved_pause_reason(
             market=market,
             account_snapshot=account_snapshot,
-            account_pause_reason=account_pause_reason,
+            account_pause=account_pause,
             sticky_account_pause=sticky_account_pause,
             recovery_pause_reason=recovery.pause_reason,
             pause_trading=pause_trading,
@@ -233,7 +223,7 @@ class ReconcileService:
             for order in open_orders
         }
         actions: list[ReconcileAction] = []
-        if account_pause_reason and not pause_trading:
+        if account_pause is not None and not pause_trading:
             actions.append(
                 ReconcileAction(
                     action_type=ReconcileActionType.RESUME_TRADING,
@@ -242,7 +232,7 @@ class ReconcileService:
                     token_id=None,
                     market_slug=market.market_slug,
                     reason="stale_pause_cleared",
-                    pause_reason=account_pause_reason,
+                    pause_reason=account_pause.reason,
                 )
             )
         for decision in recovery.actions:
@@ -351,53 +341,34 @@ def _pause_reason(market: Market, account_snapshot: AccountSnapshot) -> str:
         return market.reject_reason or "market_closed"
     if market.trading_status == TradingStatus.RESOLVED:
         return market.reject_reason or "market_resolved"
-    if account_snapshot.is_market_paused(market.condition_id):
-        return dict(account_snapshot.pause_reasons).get(market.condition_id, "manual_pause")
+    account_pause = account_snapshot.pause_for_market(market.condition_id)
+    if account_pause is not None:
+        return account_pause.reason
     return ""
-
-
-def _account_pause_reason(market: Market, account_snapshot: AccountSnapshot) -> str:
-    return dict(account_snapshot.pause_reasons).get(market.condition_id, "")
-
-
-def _is_auto_recoverable_pause_reason(reason: str) -> bool:
-    return reason in _AUTO_RECOVERABLE_ACCOUNT_PAUSE_REASONS
 
 
 def _account_snapshot_for_recovery(
     account_snapshot: AccountSnapshot,
     *,
     condition_id: str,
-    account_pause_reason: str,
+    account_pause: MarketPause | None,
 ) -> AccountSnapshot:
-    if not _is_auto_recoverable_pause_reason(account_pause_reason):
+    if account_pause is None or not account_pause.recoverable:
         return account_snapshot
-    return replace(
-        account_snapshot,
-        paused_markets=tuple(
-            paused_condition_id
-            for paused_condition_id in account_snapshot.paused_markets
-            if paused_condition_id != condition_id
-        ),
-        pause_reasons=tuple(
-            item
-            for item in account_snapshot.pause_reasons
-            if item[0] != condition_id
-        ),
-    )
+    return account_snapshot.without_market_pause(condition_id)
 
 
 def _resolved_pause_reason(
     *,
     market: Market,
     account_snapshot: AccountSnapshot,
-    account_pause_reason: str,
+    account_pause: MarketPause | None,
     sticky_account_pause: bool,
     recovery_pause_reason: str | None,
     pause_trading: bool,
 ) -> str:
-    if sticky_account_pause and account_pause_reason:
-        return account_pause_reason
+    if sticky_account_pause and account_pause is not None:
+        return account_pause.reason
     if recovery_pause_reason:
         return recovery_pause_reason
     if pause_trading:

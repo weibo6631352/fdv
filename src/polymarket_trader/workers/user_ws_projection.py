@@ -65,8 +65,7 @@ class UserWsAccountProjector:
                     "allowance_usdc": str(snapshot.allowance_usdc),
                     "user_ws_connected": snapshot.user_ws_connected,
                     "allow_new_entries": snapshot.allow_new_entries,
-                    "paused_markets": list(snapshot.paused_markets),
-                    "pause_reasons": [list(item) for item in snapshot.pause_reasons],
+                    "market_pauses": [pause.as_payload() for pause in snapshot.market_pauses],
                     "last_reconcile_at": (
                         None
                         if snapshot.last_reconcile_at is None
@@ -301,8 +300,7 @@ def snapshot_to_payload(snapshot: AccountSnapshot) -> dict[str, Any]:
         "allowance_usdc": str(snapshot.allowance_usdc),
         "user_ws_connected": snapshot.user_ws_connected,
         "allow_new_entries": snapshot.allow_new_entries,
-        "paused_markets": snapshot.paused_markets,
-        "pause_reasons": snapshot.pause_reasons,
+        "market_pauses": tuple(pause.as_payload() for pause in snapshot.market_pauses),
         "last_reconcile_at": (
             None if snapshot.last_reconcile_at is None else snapshot.last_reconcile_at.isoformat()
         ),

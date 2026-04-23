@@ -150,8 +150,7 @@ class PersistenceRecordBuilder:
             "allowance_usdc": _first(payload, "allowance_usdc"),
             "user_ws_connected": _first(payload, "user_ws_connected"),
             "allow_new_entries": _first(payload, "allow_new_entries"),
-            "paused_markets": _first(payload, "paused_markets"),
-            "pause_reasons": _first(payload, "pause_reasons"),
+            "market_pauses": _first(payload, "market_pauses"),
             "last_reconcile_at": _first(payload, "last_reconcile_at"),
         }
         record.update(

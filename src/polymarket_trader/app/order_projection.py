@@ -18,7 +18,7 @@ from polymarket_trader.domain.order import (
     TradableOrderIntent,
 )
 from polymarket_trader.domain.position import Position
-from polymarket_trader.domain.account import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot, MarketPauseSource
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.serialization import utc_now
 
@@ -254,7 +254,11 @@ class AccountStateProjector:
     def apply_result_flags(self, result: OrderResult, *, snapshot: AccountSnapshot | None) -> None:
         if has_unexpected_resting_order(result):
             self.store.set_allow_new_entries(False)
-            self.store.pause_market(result.condition_id, reason="unexpected_resting_order")
+            self.store.pause_market(
+                result.condition_id,
+                reason="unexpected_resting_order",
+                source=MarketPauseSource.RISK,
+            )
         if result.status in {
             OrderResultStatus.REJECTED,
             OrderResultStatus.FAILED,

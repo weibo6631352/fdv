@@ -11,7 +11,7 @@ from polymarket_trader.extension_api import (
     ExtensionAction,
     ExtensionContext,
 )
-from polymarket_trader.domain.account import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot, MarketPause, MarketPauseReason
 from strategies.current.config import CurrentStrategyConfig
 from strategies.current.strategy import CurrentStrategy, build_strategy
 from tests.helpers.markets import build_binary_market
@@ -187,7 +187,12 @@ def test_current_strategy_recovery_returns_target_sell_and_pause_state() -> None
     )
     account = AccountSnapshot(
         positions=(position,),
-        paused_markets=("condition-1",),
+        market_pauses=(
+            MarketPause.build(
+                condition_id="condition-1",
+                reason=MarketPauseReason.MANUAL_PAUSE,
+            ),
+        ),
     )
 
     recovery = strategy.decide_recovery(

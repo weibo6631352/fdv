@@ -141,7 +141,7 @@ class UserWsWorker:
             open_order_count=len(account_snapshot.open_orders),
             position_count=len(account_snapshot.positions),
             fill_count=len(account_snapshot.fills),
-            paused_market_count=len(account_snapshot.paused_markets),
+            paused_market_count=len(account_snapshot.market_pauses),
             subscriptions=subscriptions,
         )
 

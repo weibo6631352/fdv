@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any, Mapping, Protocol
 
 from polymarket_trader.domain.allocation import Allocation, AllocationPlan
+from polymarket_trader.domain.account import MarketPause
 from polymarket_trader.domain.market import Market
 from polymarket_trader.domain.order import Order, OrderResult
 from polymarket_trader.domain.orderbook import OrderbookSnapshot
@@ -33,7 +34,7 @@ class AccountSnapshotView(Protocol):
     def allow_new_entries(self) -> bool: ...
 
     @property
-    def paused_markets(self) -> tuple[str, ...]: ...
+    def market_pauses(self) -> tuple[MarketPause, ...]: ...
 
     @property
     def last_reconcile_at(self) -> datetime | None: ...

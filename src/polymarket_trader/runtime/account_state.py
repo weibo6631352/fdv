@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from threading import Lock
 
-from polymarket_trader.domain.account import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot, MarketPause, MarketPauseSource
 from polymarket_trader.domain.events import Fill
 from polymarket_trader.domain.order import Order
 from polymarket_trader.domain.position import Position
@@ -26,7 +26,7 @@ class AccountStateStore:
         self._allowance_usdc = Decimal("0")
         self._user_ws_connected = False
         self._allow_new_entries = False
-        self._paused_markets: dict[str, str] = {}
+        self._market_pauses: dict[str, MarketPause] = {}
         self._last_reconcile_at: datetime | None = None
         self._snapshot = AccountSnapshot()
 
@@ -107,14 +107,26 @@ class AccountStateStore:
             self._allow_new_entries = allowed and self._entry_gate_can_open_locked()
             return self._publish_snapshot_locked()
 
-    def pause_market(self, condition_id: str, *, reason: str) -> AccountSnapshot:
+    def pause_market(
+        self,
+        condition_id: str,
+        *,
+        reason: str,
+        source: MarketPauseSource | str | None = None,
+        recoverable: bool | None = None,
+    ) -> AccountSnapshot:
         with self._lock:
-            self._paused_markets[condition_id] = reason
+            self._market_pauses[condition_id] = MarketPause.build(
+                condition_id=condition_id,
+                reason=reason,
+                source=source,
+                recoverable=recoverable,
+            )
             return self._publish_snapshot_locked()
 
     def resume_market(self, condition_id: str) -> AccountSnapshot:
         with self._lock:
-            self._paused_markets.pop(condition_id, None)
+            self._market_pauses.pop(condition_id, None)
             return self._publish_snapshot_locked()
 
     def mark_reconciled(self, reconciled_at: datetime | None = None) -> AccountSnapshot:
@@ -135,8 +147,7 @@ class AccountStateStore:
             fills=tuple(self._fills.values()),
             user_ws_connected=self._user_ws_connected,
             allow_new_entries=self._allow_new_entries,
-            paused_markets=tuple(self._paused_markets.keys()),
-            pause_reasons=tuple(self._paused_markets.items()),
+            market_pauses=tuple(self._market_pauses.values()),
             last_reconcile_at=self._last_reconcile_at,
         )
         self._snapshot = snapshot

@@ -392,7 +392,7 @@ def _reconcile_result(market: Market) -> object:
             ),
         ),
         total_actions=1,
-        paused_markets=0,
+        paused_market_count=0,
     )
     return SimpleNamespace(
         trace_id="trace-reconcile",

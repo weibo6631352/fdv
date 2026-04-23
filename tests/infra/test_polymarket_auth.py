@@ -5,7 +5,9 @@ from decimal import Decimal
 from polymarket_trader.domain.order import OrderResultStatus, OrderSide, OrderType
 from polymarket_trader.infra.polymarket import auth
 from polymarket_trader.infra.polymarket.auth import PolymarketOrderExecutionClient
+from polymarket_trader.infra.polymarket.execution_response_mapper import map_submit_response
 from polymarket_trader.infra.polymarket.order_execution_types import OrderExecutionRequest
+from polymarket_trader.infra.polymarket.order_signing import build_signed_order
 
 
 class _FakeOrderType:
@@ -209,3 +211,10 @@ def test_execution_client_maps_non_fill_error_to_rejected() -> None:
 
     assert response.status == OrderResultStatus.REJECTED
     assert response.reason == "not enough balance / allowance"
+
+
+def test_auth_delegates_signing_and_response_mapping_to_focused_modules() -> None:
+    assert callable(build_signed_order)
+    assert callable(map_submit_response)
+    assert not hasattr(auth, "_response_amounts")
+    assert not hasattr(auth, "_execution_status")

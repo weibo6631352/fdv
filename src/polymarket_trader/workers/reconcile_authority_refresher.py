@@ -76,12 +76,32 @@ class TradingAuthorityClient(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class AuthoritativeRefreshFailure:
+    component: str
+    operation: str
+    target: str | None = None
+    reason: str = "exception"
+    detail: str = ""
+    retryable: bool = True
+
+    def as_payload(self) -> dict[str, object]:
+        return {
+            "component": self.component,
+            "operation": self.operation,
+            "target": self.target,
+            "reason": self.reason,
+            "detail": self.detail,
+            "retryable": self.retryable,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class AuthoritativeMarketRefresh:
     requested_market: Market
     refreshed_market: Market | None
     orderbook_snapshots: tuple[OrderbookSnapshot, ...] = ()
     fee_rate_refreshed: bool = False
-    failures: tuple[str, ...] = ()
+    failures: tuple[AuthoritativeRefreshFailure, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +117,7 @@ class AuthoritativeRefreshSummary:
     refreshed_balance: bool
     refreshed_allowance: bool
     user_refresh_enabled: bool
-    failures: tuple[str, ...] = ()
+    failures: tuple[AuthoritativeRefreshFailure, ...] = ()
 
     def as_payload(self) -> dict[str, object]:
         return {
@@ -111,7 +131,7 @@ class AuthoritativeRefreshSummary:
             "refreshed_balance": self.refreshed_balance,
             "refreshed_allowance": self.refreshed_allowance,
             "user_refresh_enabled": self.user_refresh_enabled,
-            "failures": list(self.failures),
+            "failures": [failure.as_payload() for failure in self.failures],
         }
 
 
@@ -127,6 +147,7 @@ class ReconcileAuthorityRefresher:
         clob_client: OrderAuthorityClient | None = None,
         data_client: DataAuthorityClient | None = None,
         trading_client: TradingAuthorityClient | None = None,
+        authority_call_timeout_s: float | None = None,
     ) -> None:
         self._registry_snapshot_provider = registry_snapshot_provider
         self._account_state_store = account_state_store
@@ -136,6 +157,11 @@ class ReconcileAuthorityRefresher:
         self._clob_client = clob_client
         self._data_client = data_client
         self._trading_client = trading_client
+        self._authority_call_timeout_s = (
+            _AUTHORITY_CALL_TIMEOUT_S
+            if authority_call_timeout_s is None
+            else authority_call_timeout_s
+        )
 
     async def refresh(
         self,
@@ -163,14 +189,21 @@ class ReconcileAuthorityRefresher:
             *(self._refresh_market_authority(market) for market in markets),
             return_exceptions=True,
         )
-        refresh_failures: list[str] = []
+        refresh_failures: list[AuthoritativeRefreshFailure] = []
         refreshed_markets = 0
         refreshed_orderbooks = 0
         refreshed_fee_rates = 0
 
         for item in market_refreshes:
             if isinstance(item, BaseException):
-                refresh_failures.append(str(item))
+                refresh_failures.append(
+                    AuthoritativeRefreshFailure(
+                        component="reconcile",
+                        operation="market_refresh",
+                        reason="exception",
+                        detail=str(item),
+                    )
+                )
                 continue
             if item.refreshed_market is not None:
                 refreshed_markets += 1
@@ -209,7 +242,7 @@ class ReconcileAuthorityRefresher:
         trace_id: str,
         markets: tuple[Market, ...],
     ) -> AuthoritativeRefreshSummary:
-        failures: list[str] = []
+        failures: list[AuthoritativeRefreshFailure] = []
         user_refresh_enabled = bool(
             self._trading_client is not None
             or (
@@ -288,7 +321,7 @@ class ReconcileAuthorityRefresher:
         return tuple(market for market in markets if market.condition_id in condition_id_filter)
 
     async def _refresh_market_authority(self, market: Market) -> AuthoritativeMarketRefresh:
-        failures: list[str] = []
+        failures: list[AuthoritativeRefreshFailure] = []
         refreshed_market = await self._fetch_gamma_market(market, failures)
         market_for_orderbook = refreshed_market or market
         fee_rate_bps = None
@@ -319,7 +352,7 @@ class ReconcileAuthorityRefresher:
     async def _fetch_gamma_market(
         self,
         market: Market,
-        failures: list[str],
+        failures: list[AuthoritativeRefreshFailure],
     ) -> Market | None:
         if self._gamma_client is None:
             return None
@@ -327,20 +360,31 @@ class ReconcileAuthorityRefresher:
             if not slug:
                 continue
             candidates = await _await_authority(
-                f"gamma:{market.condition_id}:{slug}",
-                failures,
-                self._gamma_client.list_markets(
+                component="gamma",
+                operation="list_markets",
+                failures=failures,
+                awaitable=self._gamma_client.list_markets(
                     slug=str(slug),
                     active=None,
                     closed=None,
                     limit=25,
                 ),
+                target=f"{market.condition_id}:{slug}",
+                timeout_s=self._authority_call_timeout_s,
             )
             if candidates is None:
                 continue
             gamma_market = _pick_gamma_market(candidates, market)
             if gamma_market is None:
-                failures.append(f"gamma:{market.condition_id}:{slug}:not_found")
+                failures.append(
+                    AuthoritativeRefreshFailure(
+                        component="gamma",
+                        operation="list_markets",
+                        target=f"{market.condition_id}:{slug}",
+                        reason="not_found",
+                        retryable=True,
+                    )
+                )
                 continue
             refreshed_market = self._merge_gamma_market(
                 market,
@@ -353,20 +397,23 @@ class ReconcileAuthorityRefresher:
     async def _fetch_orderbook_snapshots(
         self,
         market: Market,
-        failures: list[str],
+        failures: list[AuthoritativeRefreshFailure],
     ) -> tuple[OrderbookSnapshot, ...]:
         if self._clob_client is None:
             return ()
         snapshots: list[OrderbookSnapshot] = []
         for token_id in market.token_ids:
             orderbook = await _await_authority(
-                f"clob:{market.condition_id}:{token_id}",
-                failures,
-                self._clob_client.get_orderbook(
+                component="clob",
+                operation="orderbook",
+                failures=failures,
+                awaitable=self._clob_client.get_orderbook(
                     token_id,
                     market_slug=market.market_slug,
                     condition_id=market.condition_id,
                 ),
+                target=f"{market.condition_id}:{token_id}",
+                timeout_s=self._authority_call_timeout_s,
             )
             if orderbook is None:
                 continue
@@ -445,7 +492,7 @@ class ReconcileAuthorityRefresher:
     async def _fetch_fee_rate(
         self,
         market: Market,
-        failures: list[str],
+        failures: list[AuthoritativeRefreshFailure],
     ) -> int | None:
         if self._clob_client is None:
             return None
@@ -453,21 +500,26 @@ class ReconcileAuthorityRefresher:
         if token_id is None:
             return None
         return await _await_authority(
-            f"clob:fee_rate:{market.condition_id}:{token_id}",
-            failures,
-            self._clob_client.get_fee_rate(token_id),
+            component="clob",
+            operation="fee_rate",
+            failures=failures,
+            awaitable=self._clob_client.get_fee_rate(token_id),
+            target=f"{market.condition_id}:{token_id}",
+            timeout_s=self._authority_call_timeout_s,
         )
 
     async def _fetch_positions(
         self,
-        failures: list[str],
+        failures: list[AuthoritativeRefreshFailure],
     ) -> tuple[Position, ...] | None:
         if self._data_client is None:
             return None
         positions = await _await_authority(
-            "data:positions",
-            failures,
-            self._data_client.list_positions(),
+            component="data",
+            operation="positions",
+            failures=failures,
+            awaitable=self._data_client.list_positions(),
+            timeout_s=self._authority_call_timeout_s,
         )
         if positions is None:
             return None
@@ -475,14 +527,16 @@ class ReconcileAuthorityRefresher:
 
     async def _fetch_open_orders(
         self,
-        failures: list[str],
+        failures: list[AuthoritativeRefreshFailure],
     ) -> tuple[OrderRecord, ...] | None:
         if self._clob_client is None:
             return None
         orders = await _await_authority(
-            "clob:open_orders",
-            failures,
-            self._clob_client.list_open_orders(),
+            component="clob",
+            operation="open_orders",
+            failures=failures,
+            awaitable=self._clob_client.list_open_orders(),
+            timeout_s=self._authority_call_timeout_s,
         )
         if orders is None:
             return None
@@ -490,14 +544,16 @@ class ReconcileAuthorityRefresher:
 
     async def _fetch_fills(
         self,
-        failures: list[str],
+        failures: list[AuthoritativeRefreshFailure],
     ) -> tuple[Fill, ...] | None:
         if self._clob_client is None:
             return None
         fills = await _await_authority(
-            "clob:fills",
-            failures,
-            self._clob_client.list_fills(),
+            component="clob",
+            operation="fills",
+            failures=failures,
+            awaitable=self._clob_client.list_fills(),
+            timeout_s=self._authority_call_timeout_s,
         )
         if fills is None:
             return None
@@ -505,14 +561,16 @@ class ReconcileAuthorityRefresher:
 
     async def _fetch_balance(
         self,
-        failures: list[str],
+        failures: list[AuthoritativeRefreshFailure],
     ) -> tuple[Decimal, Decimal, bool, bool]:
         if self._clob_client is None:
             return Decimal("0"), Decimal("0"), False, False
         balance = await _await_authority(
-            "clob:balance_allowance",
-            failures,
-            self._clob_client.get_balance_allowance(),
+            component="clob",
+            operation="balance_allowance",
+            failures=failures,
+            awaitable=self._clob_client.get_balance_allowance(),
+            timeout_s=self._authority_call_timeout_s,
         )
         if balance is None:
             return Decimal("0"), Decimal("0"), False, False
@@ -524,16 +582,35 @@ def _utc_now() -> datetime:
 
 
 async def _await_authority(
-    label: str,
-    failures: list[str],
+    *,
+    component: str,
+    operation: str,
+    failures: list[AuthoritativeRefreshFailure],
     awaitable: Awaitable[_T],
+    target: str | None = None,
+    timeout_s: float = _AUTHORITY_CALL_TIMEOUT_S,
 ) -> _T | None:
     try:
-        return await asyncio.wait_for(awaitable, timeout=_AUTHORITY_CALL_TIMEOUT_S)
+        return await asyncio.wait_for(awaitable, timeout=timeout_s)
     except TimeoutError:
-        failures.append(f"{label}:timeout")
+        failures.append(
+            AuthoritativeRefreshFailure(
+                component=component,
+                operation=operation,
+                target=target,
+                reason="timeout",
+            )
+        )
     except Exception as exc:  # pragma: no cover - external SDK failure path
-        failures.append(f"{label}:{exc}")
+        failures.append(
+            AuthoritativeRefreshFailure(
+                component=component,
+                operation=operation,
+                target=target,
+                reason="exception",
+                detail=str(exc),
+            )
+        )
     return None
 
 

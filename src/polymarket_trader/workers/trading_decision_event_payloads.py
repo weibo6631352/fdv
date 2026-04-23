@@ -33,7 +33,7 @@ def serialize_snapshot(snapshot: AccountSnapshot | None) -> dict[str, object] | 
         "allowance_usdc": str(snapshot.allowance_usdc),
         "user_ws_connected": snapshot.user_ws_connected,
         "allow_new_entries": snapshot.allow_new_entries,
-        "paused_markets": list(snapshot.paused_markets),
+        "market_pauses": [pause.as_payload() for pause in snapshot.market_pauses],
         "last_reconcile_at": (
             None if snapshot.last_reconcile_at is None else snapshot.last_reconcile_at.isoformat()
         ),

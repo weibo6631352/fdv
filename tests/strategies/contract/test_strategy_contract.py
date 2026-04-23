@@ -48,7 +48,6 @@ def test_strategy_contract_positive_path() -> None:
     )
     account_snapshot = AccountSnapshot(
         positions=(position,),
-        paused_markets=(),
     )
 
     universe = strategy.select_market(market)

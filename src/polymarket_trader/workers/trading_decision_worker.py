@@ -20,7 +20,7 @@ from polymarket_trader.domain.order import (
 )
 from polymarket_trader.domain.position import Position
 from polymarket_trader.domain.state_machine import MarketLifecycle
-from polymarket_trader.domain.account import AccountSnapshot
+from polymarket_trader.domain.account import AccountSnapshot, MarketPauseSource
 from polymarket_trader.runtime.account_state import AccountStateStore
 from polymarket_trader.runtime.event_bus import EventBus
 from polymarket_trader.workers.trading_decision_event_payloads import (
@@ -393,7 +393,11 @@ class TradingDecisionWorker:
             return
         self._market_lifecycle[condition_id] = MarketLifecycle.PAUSED
         if self._account_state_store is not None:
-            self._account_state_store.pause_market(condition_id, reason=reason)
+            self._account_state_store.pause_market(
+                condition_id,
+                reason=reason,
+                source=MarketPauseSource.RISK,
+            )
 
     def _state_for_market(self, market: Market | None) -> MarketLifecycle | None:
         if market is None:
