@@ -321,6 +321,39 @@ class ClobOrderRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class GammaPublicProfileDTO:
+    raw: Mapping[str, Any]
+    proxy_wallet: str | None = None
+    profile_image: str | None = None
+    display_username_public: bool | None = None
+    name: str | None = None
+    pseudonym: str | None = None
+    x_username: str | None = None
+    verified_badge: bool | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "proxy_wallet", self.proxy_wallet or _first_text(self.raw, "proxyWallet"))
+        object.__setattr__(self, "profile_image", self.profile_image or _first_text(self.raw, "profileImage"))
+        object.__setattr__(
+            self,
+            "display_username_public",
+            self.display_username_public
+            if self.display_username_public is not None
+            else _coerce_bool(_first_value(self.raw, "displayUsernamePublic")),
+        )
+        object.__setattr__(self, "name", self.name or _first_text(self.raw, "name"))
+        object.__setattr__(self, "pseudonym", self.pseudonym or _first_text(self.raw, "pseudonym"))
+        object.__setattr__(self, "x_username", self.x_username or _first_text(self.raw, "xUsername"))
+        object.__setattr__(
+            self,
+            "verified_badge",
+            self.verified_badge
+            if self.verified_badge is not None
+            else _coerce_bool(_first_value(self.raw, "verifiedBadge")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class GammaMarketDTO:
     raw: Mapping[str, Any]
     condition_id: str | None = None
@@ -1043,6 +1076,10 @@ def normalize_gamma_event(payload: Mapping[str, Any]) -> GammaEventDTO:
     return GammaEventDTO(raw=normalized, markets=markets)
 
 
+def normalize_gamma_public_profile(payload: Mapping[str, Any]) -> GammaPublicProfileDTO:
+    return GammaPublicProfileDTO(raw=_unwrap_mapping(payload))
+
+
 def gamma_event_to_raw_market_events(
     payload: Mapping[str, Any],
     *,
@@ -1415,6 +1452,7 @@ __all__ = [
     "DataPositionDTO",
     "GammaEventDTO",
     "GammaMarketDTO",
+    "GammaPublicProfileDTO",
     "OrderbookLevelDTO",
     "PolymarketAuthError",
     "PolymarketClientError",
@@ -1436,6 +1474,7 @@ __all__ = [
     "normalize_fill_payload",
     "normalize_gamma_event",
     "normalize_gamma_market",
+    "normalize_gamma_public_profile",
     "normalize_order_payload",
     "normalize_orderbook_payload",
     "normalize_price_history_payload",

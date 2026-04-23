@@ -215,3 +215,73 @@ async def test_gamma_client_list_markets_keyset_by_params_returns_cursor() -> No
     assert len(markets) == 1
     assert markets[0].market_slug == "sample-market-a"
     assert next_cursor == "cursor-2"
+
+
+async def test_gamma_client_get_public_profile_by_wallet_address() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/public-profile"
+        return httpx.Response(
+            200,
+            json={
+                "proxyWallet": "0x2222222222222222222222222222222222222222",
+                "profileImage": "https://example.com/avatar.png",
+                "displayUsernamePublic": True,
+                "pseudonym": "Poly-2222",
+                "name": "FDV Trader",
+                "xUsername": "fdv_trader",
+                "verifiedBadge": True,
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(
+        base_url="https://gamma-api.polymarket.com",
+        transport=transport,
+        trust_env=False,
+    ) as client:
+        gamma = GammaClient(client=client)
+        profile = await gamma.get_public_profile("0x2222222222222222222222222222222222222222")
+
+    request = requests[0]
+    assert request.url.params.get("address") == "0x2222222222222222222222222222222222222222"
+    assert profile.proxy_wallet == "0x2222222222222222222222222222222222222222"
+    assert profile.profile_image == "https://example.com/avatar.png"
+    assert profile.name == "FDV Trader"
+    assert profile.pseudonym == "Poly-2222"
+    assert profile.x_username == "fdv_trader"
+    assert profile.verified_badge is True
+
+
+async def test_gamma_client_reuses_public_profile_by_wallet_address() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "proxyWallet": "0x2222222222222222222222222222222222222222",
+                "profileImage": "https://example.com/avatar.png",
+                "displayUsernamePublic": True,
+                "pseudonym": "Poly-2222",
+                "name": "FDV Trader",
+                "xUsername": "fdv_trader",
+                "verifiedBadge": True,
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(
+        base_url="https://gamma-api.polymarket.com",
+        transport=transport,
+        trust_env=False,
+    ) as client:
+        gamma = GammaClient(client=client)
+        first = await gamma.get_public_profile("0x2222222222222222222222222222222222222222")
+        second = await gamma.get_public_profile("0x2222222222222222222222222222222222222222")
+
+    assert len(requests) == 1
+    assert first is second

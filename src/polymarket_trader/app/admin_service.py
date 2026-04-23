@@ -117,8 +117,8 @@ class AdminService:
     def readiness_snapshot(self) -> dict[str, Any]:
         return self._runtime_view().readiness_snapshot()
 
-    def runtime_snapshot(self) -> dict[str, Any]:
-        return self._runtime_view().runtime_snapshot()
+    async def runtime_snapshot(self) -> dict[str, Any]:
+        return await self._runtime_view().runtime_snapshot()
 
     async def list_markets(
         self,

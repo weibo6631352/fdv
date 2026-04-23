@@ -53,6 +53,12 @@ export interface RuntimePayload {
     wallet_address: string | null
     funder_address: string | null
     signature_type: number | null
+    profile_address: string | null
+    profile_name: string | null
+    profile_pseudonym: string | null
+    profile_image: string | null
+    profile_verified: boolean | null
+    profile_x_username: string | null
   }
   runtime: RuntimeStatus
   bootstrap_summary: JsonValue

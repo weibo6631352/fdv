@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Any, Mapping
 
 from polymarket_trader.app.admin_serialization import AdminSerializer, decimal_text, jsonable
@@ -9,6 +10,15 @@ from polymarket_trader.domain.orderbook import OrderbookSnapshot
 from polymarket_trader.runtime.event_bus import QueueDepthSnapshot
 from polymarket_trader.runtime.registry import MarketRegistrySnapshot
 from polymarket_trader.serialization import utc_now
+
+logger = logging.getLogger(__name__)
+
+
+def _text_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +44,7 @@ class AdminRuntimeView:
             "runtime": self._runtime_status_snapshot(supervisor, readiness),
         }
 
-    def runtime_snapshot(self) -> dict[str, Any]:
+    async def runtime_snapshot(self) -> dict[str, Any]:
         supervisor = self._supervisor_snapshot()
         readiness = self._readiness_payload(supervisor)
         runtime_status = self._runtime_status_snapshot(supervisor, readiness)
@@ -46,7 +56,7 @@ class AdminRuntimeView:
             "ready_to_trade": runtime_status["ready_to_trade"],
             "readiness": readiness,
             "settings": self._settings_snapshot(),
-            "identity": self._identity_snapshot(),
+            "identity": await self._identity_snapshot(),
             "runtime": runtime_status,
             "bootstrap_summary": jsonable(getattr(self.runtime, "bootstrap_summary", {})),
             "market_discovery": self._market_discovery_snapshot(),
@@ -198,7 +208,7 @@ class AdminRuntimeView:
             return settings.sanitized_dump()
         return jsonable(settings)
 
-    def _identity_snapshot(self) -> dict[str, Any]:
+    async def _identity_snapshot(self) -> dict[str, Any]:
         settings = self._settings()
         wallet_address = None
         for component_name in ("clob_client", "data_client"):
@@ -211,15 +221,59 @@ class AdminRuntimeView:
             if candidate:
                 wallet_address = str(candidate)
                 break
+        funder_address = (
+            _text_or_none(getattr(settings, "polymarket_funder_address", None))
+            if settings is not None
+            else None
+        )
+        profile_address = funder_address or _text_or_none(wallet_address)
+        profile = await self._public_profile(profile_address)
+        display_username_public = (
+            None if profile is None else getattr(profile, "display_username_public", None)
+        )
+        profile_name = None
+        if display_username_public is not False:
+            profile_name = _text_or_none(None if profile is None else getattr(profile, "name", None))
         return {
             "wallet_address": wallet_address,
-            "funder_address": (
-                getattr(settings, "polymarket_funder_address", None) if settings is not None else None
-            ),
+            "funder_address": funder_address,
             "signature_type": (
                 getattr(settings, "polymarket_signature_type", None) if settings is not None else None
             ),
+            "profile_address": (
+                _text_or_none(None if profile is None else getattr(profile, "proxy_wallet", None))
+                or profile_address
+            ),
+            "profile_name": profile_name,
+            "profile_pseudonym": _text_or_none(
+                None if profile is None else getattr(profile, "pseudonym", None)
+            ),
+            "profile_image": _text_or_none(
+                None if profile is None else getattr(profile, "profile_image", None)
+            ),
+            "profile_verified": (
+                None if profile is None else getattr(profile, "verified_badge", None)
+            ),
+            "profile_x_username": _text_or_none(
+                None if profile is None else getattr(profile, "x_username", None)
+            ),
         }
+
+    async def _public_profile(self, address: str | None) -> Any | None:
+        if address is None:
+            return None
+        gamma_client = getattr(self.runtime, "gamma_client", None)
+        get_public_profile = getattr(gamma_client, "get_public_profile", None)
+        if not callable(get_public_profile):
+            return None
+        try:
+            return await get_public_profile(address, timeout_s=2.0)
+        except Exception as exc:
+            logger.warning(
+                "polymarket public profile lookup failed",
+                extra={"address": address, "reason": str(exc)},
+            )
+            return None
 
     def _serializer(self) -> AdminSerializer:
         return AdminSerializer(

@@ -6,6 +6,7 @@ import { adminApi } from '../../core/api/resources'
 import { resolveExtensionPresentation } from '../../extensions/registry'
 import { EntityAvatar } from '../ui/EntityAvatar'
 import { formatAddressShort, formatAllowance, formatCompact, getString } from '../utils/format'
+import { resolvePolymarketIdentityDisplay } from '../utils/identity'
 import { formatPhaseLabel, formatSignatureTypeLabel } from '../utils/labels'
 import { StatusPill } from '../ui/StatusPill'
 import { hasPositiveShares } from '../utils/markets'
@@ -72,8 +73,7 @@ export const AppShell = ({ children }: AppShellProps) => {
   const phase = readyQuery.data?.phase ?? runtimeQuery.data?.phase ?? 'starting'
   const walletAddress = runtimeQuery.data?.identity.wallet_address ?? null
   const funderAddress = runtimeQuery.data?.identity.funder_address ?? null
-  const accountAddress = walletAddress ?? funderAddress
-  const accountLabel = formatAddressShort(accountAddress)
+  const identityDisplay = resolvePolymarketIdentityDisplay(runtimeQuery.data?.identity)
   const trackedMarketCount = runtimeQuery.data?.registry.market_count ?? marketsQuery.data?.total ?? 0
   const fullScanMarketCount =
     runtimeQuery.data?.market_discovery.last_completed_round_markets ||
@@ -122,11 +122,15 @@ export const AppShell = ({ children }: AppShellProps) => {
           </div>
           <div className="top-status-bar__summary">
             <div className="top-account">
-              <EntityAvatar label={accountAddress ? accountLabel : '账户'} size="sm" />
+              <EntityAvatar label={identityDisplay.title} imageUrl={identityDisplay.imageUrl} size="sm" />
               <div className="top-account__text">
-                <strong>{accountAddress ? accountLabel : '未解析到账户地址'}</strong>
+                <strong>
+                  {identityDisplay.title}
+                  {identityDisplay.verified ? <span className="top-account__verified">已认证</span> : null}
+                </strong>
                 <span>
-                  钱包 {formatAddressShort(walletAddress)} · 出资 {formatAddressShort(funderAddress)} ·{' '}
+                  Polymarket {formatAddressShort(identityDisplay.profileAddress)} · 钱包{' '}
+                  {formatAddressShort(walletAddress)} · 出资 {formatAddressShort(funderAddress)} ·{' '}
                   {formatSignatureTypeLabel(runtimeQuery.data?.identity.signature_type)}
                 </span>
               </div>

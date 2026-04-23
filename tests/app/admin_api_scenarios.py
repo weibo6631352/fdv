@@ -166,6 +166,26 @@ class FakeDataClient:
         return self._positions
 
 
+@dataclass(frozen=True, slots=True)
+class FakePublicProfile:
+    proxy_wallet: str | None = "0x2222222222222222222222222222222222222222"
+    profile_image: str | None = "https://example.com/avatar.png"
+    display_username_public: bool | None = True
+    name: str | None = "FDV Trader"
+    pseudonym: str | None = "Poly-2222"
+    x_username: str | None = "fdv_trader"
+    verified_badge: bool | None = True
+
+
+class FakeGammaClient:
+    def __init__(self) -> None:
+        self.profile_calls: list[str] = []
+
+    async def get_public_profile(self, address: str, **kwargs: object) -> FakePublicProfile:
+        self.profile_calls.append(address)
+        return FakePublicProfile()
+
+
 class FakeClobClient:
     def __init__(
         self,
@@ -554,7 +574,7 @@ def _build_runtime(*, ready: bool = True) -> SimpleNamespace:
             last_tick_requests=2,
             last_tick_markets=1000,
         ),
-        gamma_client=SimpleNamespace(),
+        gamma_client=FakeGammaClient(),
         clob_client=FakeClobClient(),
         data_client=FakeDataClient(),
         account_state_store=account_state_store,
@@ -616,6 +636,12 @@ def run_admin_api_exposes_hot_state_and_readiness_routes() -> None:
         assert runtime_payload["settings"]["wallet_private_key"] == "***"
         assert runtime_payload["identity"]["wallet_address"] == "0x1111111111111111111111111111111111111111"
         assert runtime_payload["identity"]["funder_address"] == "0x2222222222222222222222222222222222222222"
+        assert runtime_payload["identity"]["profile_address"] == "0x2222222222222222222222222222222222222222"
+        assert runtime_payload["identity"]["profile_name"] == "FDV Trader"
+        assert runtime_payload["identity"]["profile_pseudonym"] == "Poly-2222"
+        assert runtime_payload["identity"]["profile_image"] == "https://example.com/avatar.png"
+        assert runtime_payload["identity"]["profile_verified"] is True
+        assert runtime_payload["identity"]["profile_x_username"] == "fdv_trader"
         assert runtime_payload["market_discovery"]["round_id"] == 4
         assert runtime_payload["market_discovery"]["last_completed_round_markets"] == 13000
         assert runtime_payload["market_discovery"]["pages_scanned_in_round"] == 2

@@ -10,7 +10,7 @@ router = APIRouter(tags=["runtime"])
 
 @router.get("/runtime")
 async def runtime(service: AdminService = Depends(get_admin_service)) -> dict[str, object]:
-    return service.runtime_snapshot()
+    return await service.runtime_snapshot()
 
 
 @router.get("/workers")
